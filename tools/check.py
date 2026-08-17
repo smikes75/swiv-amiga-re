@@ -143,6 +143,26 @@ def main():
     check("geometrie dat sedi na ceil(w/16)*2*4*h u vsech snimku",
           trans_all > 400, "%d snimku" % trans_all)
 
+    print("mapy urovni (docs/MAPS.md):")
+    import map as swivmap
+    disk = swivmap.Disk(src)
+    stats = []
+    for lv in range(7):
+        pam_name, dico = swivmap.level_info(disk, lv)
+        tiles, objs, chk, h = swivmap.parse(disk.load(pam_name), dico)
+        stats.append((pam_name, len(tiles), len(objs), h))
+    check("poradi map TOWN..FINAL podle tabulky 0x384C",
+          [s0[0] for s0 in stats] == ["TOWN.PAM", "DESERT.PAM", "GRASS.PAM",
+           "RIVER.PAM", "ICE.PAM", "SCIFI.PAM", "FINAL.PAM"])
+    check("TOWN: 704 dlazdic, 155 objektu, vyska mapy 3441 px",
+          stats[0][1:] == (704, 155, 3441))
+    check("SCIFI je nejhustsi (1794 dlazdic)",
+          stats[5][1] == 1794 and stats[5][1] == max(s0[1] for s0 in stats))
+    g = swivmap.parse(disk.load("GRASS.PAM"), swivmap.level_info(disk, 2)[1])
+    first_pal = g[2][0][1] if g[2] else []
+    check("paleta GRASS z hlavicky mapy: barva 10 je zelena 0x366",
+          len(first_pal) == 16 and any(p[1] == 0x366 for p in [(0, first_pal[10])]))
+
     print("negativni nalezy (drzi docs/LOADER.md poctive):")
     from scan import plausible
     cands = [o for o in range(0, len(data) - 8, 512) if plausible(data, o)]

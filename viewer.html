@@ -279,6 +279,113 @@ function modInfo(bytes) {
 //</lib>
 
 
+// --- mapy urovni (.PAM) — prepis tools/map.py, viz docs/MAPS.md ---
+const LEVTAB = 0x384C;
+
+function gameOrder(prog) {
+  const names = new TextDecoder("latin1").decode(prog.subarray(4, 0x537)).split("\0");
+  return names.filter(n => n).map(n => n.toUpperCase());
+}
+
+function levelInfo(prog, lv) {
+  const dv = new DataView(prog.buffer, prog.byteOffset, prog.byteLength);
+  const fid = dv.getUint16(LEVTAB + lv * 6);
+  const tab = LEVTAB + dv.getUint16(LEVTAB + lv * 6 + 2);
+  const end = lv < 6 ? LEVTAB + dv.getUint16(LEVTAB + (lv + 1) * 6 + 2) : tab + 512;
+  const dico = [];
+  for (let o = tab; o < end; o += 2) dico.push(dv.getUint16(o));
+  return { fid, dico };
+}
+
+function parsePam(pam, dico) {
+  const dv = new DataView(pam.buffer, pam.byteOffset, pam.byteLength);
+  const tiles = [], objs = [], checks = [];
+  let pal = new Array(16).fill(0), y = 0;
+  for (let o = 0; o + 4 <= pam.length; o += 4) {
+    const d = dv.getUint32(o);
+    if (d === 0) break;
+    if (d & 0x80000000) {
+      y += (d >> 16) & 0xFF;
+      const w = d & 0xFFFF;
+      pal = pal.slice();
+      pal[w & 15] = w >> 4;
+      if (checks.length && checks[checks.length - 1].y === y)
+        checks[checks.length - 1].pal = pal;
+      else checks.push({ y, pal });
+      continue;
+    }
+    const typ = d & 15, loc = (d >> 4) & 0xFF;
+    y += (d >> 12) & 0xFF;
+    let x = d >>> 20, layer = 4;
+    while (x >= 416) { x -= 512; layer--; }
+    (typ === 0 ? tiles : objs).push({ y, x, gfx: dico[loc] || 0, layer, typ });
+  }
+  tiles.sort((a, b) => a.layer - b.layer);
+  return { tiles, objs, checks, height: y };
+}
+
+function renderMap(state, lv) {
+  const prog = state.prog, order = state.order || (state.order = gameOrder(prog));
+  const { fid, dico } = levelInfo(prog, lv);
+  const pamName = order[fid];
+  const pam = unpackFile(state.adf, state.files.find(f => f.name === pamName));
+  const { tiles, objs, checks, height } = parsePam(pam, dico);
+  const W = 352, H = height + 300;
+  const px = new Uint8ClampedArray(W * H * 4);
+
+  const rgb = v => [((v >> 8) & 15) * 17, ((v >> 4) & 15) * 17, (v & 15) * 17];
+  function palAt(y) {
+    let cur = checks.length ? checks[0].pal : new Array(16).fill(0);
+    for (const c of checks) { if (c.y > y) break; cur = c.pal; }
+    return cur.map(rgb);
+  }
+  for (let y = 0; y < H; y++) {
+    const c = palAt(y)[10];
+    for (let x = 0; x < W; x++) {
+      const o = (y * W + x) * 4;
+      px[o] = c[0]; px[o + 1] = c[1]; px[o + 2] = c[2]; px[o + 3] = 255;
+    }
+  }
+  const frameCache = {};
+  function frames(name) {
+    if (!frameCache[name]) {
+      const f = state.files.find(f => f.name === name);
+      frameCache[name] = f ? linFrames(unpackFile(state.adf, f)) : [];
+    }
+    return frameCache[name];
+  }
+  function blit(x0, y0, gfx) {
+    const fname = order[gfx & 0x1FF];
+    if (!fname) return;
+    const fr = frames(fname)[gfx >> 9];
+    if (!fr || !fr.w) return;
+    const wd = (fr.w + 15) >> 4, pal = palAt(y0);
+    if (fr.data.length < wd * 8 * fr.h) return;
+    for (let y = 0; y < fr.h; y++) {
+      const ty = y0 + y;
+      if (ty < 0 || ty >= H) continue;
+      for (let x = 0; x < fr.w; x++) {
+        const tx = x0 + x;
+        if (tx < 0 || tx >= W) continue;
+        const j = x >> 4, b = x & 15;
+        let v = 0;
+        for (let k = 0; k < 4; k++) {
+          const w = (fr.data[(y * 4 + k) * wd * 2 + j * 2] << 8) |
+                    fr.data[(y * 4 + k) * wd * 2 + j * 2 + 1];
+          if (w & (0x8000 >> b)) v |= 1 << k;
+        }
+        if (v !== fr.trans) {
+          const o = (ty * W + tx) * 4, c = pal[v];
+          px[o] = c[0]; px[o + 1] = c[1]; px[o + 2] = c[2];
+        }
+      }
+    }
+  }
+  for (const t of tiles) blit(t.x + 17, t.y, t.gfx);
+  for (const t of objs) blit(t.x + 17, t.y, t.gfx);
+  return { px, w: W, h: H, name: pamName, tiles: tiles.length, objs: objs.length };
+}
+
 /* ------------------------------------------------------------------ UI */
 const esc = x => String(x).replace(/[&<>"']/g,
   c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -306,6 +413,9 @@ const I18N = {
     shaOther: "jin\u00fd obraz ne\u017e prov\u011b\u0159en\u00fd \u2014 katalog ale sed\u00ed, jedeme d\u00e1l",
     badDisk: "Tohle nevypad\u00e1 jako disketa SWIV (katalog nesed\u00ed).",
     palette: "Paleta",
+    tLevels: "\u00darovn\u011b",
+    rendering: "kresl\u00edm\u2026",
+    lvlnote: "Cel\u00e9 \u00farovn\u011b slo\u017een\u00e9 z map .PAM \u2014 rozm\u00edst\u011bn\u00ed dla\u017edic, objekty i paletov\u00fd skript p\u0159\u00edmo v map\u011b (z\u00e1pad slunce nad \u0159ekou je zaps\u00e1n v datech mapy).",
   }
 };
 let lang = "en";
@@ -371,6 +481,7 @@ function tabDefs() {
   return [
     ["screens", T("tScreens", "Screens"), paneScreens],
     ["sprites", T("tSprites", "Sprites"), paneSprites],
+    ["levels",  T("tLevels", "Levels"),   paneLevels],
     ["music",   T("tMusic", "Music"),     paneMusic],
     ["files",   T("tFiles", "Files"),     paneFiles],
     ["disk",    T("tDisk", "Disk"),       paneDisk],
@@ -480,6 +591,37 @@ function paneSprites(p) {
     blk.appendChild(lbl); blk.appendChild(document.createElement("br"));
     blk.appendChild(c); p.appendChild(blk);
   }
+}
+
+function paneLevels(p) {
+  const bar = document.createElement("p");
+  const info = document.createElement("span");
+  const holder = document.createElement("div");
+  holder.style.cssText = "max-height:70vh;overflow:auto;border:2px solid var(--wb-black)";
+  for (let lv = 0; lv < 7; lv++) {
+    const b = document.createElement("a");
+    b.className = "btn blue"; b.style.marginRight = "8px"; b.style.fontSize = "13px";
+    b.textContent = ["TOWN","DESERT","GRASS","RIVER","ICE","SCIFI","FINAL"][lv];
+    b.onclick = () => {
+      info.textContent = " " + T("rendering", "rendering\u2026");
+      holder.innerHTML = "";
+      setTimeout(() => {
+        const m = renderMap(state, lv);
+        holder.appendChild(canvasFrom(m.px, m.w, m.h, 1));
+        info.textContent = " " + m.name + ": " + m.tiles + " tiles, " +
+          m.objs + " objects, " + m.h + " px";
+      }, 30);
+    };
+    bar.appendChild(b);
+  }
+  bar.appendChild(info);
+  p.appendChild(bar);
+  const note = document.createElement("p");
+  note.dataset.i18n = "lvlnote";
+  note.innerHTML = lang === "cs" ? I18N.cs.lvlnote :
+    "Whole levels assembled from the .PAM maps \u2014 tile placement, object spawns and the in-map palette script (the river sunset happens right in the map data).";
+  p.appendChild(note);
+  p.appendChild(holder);
 }
 
 function paneMusic(p) {

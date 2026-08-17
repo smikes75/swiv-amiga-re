@@ -34,6 +34,7 @@ python3 tools/check.py                   # ověřovací kontrakt — změří v�
 python3 tools/extract.py SWIVFIX.ADF build/files   # vysype všech 128 souborů
 python3 tools/gfx.py raw build/files/032_COVER.RAW cover.png   # obrazovka → PNG
 python3 tools/gfx.py sheets build/files build/sheets           # archy všech spritů
+python3 tools/map.py                                           # 7 úrovní → build/maps/
 python3 tools/unboot.py SWIVFIX.ADF      # projde zaváděcí řetěz, vysype do build/
 python3 tools/depack.py <in> <out> <off> [a|b]   # jednotlivý blok
 ```
@@ -57,8 +58,9 @@ Na disassembly je potřeba `m68k-elf-binutils` (`brew install m68k-elf-binutils`
 | formát `.RAW` (obrazovky) | ✅ dekodér, 9 obrázků v `docs/img/` |
 | formát `.LIN` (sprity) | ✅ dekodér + archy, 934 snímků |
 | herní palety | ✅ nalezené v `AMPROG.OBJ` od `0x299C` |
-| formát `.PAM` (mapy úrovní) | ⬜ další na řadě |
-| `AMPROG.OBJ` | ⬜ 55 668 B kódu 68000 |
+| formát `.PAM` (mapy úrovní) | ✅ **všech 7 úrovní se skládá do celku** |
+| palety úrovní | ✅ žijí přímo v mapách (včetně západů slunce) |
+| `AMPROG.OBJ` | ⬜ 55 668 B kódu 68000; rozebrán interpret map, zvuk a animace |
 
 Podrobný popis všeho zjištěného je v **[docs/FORMAT.md](docs/FORMAT.md)**,
 anotované disassembly obou dekrunčerů v [`src-asm/`](src-asm/).
@@ -71,6 +73,7 @@ anotované disassembly obou dekrunčerů v [`src-asm/`](src-asm/).
 │   ├── check.py         ověřovací kontrakt (27 měření proti obrazu)
 │   ├── extract.py       katalog + proudový packer C → všech 128 souborů
 │   ├── gfx.py           dekodér .RAW obrazovek a .LIN spritů → PNG
+│   ├── map.py           renderer map úrovní .PAM → celé úrovně jako PNG
 │   ├── unboot.py        projde zaváděcí řetěz a vysype všechny články
 │   ├── depack.py        packery A a B přepsané do Pythonu
 │   └── scan.py          hledání zabalených bloků hrubou silou
@@ -82,6 +85,7 @@ anotované disassembly obou dekrunčerů v [`src-asm/`](src-asm/).
     ├── LOADER.md        vrstvy cracku vs. vlastní zavaděč hry
     ├── CATALOG.md       katalog, formát souborů, proudový packer C
     ├── GRAPHICS.md      formáty .RAW a .LIN, palety
+    ├── MAPS.md          formát .PAM — mapy, objekty a paletový skript
     └── img/             titulka a spol. dekódované z diskety
 ```
 
