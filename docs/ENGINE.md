@@ -111,3 +111,20 @@ through unfaded** — the sprite palette is set through these queues at
 level start and is immune to the level's palette script. (For the
 remake, the effective sprite palette can be sampled from gameplay
 footage until the init-time queue entries are transcribed.)
+
+## The behaviour inventory (`tools/tasks.py`)
+
+Scanning for `lea X(pc),a0` followed by a spawner call yields the
+complete coroutine map: **116 spawn sites, 64 unique behaviour entry
+points**, concentrated in `0x7000–0xB000`. This is the transcription
+worklist for phase 3 — every enemy behaviour in the game is one of
+these entries. `build/coroutines.json` holds the list.
+
+Also read along the way:
+
+- HUD copper events (`0x5b34`): BPLCON0 switches 5↔4 bitplanes around
+  the HUD strip, and **COLOR16 changes per band: 0xAAE / 0xCCF /
+  0x88D** — the light steel-blues of the score text and shots.
+- A level-select cheat handler reads raw keys at `0x20e4`.
+- The title sequence (`0xf42+`) loads COVER.RAW with palette `0x2abc`
+  and preloads REACTOR frames for the logo animation.
