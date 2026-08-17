@@ -38,6 +38,12 @@ x      = D >> 20         12 bitů; hodnoty ≥ 416 opakovaně −512 a
                          snížení vrstvy — záporná x a kreslicí pořadí
 ```
 
+**Pořadí kreslení: vrstvy se kreslí SESTUPNĚ.** Seznam aktivních
+dlaždic je řazený podle klíče `(vrstva<<8)|pořadí` sestupně (vkládání
+`0x4826` hledá první prvek s menším klíčem) — vrstva 4 je podklad
+(výplně země) a nižší vrstvy se kreslí přes ni (balvany, objekty,
+hrany). Obráceně to zemní výplně přemalují přes všechno.
+
 Objekty (`typ ≠ 0`) se nevkládají do bitmapy, ale **spawnují** —
 `0x36fe` založí strukturu s pozicí (`a0@(320/324)`) a typem chování
 (`a0@(276)`). Mapa tedy nese i rozmístění nepřátel a bonusů.
@@ -95,6 +101,15 @@ posunulo na jinou grafiku.
 (výška = čistá výška mapy; render přidává 300 px rezervu na přesahy)
 
 FINAL je krátký, protože finální aréna se opakuje smyčkou za běhu.
+
+## Ověření proti záznamu skutečné hry
+
+Render TOWN je konfrontovaný s uživatelovým videem z emulátoru:
+korelace najde snímky videa v renderovaném pásu a f001–f009 zamykají
+**monotónně s konzistentní rychlostí scrollu** (−48 px / 4 s); vizuální
+srovnání zamčené pozice sedí struktura po struktuře (živé ploty,
+ohrady, balvanová pole, plošiny). Rozdíly jsou jen dynamické entity
+(exploze, pohyb nepřátel), které statická mapa nenese.
 
 ## Co záměrně nerenderujeme / známé odchylky
 

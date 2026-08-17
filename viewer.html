@@ -333,7 +333,8 @@ function parsePam(pam, dico) {
     while (x >= 416) { x -= 512; layer--; }
     (typ === 0 ? tiles : objs).push({ y, x, gfx: dico[loc] || 0, layer, typ });
   }
-  tiles.sort((a, b) => a.layer - b.layer);
+  // seznam hry je razeny sestupne (0x4826): vrstva 4 = podklad
+  tiles.sort((a, b) => b.layer - a.layer);
   return { tiles, objs, checks, height: y };
 }
 

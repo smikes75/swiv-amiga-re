@@ -187,8 +187,9 @@ def render(disk, lv, out, with_objects=True):
                 if v != f["trans"]:
                     px[tx, ty] = pal[v]
 
-    # vrstvy odspodu (mensi layer driv), dlazdice pak objekty
-    for y, x, gfx, layer, _ in sorted(tiles, key=lambda t: t[3]):
+    # seznam hry je razeny SESTUPNE (0x4826): vrstva 4 = podklad se
+    # kresli prvni, mensi vrstvy pres ni; dlazdice pak objekty
+    for y, x, gfx, layer, _ in sorted(tiles, key=lambda t: -t[3]):
         blit(x, y, gfx)
     nobj = 0
     if with_objects:
