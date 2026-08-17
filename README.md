@@ -23,6 +23,12 @@ Jiný obraz může mít jiné offsety — je to crackovaná verze a těch koluje
 
 ## Použití
 
+**Prohlížeč diskety** — otevři `viewer.html` (stačí dvojklik, běží celý
+lokálně) a vlož vlastní `.adf`: dekóduje katalog, všechny tři packery,
+obrazovky, 934 snímků spritů, palety i metadata hudby přímo v prohlížeči.
+Nic se nikam nenahrává. Úvodní obrazovka zároveň vysvětluje, čím se tohle
+liší od emulace.
+
 ```sh
 python3 tools/check.py                   # ověřovací kontrakt — změří všechna tvrzení z docs/
 python3 tools/extract.py SWIVFIX.ADF build/files   # vysype všech 128 souborů
@@ -60,6 +66,7 @@ anotované disassembly obou dekrunčerů v [`src-asm/`](src-asm/).
 ## Struktura
 
 ```
+├── viewer.html          prohlížeč diskety ve stylu Workbenche (vše v jednom souboru)
 ├── tools/
 │   ├── check.py         ověřovací kontrakt (27 měření proti obrazu)
 │   ├── extract.py       katalog + proudový packer C → všech 128 souborů
