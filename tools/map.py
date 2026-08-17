@@ -16,14 +16,22 @@ Zaznam mapy jsou 4 bajty ctene jako big-endian long D:
                                                  snizeni vrstvy, viz 0x36cc)
 
 Paleta: barvy 0-9 jsou spolecne (objekty), 10-15 teren. Prazdne pozadi
-je BARVA 10 - engine maze pas do rovin 1 a 3 hodnotou -1 (0x34f2).
+neni plocha: engine maze pas do rovin 1 a 3 hodnotou -1 (0x34f2), ale
+roviny 0 a 2 nese predgenerovana sumova textura, ktera vymaz prezije.
+Prazdny pixel ma tedy index 10 | sum0 | sum2<<2, cili 10/11/14/15 -
+tmave krapani terenu. Hustoty zmerene z videa skutecne hry: rovina 0
+~36 %, rovina 2 ~17 %. Presny generator hry jsme zatim nehledali;
+render pouziva deterministicky LCG (v Pythonu i JS tentyz).
 
 Slovnik urovne (tabulka 0x384c v AMPROG, 6 B na uroven: word ID pam
 souboru 90+n, word offset slovniku, word rychlost scrollu) preklada
 lokalni ID na graficke slovo `snimek<<9 | soubor` (dekoduje 0x48c0).
 
-Scroll citac klesa; mapa se tedy stavi ODSPODU. Render akumuluje dy
-a vysledek kresli shora dolu.
+Scroll citac klesa; mapa se tedy stavi ODSPODU a soucasti kresleni je
+odecteni STREDU snimku (cx, cy z hlavicky .LIN) - engine to dela na
+0x3ef0 pro dlazdice i objekty. Render proto klade zacatek urovne DOLU
+(jako plakat: cte se odspodu nahoru, jak hra scrolluje) a kazdy snimek
+kotvi za stred.
 
     python3 tools/map.py 0 build/maps/town.png     # uroven 0..6
 """
@@ -114,31 +122,41 @@ def parse(pam, dico):
     return tiles, objs, checks, y
 
 
+XOFF = 32                # vodorovne vystredeni hriste v obrazku
+MARGIN = 160             # rezerva nad korunou mapy (presahy vysokych dlazdic)
+
+
 def render(disk, lv, out, with_objects=True):
     pam_name, dico = level_info(disk, lv)
     tiles, objs, checks, height = parse(disk.load(pam_name), dico)
-    H = height + 300
+    H = height + 2 * MARGIN
 
-    def pal_at(y):
-        cur = checks[0][1]
+    def ry_of(img_y):
+        return height + MARGIN - img_y
+
+    def pal_at_ry(ry):
+        cur = checks[0][1] if checks else [0] * 16
         for cy, p in checks:
-            if cy > y:
+            if cy > ry:
                 break
             cur = p
         return [rgb12(v) for v in cur]
 
     img = Image.new("RGB", (FIELD_W, H))
     px = img.load()
-    # pozadi: barva 10 podle palety platne na danem radku
-    row_pal = None
+    # pozadi: krapani 10/11/14/15 podle palety platne na danem radku
+    seed = 0x1234 ^ lv
     for y in range(H):
-        row_pal = pal_at(y)
-        c = row_pal[10]
+        pal = pal_at_ry(ry_of(y))
         for x in range(FIELD_W):
-            px[x, y] = c
+            seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
+            b0 = 1 if ((seed >> 16) & 0xFF) < 92 else 0
+            seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
+            b2 = 4 if ((seed >> 16) & 0xFF) < 44 else 0
+            px[x, y] = pal[10 | b0 | b2]
 
-    def blit(x0, y0, gfx):
-        pal = pal_at(y0)
+    def blit(rx, ry, gfx):
+        pal = pal_at_ry(ry)
         fname = disk.order[gfx & 0x1FF]
         frames = disk.frames(fname)
         fi = gfx >> 9
@@ -148,6 +166,9 @@ def render(disk, lv, out, with_objects=True):
         w, h, wd, data = f["w"], f["h"], (f["w"] + 15) // 16, f["data"]
         if len(data) < wd * 8 * h:
             return
+        # kotva za stred (0x3ef0); svet jede citacem dolu -> preklopit
+        x0 = rx - f["cx"] + XOFF
+        y0 = (height + MARGIN - ry) - f["cy"]
         for y in range(h):
             ty = y0 + y
             if not 0 <= ty < H:
@@ -169,11 +190,11 @@ def render(disk, lv, out, with_objects=True):
 
     # vrstvy odspodu (mensi layer driv), dlazdice pak objekty
     for y, x, gfx, layer, _ in sorted(tiles, key=lambda t: t[3]):
-        blit(x + 17, y, gfx)
+        blit(x, y, gfx)
     nobj = 0
     if with_objects:
         for y, x, gfx, layer, typ in objs:
-            blit(x + 17, y, gfx)
+            blit(x, y, gfx)
             nobj += 1
     img.save(out)
     print("%s: %d dlazdic, %d objektu, %d zmen palety, %d px -> %s"

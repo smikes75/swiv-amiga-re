@@ -59,12 +59,27 @@ skript v kódu — **je zapsán přímo v datech mapy.**
 Změřená struktura palet: barvy 0–9 jsou v úrovních 0–4 shodné
 (objekty — jeep, vrtulník, exploze), 10–15 nese terén.
 
-## Barva pozadí je 10
+## Ukotvení: engine kreslí od kotvy, ne od rohu
+
+Kreslič bobů (`0x3ef0`) odečítá od pozice **kotvu snímku** —
+bajty +4/+5 hlavičky `.LIN`, které jsou **znaménkové** (diagonální
+sekce ranveje mají kotvu mimo vlastní obdélník, např. −6). Bajty
++8/+9 nesou tentýž pár podruhé; u pár souborů (SKI) se páry liší
+a který z nich runtime používá, rozhodne až přečtení konvertoru
+hlaviček. Svislý směr: scroll čítač klesá, mapa se staví odspodu —
+render klade start úrovně dolů a čte se nahoru, jak hra letí.
+
+## Pozadí není plocha — je to šum
 
 Engine maže pás scrollovací bitmapy hodnotou `-1` do **rovin 1 a 3**
-(`0x34f2`: `moveq #-1` + zápis na offset 0 a 14080; řádka má 44 B =
-352 px, rovina 44×320). Prázdné pozadí má tedy index `0b1010` = **10** —
-u GRASS tmavá zelená `366`, u DESERT písek `A85`, u TOWN hlína `542`.
+(`0x34f2`; řádka má 44 B = 352 px, rovina 44×320). Roviny 0 a 2 ale
+nesou **předgenerovanou šumovou texturu**, která výmaz přežívá —
+prázdný pixel má index `10 | šum0 | šum2<<2`, tedy 10/11/14/15:
+tmavé krápání terénu, které je v celé hře vidět jako struktura hlíny,
+trávy i vody. Hustoty změřené z videa skutečné hry: rovina 0 ≈ 36 %,
+rovina 2 ≈ 17 %. Přesný generátor hry jsme zatím nehledali; render
+používá deterministický LCG, v Pythonu i JS týž (proto jsou obě
+implementace stále bit po bitu shodné).
 
 ## Čísla úrovní (proměřeno)
 
@@ -82,8 +97,16 @@ u GRASS tmavá zelená `366`, u DESERT písek `A85`, u TOWN hlína `542`.
 
 FINAL je krátký, protože finální aréna se opakuje smyčkou za běhu.
 
-## Co záměrně nerenderujeme
+## Co záměrně nerenderujeme / známé odchylky
 
 - interpolace barevných přechodů (render skáče po checkpointech)
 - opakování FINAL arény
 - typy chování objektů (kreslíme jen jejich grafiku na pozici spawnu)
+- flip bity: kreslič má zrcadlové varianty (`0x3e70`, výběr podle
+  flagů struktury snímku); bajt +7 hlavičky je zřejmě nese, zatím
+  neaplikujeme — diagonální hrany ranveje proto úplně nenavazují
+- přesný generátor šumu pozadí (aproximace se změřenými hustotami)
+
+Obojí čeká na přečtení konvertoru hlaviček → runtime struktur
+(vzniká při nahrání souboru; struktura má kotvu na +12/+14, rozměry
+na +16/+18 a flagy na +26).

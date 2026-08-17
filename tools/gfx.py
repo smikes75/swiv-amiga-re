@@ -82,7 +82,9 @@ def lin_frames(data):
             break
         dsz = int.from_bytes(data[p:p + 2], "big")
         w, h = data[p + 2], data[p + 3]
-        out.append({"w": w, "h": h, "cx": data[p + 4], "cy": data[p + 5],
+        sx = data[p + 4] - 256 if data[p + 4] > 127 else data[p + 4]
+        sy = data[p + 5] - 256 if data[p + 5] > 127 else data[p + 5]
+        out.append({"w": w, "h": h, "cx": sx, "cy": sy,
                     "trans": data[p + 6], "data": data[p + 10:p + 10 + dsz]})
         p += 10 + dsz
     return out
