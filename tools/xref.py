@@ -58,7 +58,7 @@ def main():
     args = sys.argv[1:]
     if "--callers" in args:
         t = int(args[args.index("--callers") + 1], 16)
-        for c in sorted(calls.get(t, []) | leas.get(t, [])):
+        for c in sorted(set(calls.get(t, set())) | set(leas.get(t, set()))):
             print("  0x%05x" % c)
         return
     top = int(args[args.index("--top") + 1]) if "--top" in args else 40

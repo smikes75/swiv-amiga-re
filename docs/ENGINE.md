@@ -83,3 +83,31 @@ linear program built from ~a dozen utility calls. The path to a
 pixel-identical game is: name the utilities (done above), then
 transcribe scripts one enemy at a time, verifying trajectories against
 gameplay footage.
+
+## Input, the player, and hardware sprites (phase-2 additions)
+
+**Input.** The resident loader's VERTB handler polls devices into
+a6-negative variables; `0x71ac` assembles a per-player byte from
+`fp@(-31)` (directions, bits 4–7) and `fp@(-28)` (fire buttons).
+Alternative sources `fp@(-44)/(-42)` (keyboard/second stick decode
+tables live in the loader) are selected per player via the player
+struct — **two player structs at `fp@(11176)` and `fp@(11356)`**
+(180 B apart; +60 object ptr, +64/+66 input mode, +90..+98 input
+state).
+
+**Fire cadence** (`0x7266`): press-edge detection against the
+previous frame, cooldown reloaded from player-struct `+98`, floored
+at 10 ticks under a powerup condition, decremented by the global
+frame delta.
+
+**Hardware sprites confirmed**: the copper builder `0x5d86` writes
+SPR0PTH.. (reg `0x120+`) for **8 sprite slots of 548 B each**.
+
+**The copper event compiler** (`0x5dd4`): two sorted event queues
+(`fp@(11106)`/`fp@(11120)`) are merged per frame into copper
+`WAIT(line)` + `MOVE` pairs. Fades (`0x4a48`) are applied only to
+registers `0x180–0x19F`; **writes to `0x1A0+` (sprite colours) pass
+through unfaded** — the sprite palette is set through these queues at
+level start and is immune to the level's palette script. (For the
+remake, the effective sprite palette can be sampled from gameplay
+footage until the init-time queue entries are transcribed.)

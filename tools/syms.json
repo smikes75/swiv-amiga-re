@@ -65,7 +65,15 @@
   "0x62b8": "wait_n_yields",
   "0x629c": "wait_n_frames",
   "0x9afa": "wait_on_screen",
-  "0x9ac8": "wait_on_screen_preload"
+  "0x9ac8": "wait_on_screen_preload",
+  "0x71ac": "input_read_player",
+  "0x7266": "fire_cadence",
+  "0x7188": "input_dispatch",
+  "0x5c64": "copper_frame_update",
+  "0x5d86": "copper_sprite_pointers",
+  "0x5dd4": "copper_event_compile",
+  "0x49c8": "event_queue_flush",
+  "0x49ec": "event_queue_init"
  },
  "data": {
   "0x0004": "file_name_table",
