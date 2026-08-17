@@ -40,12 +40,18 @@ x      = D >> 20         12 bitů; hodnoty ≥ 416 opakovaně −512 a
 
 **Pořadí kreslení.** Seznam aktivních dlaždic drží klíč
 `(vrstva<<8)|pořadí` a řadí se sestupně (vkládání `0x4826`). Prakticky
-ověřené pořadí proti skutečné hře (věž na startu TOWN, balvanová pole):
-**koberce vespod** — vrstva 0 je „nejdalší pozadí" (řadí se jako 5),
-pak vrstva 4, a detaily 3/2/1 navrch; v rámci vrstvy pořadí záznamů
-mapy. Přesná mechanika, kterou engine dosahuje pozice vrstvy 0 na dně
-(klíč `0|seq` je přitom nejmenší), zbývá dočíst — pravidlo je ale
-ověřené na obou konfliktních místech i proti videu.
+ověřené pořadí proti skutečné hře: **koberce vespod** — vrstva 0 je
+„nejdalší pozadí" (řadí se jako 5), pak vrstva 4, detaily 3/2/1
+navrch; **uvnitř vrstvy obráceně podle pořadí záznamů** (sestupný
+klíč: pozdější záznam vespod, dřívější navrch) — přesně tak na sebe
+navazují překryvné instance, z nichž se skládá např. hangár
+(3× `_RUNWAY#6` s krokem −38/+38). Toto pravidlo zvedlo korelaci
+s videem plošně (0.19→0.29) a srovnalo i dřívější outlier. Mechanika
+pozice vrstvy 0 na dně (klíč `0|seq` je nejmenší) zbývá dočíst.
+
+Pozn.: zrcadlící bity (flagy 1–2 dílů) se ukázaly jako NEpoužívané
+při skládání kompozitů — hangár i věž sedí bez zrcadlení; jejich
+skutečný význam v kresliči (sloty `0x3e70`) zbývá dočíst.
 
 Objekty (`typ ≠ 0`) se nevkládají do bitmapy, ale **spawnují** —
 `0x36fe` založí strukturu s pozicí (`a0@(320/324)`) a typem chování

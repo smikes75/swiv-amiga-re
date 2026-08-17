@@ -191,11 +191,14 @@ def render(disk, lv, out, with_objects=True):
                 if v != f["trans"]:
                     px[tx, ty] = pal[v]
 
-    # poradi kresleni (empiricky proti realne hre): koberce vespod -
+    # poradi kresleni (overeno proti realne hre): koberce vespod -
     # vrstva 0 je "nejdalsi pozadi" (0 -> 5), pak 4, detaily 3/2/1
-    # navrch; v ramci vrstvy poradi zaznamu mapy
-    for y, x, gfx, layer, _ in sorted(
-            tiles, key=lambda t: -(5 if t[3] == 0 else t[3])):
+    # navrch. UVNITR vrstvy obracene poradi zaznamu (sestupny klic
+    # (vrstva<<8)|seq): pozdejsi zaznam vespod, drivejsi navrch -
+    # tak na sebe navazuji prekryvne instance (hangar z _RUNWAY#6).
+    order = sorted(enumerate(tiles),
+                   key=lambda it: (-(5 if it[1][3] == 0 else it[1][3]), -it[0]))
+    for _, (y, x, gfx, layer, _t) in order:
         blit(x, y, gfx)
     nobj = 0
     if with_objects:

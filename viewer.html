@@ -333,10 +333,11 @@ function parsePam(pam, dico) {
     while (x >= 416) { x -= 512; layer--; }
     (typ === 0 ? tiles : objs).push({ y, x, gfx: dico[loc] || 0, layer, typ });
   }
-  // koberce vespod: vrstva 0 = nejdalsi pozadi (0 -> 5), pak 4,
-  // detaily 3/2/1 navrch; v ramci vrstvy poradi zaznamu (stabilni sort)
+  // koberce vespod (vrstva 0 = nejdalsi pozadi -> 5), detaily navrch;
+  // uvnitr vrstvy obracene poradi zaznamu (sestupny klic (vrstva<<8)|seq)
+  tiles.forEach((t, i) => t.seq = i);
   const prio = t => t.layer === 0 ? 5 : t.layer;
-  tiles.sort((a, b) => prio(b) - prio(a));
+  tiles.sort((a, b) => (prio(b) - prio(a)) || (b.seq - a.seq));
   return { tiles, objs, checks, height: y };
 }
 
