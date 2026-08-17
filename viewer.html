@@ -280,6 +280,8 @@ function modInfo(bytes) {
 
 
 /* ------------------------------------------------------------------ UI */
+const esc = x => String(x).replace(/[&<>"']/g,
+  c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const REF_SHA = "13d8beba136d433971379cc5eb6d6d7707e5cb7874c28301ba57583baa41cb5a";
 const $ = s => document.querySelector(s);
 
@@ -484,9 +486,9 @@ function paneMusic(p) {
   for (const f of state.files.filter(f => f.name.endsWith(".MOD"))) {
     const m = modInfo(unpackFile(state.adf, f));
     const h = document.createElement("div"); h.className = "linblock";
-    h.innerHTML = "<div class='lbl'>" + f.name + "</div><p>&#9835; <b>" +
-      m.title + "</b> (" + m.magic + ") &mdash; " + m.samples.length + " samples</p><ul>" +
-      m.samples.map(s => "<li>" + (s.name || "&mdash;") + " (" + s.len + " B)</li>").join("") + "</ul>";
+    h.innerHTML = "<div class='lbl'>" + esc(f.name) + "</div><p>&#9835; <b>" +
+      esc(m.title) + "</b> (" + esc(m.magic) + ") &mdash; " + m.samples.length + " samples</p><ul>" +
+      m.samples.map(s => "<li>" + (s.name ? esc(s.name) : "&mdash;") + " (" + s.len + " B)</li>").join("") + "</ul>";
     p.appendChild(h);
   }
 }
@@ -494,7 +496,7 @@ function paneMusic(p) {
 function paneFiles(p) {
   const t = document.createElement("table");
   t.innerHTML = "<tr><th>#</th><th>name</th><th>packed</th><th>unpacked</th></tr>" +
-    state.files.map(f => "<tr><td>" + f.i + "</td><td>" + f.name + "</td><td>" +
+    state.files.map(f => "<tr><td>" + f.i + "</td><td>" + esc(f.name) + "</td><td>" +
       f.stored + "</td><td>" + f.size + "</td></tr>").join("");
   p.appendChild(t);
 }
@@ -505,7 +507,7 @@ function paneDisk(p) {
         yeti = new TextDecoder("latin1").decode(a.subarray(8, 12));
   const shaOk = state.sha === REF_SHA;
   p.innerHTML =
-    "<p>" + a.length + " B, bootblock &#8222;" + magic + "&#8220;, " +
+    "<p>" + a.length + " B, bootblock &#8222;" + esc(magic) + "&#8220;, " +
     (yeti === "YETI" ? "sign <b>YETI</b> (The Company crack)" : "rootptr " + dv.getUint32(8)) + "</p>" +
     "<p>SHA-256: <code style='font-size:12px'>" + (state.sha || "n/a") + "</code><br>" +
     (shaOk ? "<span class='ok'>&#10004; " + T("shaOk", "byte-for-byte the verified image") + "</span>"
