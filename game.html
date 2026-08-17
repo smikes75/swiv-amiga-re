@@ -37,6 +37,11 @@ a { color:#cfe0ff }
   <p><small>arrows/WASD move &middot; space fires &middot; sound on first click</small></p>
 </div>
 
+<div id="titlewrap" style="display:none">
+  <canvas id="title" style="image-rendering:pixelated;border:3px solid var(--black);cursor:pointer"></canvas>
+  <p><b>PRESS FIRE</b> <small>(space / click)</small></p>
+</div>
+
 <div id="levelpick" style="display:none">
   <p>Pick a level:</p>
   <div id="levelbtns"></div>
@@ -239,7 +244,7 @@ function parsePam(pam, dico) {
   return { tiles, objs, checks, height: y };
 }
 
-function renderMap(state, lv) {
+function renderMap(state, lv, withObjects) {
   const prog = state.prog, order = state.order || (state.order = gameOrder(prog));
   const { fid, dico } = levelInfo(prog, lv);
   const pamName = order[fid];
@@ -307,8 +312,138 @@ function renderMap(state, lv) {
     }
   }
   for (const t of tiles) blit(t.x, t.y, t.gfx);
-  for (const t of objs) blit(t.x, t.y, t.gfx);
+  if (withObjects !== false)
+    for (const t of objs) blit(t.x, t.y, t.gfx);
   return { px, w: W, h: H, name: pamName, tiles: tiles.length, objs: objs.length };
+}
+
+/* ---- ProTracker prehravac (podmnozina efektu, ktere SWIV moduly
+   pouzivaji: 0,1,2,3,4,A,B,C,D,F). Mix v ScriptProcessorNode. ---- */
+function ModPlayer(bytes) {
+  const dec = b => new TextDecoder("latin1").decode(b).replace(/\0.*$/, "");
+  const smp = [];
+  for (let i = 0; i < 31; i++) {
+    const o = 20 + i * 30;
+    smp.push({
+      len: ((bytes[o + 22] << 8) | bytes[o + 23]) * 2,
+      ft: bytes[o + 24] & 15,
+      vol: bytes[o + 25],
+      ls: ((bytes[o + 26] << 8) | bytes[o + 27]) * 2,
+      ll: ((bytes[o + 28] << 8) | bytes[o + 29]) * 2,
+    });
+  }
+  const songlen = bytes[950];
+  const pos = bytes.subarray(952, 952 + 128);
+  let npat = 0;
+  for (let i = 0; i < 128; i++) npat = Math.max(npat, pos[i] + 1);
+  const patterns = bytes.subarray(1084, 1084 + npat * 1024);
+  let so = 1084 + npat * 1024;
+  for (const s of smp) { s.data = bytes.subarray(so, so + s.len); so += s.len; }
+
+  const PAL = 7093789.2 / 2;
+  const ch = [];
+  for (let i = 0; i < 4; i++)
+    ch.push({ s: null, pos: 0, period: 0, tperiod: 0, vol: 0, port: 0,
+              vibpos: 0, vib: 0, playing: false });
+  const st = { row: 0, order: 0, speed: 6, bpm: 125, tick: 0,
+               samplesPerTick: 0, cnt: 0, done: false, loop: true };
+
+  function note(c, o) {
+    const b = patterns.subarray(o, o + 4);
+    const period = ((b[0] & 15) << 8) | b[1];
+    const inst = (b[0] & 0xF0) | (b[2] >> 4);
+    const eff = b[2] & 15, arg = b[3];
+    const C = ch[c];
+    if (inst) { C.s = smp[inst - 1]; C.vol = C.s.vol; }
+    if (period) {
+      if (eff === 3) C.tperiod = period;       // toneporta cil
+      else { C.period = period; C.pos = 0; C.playing = !!C.s; }
+    }
+    C.eff = eff; C.arg = arg;
+    switch (eff) {
+      case 3: if (arg) C.port = arg; break;
+      case 0xB: st.jump = arg; break;
+      case 0xC: C.vol = Math.min(64, arg); break;
+      case 0xD: st.brk = (arg >> 4) * 10 + (arg & 15); break;
+      case 0xF: if (arg) { if (arg < 32) st.speed = arg; else st.bpm = arg; } break;
+    }
+  }
+  function tickFx() {
+    for (const C of ch) {
+      switch (C.eff) {
+        case 0: if (C.arg) {                    // arpeggio (hrube)
+            const t = st.tick % 3;
+            C.shift = t === 1 ? C.arg >> 4 : t === 2 ? C.arg & 15 : 0;
+          } break;
+        case 1: C.period = Math.max(113, C.period - C.arg); break;
+        case 2: C.period = Math.min(856, C.period + C.arg); break;
+        case 3: if (C.tperiod) {
+            if (C.period < C.tperiod) C.period = Math.min(C.tperiod, C.period + C.port);
+            else C.period = Math.max(C.tperiod, C.period - C.port);
+          } break;
+        case 4: C.vibpos = (C.vibpos + (C.arg >> 4)) & 63;
+            C.vib = Math.sin(C.vibpos * Math.PI / 32) * (C.arg & 15) * 2;
+            break;
+        case 0xA: C.vol = Math.max(0, Math.min(64,
+            C.vol + (C.arg >> 4) - (C.arg & 15))); break;
+      }
+    }
+  }
+  function advanceRow() {
+    const pat = pos[st.order];
+    const base = pat * 1024 + st.row * 16;
+    for (let c = 0; c < 4; c++) note(c, base + c * 4);
+    st.row++;
+    if (st.jump !== undefined) {
+      st.order = st.jump; st.row = 0; st.jump = undefined;
+    } else if (st.brk !== undefined) {
+      st.order++; st.row = st.brk; st.brk = undefined;
+    }
+    if (st.row >= 64) { st.row = 0; st.order++; }
+    if (st.order >= songlen) {
+      if (st.loop) st.order = 0; else st.done = true;
+    }
+  }
+  let node = null, gain = null;
+  function start(actx, volume) {
+    st.samplesPerTick = actx.sampleRate / (st.bpm * 2 / 5);
+    node = actx.createScriptProcessor(4096, 0, 2);
+    gain = actx.createGain(); gain.gain.value = volume ?? 0.5;
+    node.onaudioprocess = e => {
+      const L = e.outputBuffer.getChannelData(0),
+            R = e.outputBuffer.getChannelData(1);
+      for (let i = 0; i < L.length; i++) {
+        if (st.cnt-- <= 0) {
+          st.cnt = actx.sampleRate / (st.bpm * 2 / 5) | 0;
+          if (st.tick === 0) advanceRow(); else tickFx();
+          st.tick = (st.tick + 1) % st.speed;
+        }
+        let l = 0, r = 0;
+        for (let c = 0; c < 4; c++) {
+          const C = ch[c];
+          if (!C.playing || !C.s || C.period < 100) continue;
+          let per = C.period + (C.vib || 0);
+          if (C.shift) per = per / Math.pow(2, C.shift / 12);
+          const rate = PAL / per / actx.sampleRate;
+          C.pos += rate;
+          const s = C.s;
+          if (C.pos >= s.len) {
+            if (s.ll > 2) C.pos = s.ls + (C.pos - s.len) % s.ll;
+            else { C.playing = false; continue; }
+          }
+          const v = ((s.data[C.pos | 0] << 24) >> 24) / 128 * (C.vol / 64);
+          if (c === 0 || c === 3) l += v; else r += v;   // Amiga LRRL
+        }
+        L[i] = l * 0.5 + r * 0.15;
+        R[i] = r * 0.5 + l * 0.15;
+      }
+    };
+    node.connect(gain); gain.connect(actx.destination);
+  }
+  function stop() {
+    if (node) { node.disconnect(); gain.disconnect(); node = null; }
+  }
+  return { start, stop, state: st };
 }
 
 /* ============================================================ HRA
@@ -343,7 +478,38 @@ async function loadFile(file) {
   state.order = gameOrder(state.prog);
   state.frameCache = {}; state.spriteCache = {};
   $("#intro").style.display = "none";
-  $("#levelpick").style.display = "";
+  showTitle();
+}
+
+/* ---- titulka: COVER.RAW + AMTITUNE.MOD ---- */
+function showTitle() {
+  $("#titlewrap").style.display = "";
+  const f = state.files.find(f => f.name === "COVER.RAW");
+  if (f) {
+    const img = rawImage(unpackFile(state.adf, f));
+    const cv = $("#title");
+    cv.width = img.w; cv.height = img.h;
+    cv.getContext("2d").putImageData(new ImageData(img.px, img.w, img.h), 0, 0);
+    const scale = Math.max(1, Math.floor((window.innerWidth - 60) / img.w));
+    cv.style.width = (img.w * Math.min(scale, 3)) + "px";
+  }
+  if (!actx) try { actx = new AudioContext(); } catch (e) {}
+  if (actx && !state.titleMod) {
+    const mf = state.files.find(f => f.name === "AMTITUNE.MOD");
+    if (mf) {
+      state.titleMod = ModPlayer(unpackFile(state.adf, mf));
+      state.titleMod.start(actx, 0.6);
+    }
+  }
+  const go = () => {
+    window.removeEventListener("keydown", onkey);
+    $("#title").removeEventListener("click", go);
+    $("#titlewrap").style.display = "none";
+    $("#levelpick").style.display = "";
+  };
+  const onkey = e => { if (e.key === " " || e.key === "Enter") go(); };
+  window.addEventListener("keydown", onkey);
+  $("#title").addEventListener("click", go);
 }
 for (let lv = 0; lv < 7; lv++) {
   const b = document.createElement("a");
@@ -427,7 +593,7 @@ function snd(name, rate) {
 
 /* ---- start urovne ---- */
 function startGame(lv) {
-  const m = renderMap(state, lv);
+  const m = renderMap(state, lv, false);
   const big = document.createElement("canvas");
   big.width = m.w; big.height = m.h;
   big.getContext("2d").putImageData(new ImageData(m.px, m.w, m.h), 0, 0);
@@ -458,6 +624,7 @@ function startGame(lv) {
     score: 0, lives: 3, tick: 0, over: false, won: false,
     keys: {},
   };
+  if (state.titleMod) { state.titleMod.stop(); state.titleMod = null; }
   $("#levelpick").style.display = "none";
   $("#gamewrap").style.display = "";
   if (!state.loopRunning) { state.loopRunning = true; requestAnimationFrame(frame); }
@@ -628,7 +795,7 @@ function frame(now) {
   }
   // vzdusni nepratele (SKYEYEA, animace 0-3)
   for (const a of g.air) {
-    const spr = sprite("SKYEYEA.LIN", (g.tick >> 2) % 4);
+    const spr = sprite("FODDERA.LIN", 2);
     if (spr) ctx.drawImage(spr.cv, Math.round(a.x + spr.ox), Math.round(a.y + spr.oy));
   }
   // strely
@@ -639,10 +806,10 @@ function frame(now) {
   // hrac: telo 0 + rotor 5-8
   const p = g.player;
   if (p.alive && (p.inv === 0 || (g.tick & 4))) {
-    const body = sprite("JEEPHELI.LIN", p.bank < 0 ? 27 : p.bank > 0 ? 31 : 0);
+    const body = sprite("JEEPHELI.LIN", 0);
     const rotor = sprite("JEEPHELI.LIN", 5 + (g.tick & 3));
     if (body) ctx.drawImage(body.cv, Math.round(p.x + body.ox), Math.round(p.y + body.oy));
-    if (rotor && p.bank === 0)
+    if (rotor)
       ctx.drawImage(rotor.cv, Math.round(p.x + rotor.ox), Math.round(p.y + rotor.oy - 6));
   }
   // HUD
