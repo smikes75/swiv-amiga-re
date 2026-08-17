@@ -1,96 +1,115 @@
-# SWIV — rozbor amigové diskety
+# SWIV — an Amiga floppy, fully decoded
 
-Reverzní analýza hry **S.W.I.V.** (Storm / The Sales Curve, 1991) na Amize:
-formát diskety, zaváděcí řetěz a oba vlastní packery, které si hra veze
-s sebou. Cílem je dostat se k datům a kódu hry a popsat, jak je postavená.
+Reverse engineering of **S.W.I.V.** (Storm / The Sales Curve, 1991) for
+the Commodore Amiga: the disk format, the boot chain, all three
+proprietary packers, every graphics format, and the level maps —
+documented, re-implemented in portable tools, and verified against
+real gameplay footage.
 
-Stejným postupem stavíme [Captain Beeble](https://github.com/smikes75/captain-beeble-web)
-na Atari 8-bit — nejdřív úplný popis originálu, teprve pak cokoli dalšího.
+**Try it in your browser:** open the
+[disk explorer](https://smikes75.github.io/swiv-amiga-re/) and insert
+your own `.adf` image — everything is decoded client-side, nothing is
+uploaded, and the page ships no game data.
 
-## Disketa v repu není
+Built with the same method as
+[Captain Beeble](https://github.com/smikes75/captain-beeble-web)
+(Atari 8-bit): first a complete, *measured* description of the
+original — only then anything else.
 
-Hra není public domain, takže se tu distribuují **jen nástroje a popis**.
-Vlastní obraz diskety si musíš dodat sám a položit ho do kořene projektu.
+## The disk image is not included
 
-Ověřený obraz, se kterým je všechno níže proměřené:
+The game is copyrighted. This repository distributes **tools and
+documentation only**; supply your own disk image and drop it next to
+the tools. Everything below was measured against this image:
 
 ```
-SWIVFIX.ADF   901 120 B
+SWIVFIX.ADF   901,120 B
 SHA-256       13d8beba136d433971379cc5eb6d6d7707e5cb7874c28301ba57583baa41cb5a
 ```
 
-Jiný obraz může mít jiné offsety — je to crackovaná verze a těch koluje víc.
+Other cracked images exist and will have different offsets — the
+tools verify the catalogue rather than blindly trusting offsets, and
+`check.py` tells you if your image is the verified one.
 
-## Použití
+## Usage
 
-**Prohlížeč diskety** — otevři `viewer.html` (stačí dvojklik, běží celý
-lokálně) a vlož vlastní `.adf`: dekóduje katalog, všechny tři packery,
-obrazovky, 934 snímků spritů, palety i metadata hudby přímo v prohlížeči.
-Nic se nikam nenahrává. Úvodní obrazovka zároveň vysvětluje, čím se tohle
-liší od emulace.
+**Browser:** open `index.html` (double-click works, it runs entirely
+locally) and insert your `.adf`. Screens, 900+ sprite frames with
+selectable palettes, all seven levels assembled from the map data,
+a smooth fly-over mode, music metadata, and the file catalogue.
+
+**Command line:**
 
 ```sh
-python3 tools/check.py                   # ověřovací kontrakt — změří všechna tvrzení z docs/
-python3 tools/extract.py SWIVFIX.ADF build/files   # vysype všech 128 souborů
-python3 tools/gfx.py raw build/files/032_COVER.RAW cover.png   # obrazovka → PNG
-python3 tools/gfx.py sheets build/files build/sheets           # archy všech spritů
-python3 tools/map.py                                           # 7 úrovní → build/maps/
-python3 tools/unboot.py SWIVFIX.ADF      # projde zaváděcí řetěz, vysype do build/
-python3 tools/depack.py <in> <out> <off> [a|b]   # jednotlivý blok
+python3 tools/check.py                     # verification contract: measures
+                                           #   every claim in docs/ against the image
+python3 tools/extract.py SWIVFIX.ADF out/  # unpack all 128 files
+python3 tools/gfx.py raw ... cover.png     # decode a full screen to PNG
+python3 tools/gfx.py sheets out/ sheets/   # sprite sheets for every .LIN
+python3 tools/map.py                       # render all 7 levels as tall PNGs
 ```
 
-Kontrakt je jediná pravda projektu: každé tvrzení z `docs/` má v něm
-řádek, který ho změří. Když prochází, dokumentace není názor.
+Disassembly needs `m68k-elf-binutils` (`brew install m68k-elf-binutils`).
 
-Na disassembly je potřeba `m68k-elf-binutils` (`brew install m68k-elf-binutils`).
-
-## Co je hotové
+## What is documented
 
 | | |
 |---|---|
-| bootblock rozebraný | ✅ tři čtení přes `DoIO`, lineární offsety |
-| ochrana proti kopírování | ✅ **žádná** — v tomhle obrazu už není |
-| packer A rozebraný a přepsaný | ✅ 5 328 B → 21 548 B |
-| packer B rozebraný a přepsaný | ✅ ověřeno vlastním kontrolním součtem |
-| zavaděč hry | ✅ vrstvy cracku odděleny, rutiny identifikovány |
-| katalog a soubory | ✅ **všech 128 souborů vysypaných a rozbalených** |
-| packer C (proudový) rozebraný a přepsaný | ✅ `extract.py` |
-| formát `.RAW` (obrazovky) | ✅ dekodér, 9 obrázků v `docs/img/` |
-| formát `.LIN` (sprity) | ✅ dekodér + archy, 934 snímků |
-| herní palety | ✅ nalezené v `AMPROG.OBJ` od `0x299C` |
-| formát `.PAM` (mapy úrovní) | ✅ **všech 7 úrovní se skládá do celku** |
-| palety úrovní | ✅ žijí přímo v mapách (včetně západů slunce) |
-| `AMPROG.OBJ` | ⬜ 55 668 B kódu 68000; rozebrán interpret map, zvuk a animace |
+| bootblock & boot chain | ✅ three `DoIO` reads, linear offsets, **no copy protection** |
+| crack layers vs. game | ✅ The Company / N.O.M.A.D layers identified and separated |
+| packer A (boot) | ✅ disassembled & re-implemented (`tools/depack.py`) |
+| packer B (Bytekiller) | ✅ verified by its own checksum |
+| packer C (streaming) | ✅ the in-game format: alternating literal/match blocks, 1 KB ring |
+| catalogue & file layout | ✅ all 128 files extracted, byte-exact |
+| `.RAW` screens | ✅ 4 bitplanes + palette |
+| `.LIN` sprites | ✅ logical frames, chained multi-part composites, signed anchors |
+| `.PAM` level maps | ✅ tiles, object spawns, in-map palette script, layers, display window |
+| verification | ✅ 37-check contract + frame-by-frame match against gameplay video |
+| `AMPROG.OBJ` (55,668 B game code) | ⬜ partially mapped (map interpreter, sound engine, animation scripts, bob drawer, loader) |
 
-Podrobný popis všeho zjištěného je v **[docs/FORMAT.md](docs/FORMAT.md)**,
-anotované disassembly obou dekrunčerů v [`src-asm/`](src-asm/).
+Detailed write-ups live in [`docs/`](docs/):
+[FORMAT](docs/FORMAT.md) · [LOADER](docs/LOADER.md) ·
+[CATALOG](docs/CATALOG.md) · [GRAPHICS](docs/GRAPHICS.md) ·
+[MAPS](docs/MAPS.md). Annotated disassembly of both boot-time
+decrunchers is in [`src-asm/`](src-asm/).
 
-## Struktura
+## Layout
 
 ```
-├── viewer.html          prohlížeč diskety ve stylu Workbenche (vše v jednom souboru)
+├── index.html           browser disk explorer (single file, no dependencies)
 ├── tools/
-│   ├── check.py         ověřovací kontrakt (27 měření proti obrazu)
-│   ├── extract.py       katalog + proudový packer C → všech 128 souborů
-│   ├── gfx.py           dekodér .RAW obrazovek a .LIN spritů → PNG
-│   ├── map.py           renderer map úrovní .PAM → celé úrovně jako PNG
-│   ├── unboot.py        projde zaváděcí řetěz a vysype všechny články
-│   ├── depack.py        packery A a B přepsané do Pythonu
-│   └── scan.py          hledání zabalených bloků hrubou silou
-├── src-asm/
-│   ├── decrunch-a.asm   anotovaná disassembly, 296 B
-│   └── decrunch-b.asm   anotovaná disassembly, 160 B
-└── docs/
-    ├── FORMAT.md        formát diskety, zaváděcí řetěz, packery A a B
-    ├── LOADER.md        vrstvy cracku vs. vlastní zavaděč hry
-    ├── CATALOG.md       katalog, formát souborů, proudový packer C
-    ├── GRAPHICS.md      formáty .RAW a .LIN, palety
-    ├── MAPS.md          formát .PAM — mapy, objekty a paletový skript
-    └── img/             titulka a spol. dekódované z diskety
+│   ├── check.py         verification contract (measures docs against the image)
+│   ├── extract.py       catalogue + streaming packer C → all 128 files
+│   ├── gfx.py           .RAW screens and .LIN sprites → PNG
+│   ├── map.py           .PAM level maps → whole levels as PNG
+│   ├── unboot.py        walks the boot chain, dumps every stage
+│   ├── depack.py        packers A and B in Python
+│   └── scan.py          brute-force scan for packed blocks
+├── src-asm/             annotated disassembly of the decrunchers
+└── docs/                the write-ups (format, loader, catalogue, graphics, maps)
 ```
 
-## Poznámka k obsahu
+Code comments are in Czech (the project's working language); all
+documentation is English. The browser explorer speaks both.
 
-Obraz je crack: originál rozlomila skupina *The Company*, opravy pro
-68020+/AGA přidal *N.O.M.A.D*. Blok rozbalený na `0x60000` je právě ta
-cizí vrstva, **ne kód hry** — při analýze se to nesmí zaměnit.
+## Want to do this for another Amiga game?
+
+The method is the point of this repo. Roughly:
+
+1. bootblock → entropy map → packer signatures (docs/FORMAT.md)
+2. disassemble the boot chain, re-implement the packers, verify with
+   whatever checksum the original carries
+3. find the catalogue through the loader code, not by guessing
+4. read the *interpreters* in the game code — data formats have many
+   plausible readings, code has one
+5. verify against real gameplay footage, not against your own eyes
+
+Everything here is MIT; take the tools and go dig.
+
+## A note on the content
+
+This image is a crack: the original was broken by *The Company*, with
+68020+/AGA fixes layered on by *N.O.M.A.D*. The docs identify which
+bytes are the game and which are the crack — mixing them up costs
+weeks. Game data © 1991 Storm / The Sales Curve Interactive; this
+project is unaffiliated fan research and ships none of it.

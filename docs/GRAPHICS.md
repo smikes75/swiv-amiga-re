@@ -1,75 +1,64 @@
-# Grafické formáty: .RAW a .LIN
+# Graphics formats: .RAW and .LIN
 
-Dekodér je `tools/gfx.py`. Všechno níže je ověřeno okem na výstupu
-a kontrolami v `tools/check.py`.
+The decoder is `tools/gfx.py`. Everything below is verified by eye on
+the output and by checks in `tools/check.py`.
 
-## .RAW — celoobrazovkové obrázky (9 souborů, vždy 40 992 B)
-
-```
-40 960 B   4 bitplany 320×256, SEKVENČNĚ za sebou (10 240 B na rovinu)
-    32 B   paleta 16 × RGB12 big-endian, NA KONCI souboru
-```
-
-Obsah: COVER (titulka), HELIBP1/2 + JEEPBP1/2 (modely stroje pro intro),
-MUSHROOM, FACES (tváře autorů + maskot), CONGRAT1/2 (dohrání).
-Náhledy v `docs/img/`.
-
-## .LIN — sady snímků objektů (~100 souborů)
+## .RAW — full screens (9 files, always 40,992 B)
 
 ```
-+0   word   počet LOGICKÝCH snímků (řetězené díly se nepočítají!)
-na každý fyzický díl:
-+0   word   délka dat = ceil(š/16)·2 · 4 · v
-+2   byte   šířka v pixelech
-+3   byte   výška
-+4   byte   kotva x (SIGNED — díly kompozitů kotví mimo svůj obdélník)
-+5   byte   kotva y (signed)
-+6   byte   PRŮHLEDNÁ BARVA (index 0–15)
-+7   byte   flagy: bit 0 = řetěz, bity 1–2 = zrcadlení
-+8   byte   w2  +9  byte  v2 (druhé rozměry pro runtime)
-+10  data   řádky prokládaně [p0 p1 p2 p3], na rovinu ceil(š/16) wordů
+40,960 B   4 bitplanes 320×256, stored SEQUENTIALLY (10,240 B per plane)
+    32 B   palette, 16 × RGB12 big-endian, AT THE END of the file
 ```
 
-**Řetězy (flag bit 0).** Díl s nastaveným bitem 0 pokračuje dalším
-fyzickým dílem téhož logického snímku; kreslič (`0x3e5a`) maluje celý
-řetěz na jedné pozici, každý díl za svou kotvu. Tak se skládají široké
-kompozity: čtyřdílné 128px pásy textury země, diagonální ranvej,
-budovy. Ověřeno na všech 91 souborech: počet z hlavičky == počet
-logických skupin a proud končí přesně na bajt (díky tomu se konečně
-rozparsovaly i CONTROL, REACTOR a SKI, které dřív neseděly).
+Contents: COVER (title), HELIBP1/2 + JEEPBP1/2 (vehicle blueprints for
+the intro), MUSHROOM, FACES (the developers + mascot), CONGRAT1/2
+(completion screens). Decode them with
+`python3 tools/gfx.py raw <file> out.png` or view them in the browser
+explorer.
 
-Převod hlavičky na runtime strukturu dělá konvertor `0x457e`/`0x45b2`
-(kotvy sign-extenduje `ext.w`, flagy kopíruje na +26); masku generuje
-`0x4678` při nahrání tabulkou rutin na `0x46d2` podle průhledné barvy —
-proto v souborech žádná maska není.
+## .LIN — object frame sets (~90 files)
 
-Důkaz je statistický: modus barvy okrajových pixelů == bajt +6
-u naprosté většiny snímků napříč soubory (HOMING 16/16, MAMA 15/15,
-INSECTS 30/30…). Výjimky jsou vysvětlitelné obsahem: LAKEGUN stojí na
-vodě, okraj má vodní barvu, průhledná je 7.
+```
++0   word   count of LOGICAL frames (chained parts are not counted!)
+per physical part:
++0   word   data length = ceil(w/16)·2 · 4 · h
++2   byte   width in pixels
++3   byte   height
++4   byte   anchor x (SIGNED — composite parts anchor outside their box)
++5   byte   anchor y (signed)
++6   byte   TRANSPARENT COLOUR (index 0–15)
++7   byte   flags: bit 0 = chain, bits 1–2 = mirror
++8   byte   w2  +9  byte  h2 (secondary dimensions for the runtime)
++10  data   rows interleaved [p0 p1 p2 p3], ceil(w/16) words per plane
+```
 
-Průhledný index **není konstantní ani v rámci souboru** (MINE.LIN má
-snímky s 10 i 14) — proto je v hlavičce každého snímku.
+**Chains (flag bit 0).** A part with bit 0 set continues into the next
+physical part of the same logical frame; the drawer (`0x3e5a`) paints
+the whole chain at one position, each part by its own anchor. This is
+how wide composites are built: four-part 128 px ground-texture strips,
+the diagonal runway, buildings. Verified on all 91 files: the header
+count equals the number of logical groups and the stream ends
+byte-exact — which finally made CONTROL, REACTOR and SKI parse too.
 
-Soubory s podtržítkem (`_HOUSES`, `_LAVA`, …) jsou touž strukturou,
-ale obsahem sekce scrollujícího podkladu; `INST1–5.LIN` nesou графику
-instalací (základen) pěti světů.
+The header→runtime-struct conversion is done by `0x457e`/`0x45b2`
+(anchors sign-extended with `ext.w`, flags copied to +26); the mask is
+generated at load time by `0x4678` using a routine table at `0x46d2`
+indexed by the transparent colour — which is why no masks exist in the
+files.
 
-## Palety
+**Transparency** is the colour index from the header (per part, not
+constant even within one file). Proven statistically: the mode of the
+border pixels equals byte +6 for the overwhelming majority of frames;
+exceptions (LAKEGUN stands on water) are explained by content.
 
-`.LIN` paletu nenese. Herní palety leží v `AMPROG.OBJ` — blok
-16wordových RGB12 palet od `0x299C`; ta na `0x29BC` je **bit po bitu
-totožná** s paletou COVER.RAW, což blok potvrzuje. Party úrovní:
-`0x29DC`, `0x29FC`, `0x2A1C`, `0x2A7C`, `0x2AB4`, `0x2ADC`… — přesné
-párování paleta↔úroveň vypadne až z disassembly / z `.PAM`.
+## Palettes
 
-Náhledové archy (`tools/gfx.py sheets`) proto používají paletu
-`0x29DC` pro všechno; odstíny jsou orientační, tvary přesné.
+`.LIN` carries no palette. Screen palettes live in `AMPROG.OBJ` (block
+of 16-word RGB12 palettes from `0x299C`; the one at `0x29BC` is
+bit-identical to the COVER.RAW palette, which confirms the block).
+**Level palettes are not here — they live inside the maps**, including
+mid-level fades; see [MAPS.md](MAPS.md).
 
-## Co zbývá
-
-- `.PAM` (7 souborů) — mapy úrovní; struktura `80 NN`-wordů vypadá
-  jako proud příkazů, ne bitmapa. Další krok.
-- `CONTROL.LIN`, `REACTOR.LIN`, `INST2BIT.LIN` — nejsou standardní
-  `.LIN` (INST2BIT podle jména 2rovinný?), ověřit.
-- významy bajtů +7 a +8/+9 hlavičky.
+Preview sheets (`tools/gfx.py sheets`) therefore use one palette for
+everything; hues are approximate, shapes exact. The browser explorer
+lets you switch palettes per sheet.

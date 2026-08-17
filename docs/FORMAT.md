@@ -1,13 +1,13 @@
-# SWIVFIX.ADF — formát diskety, zaváděcí řetěz a oba packery
+# SWIVFIX.ADF — disk format, boot chain and the two boot-time packers
 
-Vše níže je **odvozeno z obrazu diskety**, ne opsáno odjinud. Každé tvrzení
-jde ověřit skriptem v `tools/`.
+Everything below is **derived from the disk image itself**, not copied
+from elsewhere. Every claim can be verified by a script in `tools/`.
 
-## 1. Co to je
+## 1. What this is
 
-`SWIVFIX.ADF` je disketa hry **S.W.I.V.** (Storm / The Sales Curve, 1991),
-vertikální scrollovací střílečka. Řetězce v rozbaleném bloku na `0x60000`
-uvádějí původ:
+`SWIVFIX.ADF` is a floppy image of **S.W.I.V.** (Storm / The Sales
+Curve, 1991), a vertical scrolling shooter. Strings inside the
+unpacked blocks state the provenance:
 
 ```
 S.W.I.V from Storm/The Sales Curve
@@ -15,164 +15,162 @@ Original cracked by The Company
 Fixed for 680x0 / AGA all current kicks and memory configs   ... N.O.M.A.D
 ```
 
-To je důležité pro plánování: obraz **není originál**, je to crack s další
-vrstvou oprav navrch. Blok na `0x60000` (21 548 B) je tahle cizí vrstva —
-záplaty pro 68020+/AGA plus textové intro — **ne kód hry**.
+This matters for planning: the image is **not an original** — it is a
+crack with a further patch layer on top. The block unpacked to
+`0x60000` (21,548 B) is that foreign layer (68020+/AGA patches plus a
+text intro), **not game code**.
 
 ## 2. Bootblock
 
-Sektory 0–1. Standardní `DOS\0` a platný kontrolní součet, aby to Kickstart
-zavedl, ale **na místě ukazatele na rootblock je podpis `YETI`** (offset 8)
-místo obvyklé 880. Rootblock 880 je smetí — **disketa nemá AmigaDOS
-souborový systém**, je to lineární obraz s vlastním zavaděčem.
+Sectors 0–1. Standard `DOS\0` magic and a valid checksum so Kickstart
+boots it, but **the rootblock pointer field holds the signature
+`YETI`** (offset 8) instead of the usual 880. Rootblock 880 is garbage
+— **the disk has no AmigaDOS filesystem**; it is a linear image with a
+custom loader.
 
-Kód bootblocku začíná na offsetu `0x0C`, dělá `AllocAbs` a pak tři čtení
-přes `DoIO` na trackdisk. Podstatné je, že používá **obyčejný lineární
-bajtový offset** — žádné MFM triky, žádný vlastní formát stopy:
+The bootblock code starts at offset `0x0C`, calls `AllocAbs`, then
+performs three `DoIO` reads on trackdisk. Crucially it uses **plain
+linear byte offsets** — no MFM tricks, no custom track format:
 
-| RAM | disk (bajt) | sektor | délka | co to je |
+| RAM | disk (byte) | sector | length | contents |
 |---|---|---|---|---|
-| `0x50000` | `0x0D9400` | 1738 | 11 264 B | vlastní zavaděč hry (nezabalený) |
-| `0x30000` | `0x0D5E00` | 1711 | 2 560 B | dekrunčer B + náklad |
-| `0x70000` | `0x0D6A00` | 1717 | 5 632 B | dekrunčer A + náklad |
+| `0x50000` | `0x0D9400` | 1738 | 11,264 B | game's own loader (unpacked) |
+| `0x30000` | `0x0D5E00` | 1711 | 2,560 B | decruncher B + payload |
+| `0x70000` | `0x0D6A00` | 1717 | 5,632 B | decruncher A + payload |
 
-Pak:
+Then:
 
 ```
-jsr  0x70000     ; dekrunčer A rozbalí 21 548 B na 0x60000 a skočí tam
-jmp  0x30000     ; dekrunčer B rozbalí 2 408 B na 0x40000, rts do něj
+jsr  0x70000     ; decruncher A unpacks 21,548 B to 0x60000 and jumps there
+jmp  0x30000     ; decruncher B unpacks 2,408 B to 0x40000, rts into it
 ```
 
-Blok na `0x40000` vypne přerušení a DMA, přepíše vektory a skočí na
-`0x50070` — do vlastního zavaděče hry.
+The block at `0x40000` disables interrupts and DMA, patches vectors
+and jumps to `0x50070` — into the game's own loader.
 
-**Ochrana proti kopírování v tomhle obrazu není žádná.** To je největší
-jednotlivá dobrá zpráva celého průzkumu.
+**There is no copy protection in this image.** That is the single
+best piece of news in the whole survey.
 
-## 3. Entropie: všechno ostatní je zabalené
+## 3. Entropy: everything else is packed
 
-| sektory | entropie | výklad |
+| sectors | entropy | reading |
 |---|---|---|
-| 0–1663 | 7,3–7,8 | zabalená data (maximum je 8) |
-| 1664–1759 | 5,1 | zavaděč a dekrunčery, nezabalené |
+| 0–1663 | 7.3–7.8 | packed data (8.0 is the maximum) |
+| 1664–1759 | 5.1 | loader and decrunchers, unpacked |
 
-V celém obrazu **není jediná signatura známého packeru** (PP20, IMP!,
-RNC, ATN!) ani jediná hlavička AmigaDOS hunku. Hra si veze vlastní dva
-formáty a vlastní rozbalovací rutiny.
+The image contains **not a single signature of a known packer** (PP20,
+IMP!, RNC, ATN!) and no AmigaDOS hunk header. The game carries two
+custom formats and its own unpack routines.
 
-## 4. Katalog souborů
+## 4. File catalogue
 
-Sektor 12 nese katalog se jmény: `AMDLS0.CAT`, `AMPROG.OBJ`, `HS1.TX`,
-`TITUNE.MOD`, `BIGEXPL.SN` a fragmenty dalších (`JEEP`, `MEDTANK`,
-`FACES`, `SKYE`, `AIR`, `EGG`…). Fragmenty proto, že i katalog je zabalený —
-LZ zápas nahradí opakovaný podřetězec odkazem, takže ze jména přežije jen
-kus.
+Sector 12 carries a catalogue with names: `AMDLS0.CAT`, `AMPROG.OBJ`,
+`HS1.TX`, `TITUNE.MOD`, `BIGEXPL.SN` and fragments of others (`JEEP`,
+`MEDTANK`, `FACES`, `SKYE`, `EGG`…). Fragments because the catalogue
+itself is packed — an LZ match replaces a repeated substring with a
+reference, so only part of each name survives raw inspection.
 
-Předpona `AM` je stopa po **vývoji pro víc platforem**: SWIV vyšel i na
-Atari ST a nástroje označovaly amigovské varianty souborů `AM…`. Řetězec
-`AMPROG.OBJ` je i v zavaděči na `0x50000` (offset `0x76A`).
+The `AM` prefix is a trace of **multi-platform development**: SWIV
+also shipped on the Atari ST, and the tooling marked Amiga variants
+`AM…`. The string `AMPROG.OBJ` also appears inside the loader at
+`0x50000` (offset `0x76A`).
 
-## 5. Formát B — Bytekiller
+## 5. Format B — Bytekiller
 
-Rutina má 160 B (`src-asm/decrunch-b.asm`), přepis v `tools/depack.py`
-jako `unpack_b()`.
+The routine is 160 B (`src-asm/decrunch-b.asm`); the re-implementation
+is `unpack_b()` in `tools/depack.py`.
 
-Hlavička bloku (8 B, čte se dopředu):
-
-```
-+0  long   délka rozbalených dat
-+4  long   délka zabaleného proudu (od +8)
-```
-
-Proud se čte **pozpátku od konce po longwordech**, bity zevnitř longwordu
-**od nejnižšího**, čísla se skládají **nejvyšším bitem napřed**. Zapisuje
-se taky pozpátku, od konce cílového bloku. Hotovo, když se ukazatel zápisu
-dostane na začátek.
-
-Čtení bitu je klasický trik s zarážkou — nejvyšší nastavený bit longwordu
-slouží jako značka konce, takže se nemusí počítat:
+Block header (8 B, read forwards):
 
 ```
-lsr.l  #1,d0      ; C = X = spodní bit
-bne.s  hotovo     ; longword ještě není vyčerpaný
-move.l -(a0),d0   ; dobrat další, X zůstává
-eor.l  d0,d5      ; kontrolní součet
-roxr.l #1,d0      ; X -> bit31 jako nová zarážka, nový spodní bit -> C
++0  long   unpacked length
++4  long   packed stream length (from +8)
 ```
 
-Kódování:
+The stream is read **backwards from the end in longwords**, bits from
+the low end of each longword, numbers assembled **MSB first**. Output
+is also written backwards, from the end of the destination. Done when
+the write pointer reaches the start.
 
-| bity | význam |
+Bit reading is the classic sentinel trick — the highest set bit of the
+longword marks its end, so no bit counter is needed:
+
+```
+lsr.l  #1,d0      ; C = X = low bit
+bne.s  done       ; longword not exhausted yet
+move.l -(a0),d0   ; fetch next (X survives)
+eor.l  d0,d5      ; checksum
+roxr.l #1,d0      ; X -> bit31 as the new sentinel, new low bit -> C
+```
+
+Encoding:
+
+| bits | meaning |
 |---|---|
-| `0 0` + 3 bity | 1–8 literálů (každý 8 bitů) |
-| `0 1` + 8 bitů | zápas délky 2, offset 8 bitů |
-| `1 00` + 9 bitů | zápas délky 3, offset 9 bitů |
-| `1 01` + 10 bitů | zápas délky 4, offset 10 bitů |
-| `1 10` + 8 + 12 bitů | zápas délky 1–256, offset 12 bitů |
-| `1 11` + 8 bitů | 9–264 literálů |
+| `0 0` + 3 bits | 1–8 literals (8 bits each) |
+| `0 1` + 8 bits | match, length 2, 8-bit offset |
+| `1 00` + 9 bits | match, length 3, 9-bit offset |
+| `1 01` + 10 bits | match, length 4, 10-bit offset |
+| `1 10` + 8 + 12 bits | match, length 1–256, 12-bit offset |
+| `1 11` + 8 bits | 9–264 literals |
 
-Offset se počítá **od aktuální pozice zápisu dopředu** (`lea (a1,d2.l),a3`,
-pak `move.b -(a3),-(a1)`), protože se jede pozpátku.
+Offsets count **forward from the current write position**
+(`lea (a1,d2.l),a3` then `move.b -(a3),-(a1)`), because everything
+runs backwards.
 
-**Kontrolní součet zdarma.** Rutina XORuje všechny přečtené longwordy do
-`d5` a na konci přečte ještě jeden navíc. Správně rozbalený blok skončí
-součtem 0 — to je hotová verifikace, kterou `unpack_b()` vrací.
+**A checksum for free.** The routine XORs every longword it reads into
+`d5` and reads one extra at the end. A correctly unpacked block ends
+with checksum 0 — ready-made verification, which `unpack_b()` returns.
 
-## 6. Formát A
+## 6. Format A
 
-Rutina má 296 B (`src-asm/decrunch-a.asm`), přepis jako `unpack_a()`.
-Stejná 8bajtová hlavička, ale jinak je to jiný formát:
+The routine is 296 B (`src-asm/decrunch-a.asm`), re-implemented as
+`unpack_a()`. Same 8-byte header, otherwise a different format:
 
-- čte se **po wordech**, ne longwordech
-- čísla se berou **přímo ze spodku registru** (nejnižší bit napřed), maskou
-  z tabulky `0x0001, 0x0003, 0x0007, …, 0x3FFF`
-- **nemá kontrolní součet**
-- proud končí dvěma poli navíc: 4 B počátečního registru a 2 B s počtem
-  platných bitů v něm
-- rutina umí **přesunout zabalená data**, pokud by si je výstup přepsal
+- read **in words**, not longwords
+- numbers taken **straight from the bottom of the shift register**
+  (LSB first), masked via the table `0x0001, 0x0003, …, 0x3FFF`
+- **no checksum**
+- the stream ends with two extra fields: 4 B of initial register and
+  2 B holding the count of valid bits in it
+- the routine can **relocate the packed data** if output would
+  overwrite it
 
-Kódování:
+Encoding:
 
-| bity | význam |
+| bits | meaning |
 |---|---|
-| `1` | jeden literál (8 bitů) |
-| `0` + délka + offset | zápas |
+| `1` | one literal (8 bits) |
+| `0` + length + offset | match |
 
-Délka — unární prefix vybírá šířku pole i bázi:
+Length — a unary prefix selects field width and base:
 
-| prefix | pole | délka |
+| prefix | field | length |
 |---|---|---|
 | `0` | 1 bit | 2–3 |
-| `10` | 2 bity | 4–7 |
-| `110` | 4 bity | 8–22 |
-| `111` | 8 bitů | 23–278 |
+| `10` | 2 bits | 4–7 |
+| `110` | 4 bits | 8–22 |
+| `111` | 8 bits | 23–278 |
 
-Hodnota 22 je **ukradená jako úniková značka** pro dlouhý běh literálů
-(pak následuje 1 bit volby šířky: `1` → 5 bitů, `0` → 14 bitů, a počet je
-15 + hodnota). Kvůli té díře se všechny délky nad 22 o jedničku sníží,
-takže řada zůstane souvislá.
+The value 22 is **stolen as an escape** for a long literal run (then
+1 bit selects field width: `1` → 5 bits, `0` → 14 bits; count is
+15 + value). Lengths above 22 shift down by one to keep the range
+contiguous.
 
 Offset:
 
-| prefix | pole | offset |
+| prefix | field | offset |
 |---|---|---|
-| `0` | 9 bitů | 32–543 |
-| `10` | 5 bitů | 0–31 |
-| `11` | 14 bitů | 544–16 927 |
+| `0` | 9 bits | 32–543 |
+| `10` | 5 bits | 0–31 |
+| `11` | 14 bits | 544–16,927 |
 
-Rozdělení podle velikosti offsetu je to, proč A balí výrazně líp než B
-(24,7 % proti 99,3 % na jejich vlastních nákladech — i když ty náklady
-jsou různé, poměr o formátu něco vypovídá).
+Splitting by offset magnitude is why A packs much better than B
+(24.7% vs 99.3% on their own payloads).
 
-## 7. Co z toho plyne pro projekt
+## 7. What follows
 
-Hotovo:
-
-- disketa je nechráněná a zavaděč triviální
-- oba packery jsou rozebrané a přepsané, obojí ověřené (B kontrolním
-  součtem, A tím, že z něj vypadne platný 68k kód a čitelné řetězce)
-
-Další krok je vlastní zavaděč hry na `0x50000` — ten drží klíč k tomu, jak
-se čte katalog a kde na disketě leží jednotlivé soubory. Teprve až budou
-soubory venku, půjde říct, **kolik je v `AMPROG.OBJ` skutečně kódu** — a
-tím pádem jestli má reimplementace smysl.
+Done: the disk is unprotected, the boot chain is trivial, both packers
+are re-implemented and verified. The next stage — the game's own
+loader, catalogue and the third (streaming) packer — is covered in
+[LOADER.md](LOADER.md) and [CATALOG.md](CATALOG.md).
