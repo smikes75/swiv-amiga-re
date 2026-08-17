@@ -672,17 +672,27 @@ function palAtImgY(imgY) {
 
 /* strely jedou v originale jako HW sprity s vlastni paletou -
    nez ji docteme z copperu, aproximace: svetle sedobile tony */
+/* COLOR16 hodnoty z kodu (0x5b48+): 0xAAE, 0xCCF, 0x88D - ocelove modrobile */
 const SHOTPAL = (() => {
+  const rgb = v => [((v >> 8) & 15) * 17, ((v >> 4) & 15) * 17, (v & 15) * 17];
   const p = [];
-  for (let i = 0; i < 16; i++) p.push([230, 230, 240]);
-  p[0] = [0, 0, 0]; p[1] = [170, 170, 180]; p[2] = [221, 221, 230]; p[3] = [255, 255, 255];
+  for (let i = 0; i < 16; i++) p.push(rgb(0xCCF));
+  p[0] = [0, 0, 0]; p[1] = rgb(0x88D); p[2] = rgb(0xAAE); p[3] = rgb(0xCCF);
   return p;
 })();
 
-/* smer strely -> snimek BULLET 8-23 (16 smeru po 22.5 st.) */
-function shotDir(nx, ny) {
-  const ang = Math.atan2(nx, -ny);              // 0 = nahoru, po smeru rucicek
-  return 8 + ((Math.round(ang / (Math.PI / 8)) + 16) & 15);
+/* Autenticka strelba (0x89ee + tabulka 0x8a80): kvantizace na 8 smeru,
+   rychlosti primo (+-7,0)/(0,+-7), diagonaly (+-5,+-5) px/tick. */
+const DIR8 = [[-7,0],[-5,-5],[0,-7],[5,-5],[7,0],[5,5],[0,7],[-5,5]];
+function aimShot(fromX, fromY, toX, toY) {
+  const ang = Math.atan2(toX - fromX, -(toY - fromY)); // 0 = nahoru
+  const oct = ((Math.round(ang / (Math.PI / 4)) % 8) + 8) % 8;
+  // DIR8[0]=(-7,0)=doleva; nahoru je index... prevod: uhel 0(nahoru)->(0,-7)=idx2
+  const map = [2, 3, 4, 5, 6, 7, 0, 1];
+  const [vx, vy] = DIR8[map[oct]];
+  // snimek: 16dir sada 8-23 podle jemnejsiho uhlu (jako 0xa268)
+  const dir16 = 8 + ((Math.round(ang / (Math.PI / 8)) + 16) & 15);
+  return { vx, vy, dir: dir16 };
 }
 
 /* ---- start urovne ---- */
@@ -737,7 +747,9 @@ function startGame(lv) {
     lv, big, spawns, mapH: m.h, fodAnim,
     scroll: m.h - 256,             // horni hrana okna v mape
     frac: 0,
-    player: { x: 160, y: 200, alive: true, inv: 100, bank: 0 },
+    player: { x: 160, y: 200, alive: true, inv: 100, bank: 0,
+              weapon: 0 /* citac zbrane; tier = weapon/5 (0x70c0) */ },
+    nextLife: 10000,   // extra zivot: prvni na 10k, pak po 30k (0x7116)
     bullets: [], shots: [], booms: [], air: [], nextWave: 250,
     score: 0, lives: 3, tick: 0, over: false, won: false,
     keys: {},
@@ -777,7 +789,10 @@ function step(g) {
     p.x = Math.max(12, Math.min(308, p.x));
     p.y = Math.max(16, Math.min(240, p.y));
     if (p.inv > 0) p.inv--;
-    if (g.keys.f && g.tick % 7 === 0) {
+    // kadence z tabulky upgradu 0x70c0: tier 0..3 -> 11,10,10,8 tiku
+    const tier = Math.min(3, (p.weapon / 5) | 0);
+    const cad = [11, 10, 10, 8][tier];
+    if (g.keys.f && g.tick % cad === 0) {
       g.bullets.push({ x: p.x - 6, y: p.y - 14 });
       g.bullets.push({ x: p.x + 6, y: p.y - 14 });
     }
@@ -802,10 +817,8 @@ function step(g) {
     a.x += Math.sin((g.tick / 20) + a.sway) * 0.8;
     if (p.alive && --a.cool <= 0) {
       a.cool = 130;
-      const dx = p.x - a.x, dy = p.y - a.y;
-      const dl = Math.hypot(dx, dy) || 1, v = 1.8;
-      g.shots.push({ x: a.x, y: a.y, vx: dx / dl * v, vy: dy / dl * v,
-                     dir: shotDir(dx / dl, dy / dl) });
+      const aa = aimShot(a.x, a.y, p.x, p.y);
+      g.shots.push({ x: a.x, y: a.y, vx: aa.vx, vy: aa.vy, dir: aa.dir });
     }
   }
   g.air = g.air.filter(a => a.alive && a.y < 300);
@@ -832,10 +845,8 @@ function step(g) {
       // ODHAD chovani: strelba
       if (p.alive && s.sy > 8 && s.sy < 248 && --s.cool <= 0) {
         s.cool = 140 + ((s.x * 13 + g.tick) % 80);
-        const dx = p.x - s.x, dy = p.y - s.sy;
-        const dl = Math.hypot(dx, dy) || 1, v = 1.6;
-        g.shots.push({ x: s.x, y: s.sy, vx: dx / dl * v, vy: dy / dl * v,
-                       dir: shotDir(dx / dl, dy / dl) });
+        const a = aimShot(s.x, s.sy, p.x, p.y);
+        g.shots.push({ x: s.x, y: s.sy, vx: a.vx, vy: a.vy, dir: a.dir });
       }
     }
   }
@@ -867,6 +878,7 @@ function step(g) {
           b.y > sy + spr.oy && b.y < sy + spr.oy + spr.h) {
         b.dead = true; s.alive = false;
         g.score += 100;
+        if (g.score >= g.nextLife) { g.lives++; g.nextLife += 30000; }
         g.booms.push({ x: s.x, y: s.y, t: 0 });
         snd("BIGEXPL.SND", 8000);
         break;
@@ -879,6 +891,7 @@ function step(g) {
       if (b.dead) continue;
       if (Math.abs(b.x - a.x) < 12 && Math.abs(b.y - a.y) < 12) {
         b.dead = true; a.alive = false; g.score += 150;
+        if (g.score >= g.nextLife) { g.lives++; g.nextLife += 30000; }
         g.booms.push({ x: a.x, y: a.y + g.scroll, t: 0 });
         snd("BIGEXPL.SND", 8000);
         break;
