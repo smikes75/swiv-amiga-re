@@ -90,6 +90,27 @@ def main():
     check("zadny trackdisk: v zavadeci neni exec jsr -456",
           b"\x4e\xae\xfe\x38" not in loader)
 
+    print("katalog a soubory (docs/CATALOG.md):")
+    from extract import catalog, StreamC
+    files = catalog(data)
+    check("128 souboru", len(files) == 128)
+    check("soubor 0 je AMDLS0.CAT", files[0][0] == "AMDLS0.CAT")
+    check("soubor 1 je AMPROG.OBJ", files[1][0] == "AMPROG.OBJ")
+    check("AMPROG.OBJ: 55668 B rozbaleno", files[1][3] == 55668)
+    check("soubory tesne za sebou (offsety konzistentni)",
+          all(files[i][1] + files[i][2] == files[i + 1][1]
+              for i in range(len(files) - 1)))
+    hs = StreamC(data, files[2][1] + 4).unpack(files[2][3])
+    check("HS1.TXT zacina JOHN BOY", hs.startswith(b"JOHN BOY"))
+    mod = StreamC(data, files[18][1] + 4).unpack(files[18][3])
+    check("AMTITUNE.MOD: ProTracker M.K., nazev swiv-title",
+          mod[1080:1084] == b"M.K." and mod.startswith(b"swiv-title"))
+    prog = StreamC(data, files[1][1] + 4).unpack(files[1][3])
+    check("AMPROG.OBJ zacina bra.w", prog[:2] == b"\x60\x00")
+    raw = [f for f in files if f[0].endswith(".RAW")]
+    check("vsech 9 .RAW ma 40992 B (4 roviny 320x256 + paleta)",
+          len(raw) == 9 and all(f[3] == 40992 for f in raw))
+
     print("negativni nalezy (drzi docs/LOADER.md poctive):")
     from scan import plausible
     cands = [o for o in range(0, len(data) - 8, 512) if plausible(data, o)]

@@ -25,6 +25,7 @@ Jiný obraz může mít jiné offsety — je to crackovaná verze a těch koluje
 
 ```sh
 python3 tools/check.py                   # ověřovací kontrakt — změří všechna tvrzení z docs/
+python3 tools/extract.py SWIVFIX.ADF build/files   # vysype všech 128 souborů
 python3 tools/unboot.py SWIVFIX.ADF      # projde zaváděcí řetěz, vysype do build/
 python3 tools/depack.py <in> <out> <off> [a|b]   # jednotlivý blok
 ```
@@ -53,15 +54,18 @@ anotované disassembly obou dekrunčerů v [`src-asm/`](src-asm/).
 
 ```
 ├── tools/
-│   ├── check.py         ověřovací kontrakt (18 měření proti obrazu)
+│   ├── check.py         ověřovací kontrakt (27 měření proti obrazu)
+│   ├── extract.py       katalog + proudový packer C → všech 128 souborů
 │   ├── unboot.py        projde zaváděcí řetěz a vysype všechny články
-│   ├── depack.py        oba packery přepsané do Pythonu
+│   ├── depack.py        packery A a B přepsané do Pythonu
 │   └── scan.py          hledání zabalených bloků hrubou silou
 ├── src-asm/
 │   ├── decrunch-a.asm   anotovaná disassembly, 296 B
 │   └── decrunch-b.asm   anotovaná disassembly, 160 B
 └── docs/
-    └── FORMAT.md        formát diskety, zaváděcí řetěz, oba packery
+    ├── FORMAT.md        formát diskety, zaváděcí řetěz, packery A a B
+    ├── LOADER.md        vrstvy cracku vs. vlastní zavaděč hry
+    └── CATALOG.md       katalog, formát souborů, proudový packer C
 ```
 
 ## Poznámka k obsahu
