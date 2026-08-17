@@ -91,11 +91,15 @@ tr:nth-child(even) { background: #e6ecf4; }
 .ok { color: #007700; } .warn { color: #aa5500; }
 select { font: inherit; border: 2px solid var(--wb-black); background: var(--wb-white); padding: 2px 6px; }
 #status { padding: 4px 12px; border-top: 2px solid var(--wb-black); background: var(--wb-white); font-size: 13px; min-height: 26px; }
+#flypanel { margin-top: 10px; }
+#flypanel .bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; font-size: 13px; }
+#flywrap { border: 2px solid var(--wb-black); background: #000; display: inline-block; line-height: 0; }
+#flycanvas { image-rendering: pixelated; }
 </style>
 </head>
 <body>
 <div id="menubar">
-  <span>SWIV Disk Explorer <small style="opacity:.55">r3bda33b</small> &nbsp;&mdash;&nbsp; <span data-i18n="mb">1760 blocks free</span></span>
+  <span>SWIV Disk Explorer <small style="opacity:.55">ra5082ef</small> &nbsp;&mdash;&nbsp; <span data-i18n="mb">1760 blocks free</span></span>
   <span class="lang"><a id="len" class="on">EN</a>|<a id="lcs">CS</a></span>
 </div>
 
@@ -441,6 +445,8 @@ const I18N = {
     badDisk: "Tohle nevypad\u00e1 jako disketa SWIV (katalog nesed\u00ed).",
     palette: "Paleta",
     tLevels: "\u00darovn\u011b",
+    fly: "P\u0159elet", flyStop: "Stop", flySpeed: "rychlost", flyView: "v\u00fdhled",
+    flyAuth: "hern\u00ed (256 px)", flyTall: "vysok\u00fd (512 px)",
     rendering: "kresl\u00edm\u2026",
     lvlnote: "Cel\u00e9 \u00farovn\u011b slo\u017een\u00e9 z map .PAM \u2014 rozm\u00edst\u011bn\u00ed dla\u017edic, objekty i paletov\u00fd skript p\u0159\u00edmo v map\u011b (z\u00e1pad slunce nad \u0159ekou je zaps\u00e1n v datech mapy).",
   }
@@ -646,10 +652,13 @@ function paneLevels(p) {
     b.className = "btn blue"; b.style.marginRight = "8px"; b.style.fontSize = "13px";
     b.textContent = ["TOWN","DESERT","GRASS","RIVER","ICE","SCIFI","FINAL"][lv];
     b.onclick = () => {
+      state.curLevel = lv;
       info.textContent = " " + T("rendering", "rendering\u2026");
       holder.innerHTML = "";
       setTimeout(() => {
         const m = renderMap(state, lv);
+        state.mapCache = state.mapCache || {};
+        state.mapCache[lv] = m;
         canvas = canvasFrom(m.px, m.w, m.h, zoom);
         holder.appendChild(canvas);
         holder.scrollTop = holder.scrollHeight;
@@ -669,15 +678,101 @@ function paneLevels(p) {
     zb.onclick = () => { zoom = z; if (canvas) canvas.style.width = (canvas.width * z) + "px"; };
     zbar.appendChild(zb);
   }
+  const fbtn = document.createElement("a");
+  fbtn.className = "btn"; fbtn.style.cssText = "font-size:13px;margin-left:8px";
+  fbtn.textContent = "\u25b6 " + T("fly", "Flyover");
+  bar.appendChild(fbtn);
   bar.appendChild(zbar);
   bar.appendChild(info);
   p.appendChild(bar);
+  const flypanel = document.createElement("div");
+  flypanel.id = "flypanel"; flypanel.style.display = "none";
+  p.appendChild(flypanel);
+  fbtn.onclick = () => {
+    if (state.curLevel === undefined) return;
+    flypanel.style.display = "";
+    startFlyover(flypanel, state.curLevel);
+  };
   const note = document.createElement("p");
   note.dataset.i18n = "lvlnote";
   note.innerHTML = lang === "cs" ? I18N.cs.lvlnote :
     "Whole levels assembled from the .PAM maps \u2014 tile placement, object spawns and the in-map palette script (the river sunset happens right in the map data).";
   p.appendChild(note);
   p.appendChild(holder);
+}
+
+/* Prulet nad mapou: logika scrollu bezi na hernich 50 Hz (zmereno
+   z videa: TOWN ~12 px/s), kresli se na frekvenci monitoru pres
+   requestAnimationFrame - kazdy pixelovy krok padne na spravny snimek
+   displeje, presne jako by to delal modern\u00ed port. */
+let flyState = null;
+function startFlyover(panel, lv) {
+  if (flyState) { flyState.stop = true; flyState = null; }
+  panel.innerHTML = "";
+  const m = (state.mapCache || {})[lv] || renderMap(state, lv);
+  (state.mapCache = state.mapCache || {})[lv] = m;
+  const big = document.createElement("canvas");
+  big.width = m.w; big.height = m.h;
+  big.getContext("2d").putImageData(new ImageData(m.px, m.w, m.h), 0, 0);
+
+  const bar = document.createElement("div"); bar.className = "bar";
+  const stopB = document.createElement("a");
+  stopB.className = "btn"; stopB.style.fontSize = "13px";
+  stopB.textContent = "\u25a0 " + T("flyStop", "Stop");
+  const spdSel = document.createElement("select");
+  [[0.5, "\u00d70.5"], [1, "\u00d71"], [2, "\u00d72"], [4, "\u00d74"], [8, "\u00d78"]]
+    .forEach(([v, t]) => { const o = document.createElement("option");
+      o.value = v; o.textContent = t; if (v === 1) o.selected = true;
+      spdSel.appendChild(o); });
+  const viewSel = document.createElement("select");
+  [[256, T("flyAuth", "game (256 px)")], [512, T("flyTall", "tall (512 px)")]]
+    .forEach(([v, t]) => { const o = document.createElement("option");
+      o.value = v; o.textContent = t; viewSel.appendChild(o); });
+  const hud = document.createElement("span");
+  bar.appendChild(stopB);
+  bar.appendChild(document.createTextNode(T("flySpeed", "speed") + ": "));
+  bar.appendChild(spdSel);
+  bar.appendChild(document.createTextNode(T("flyView", "view") + ": "));
+  bar.appendChild(viewSel);
+  bar.appendChild(hud);
+  panel.appendChild(bar);
+
+  const wrap = document.createElement("div"); wrap.id = "flywrap";
+  const cv = document.createElement("canvas"); cv.id = "flycanvas";
+  wrap.appendChild(cv); panel.appendChild(wrap);
+
+  const fs = { stop: false, y: m.h, frames: 0, t0: 0, fps: 0 };
+  flyState = fs;
+  stopB.onclick = () => { fs.stop = true; panel.style.display = "none"; };
+
+  const BASE = 12;                      // px/s pri x1 (zmereno z videa)
+  let last = performance.now();
+  function tick(now) {
+    if (fs.stop) return;
+    const viewH = +viewSel.value;
+    const scale = Math.max(1, Math.floor(Math.min(
+      (window.innerWidth - 80) / m.w, 640 / viewH)));
+    if (cv.width !== m.w || cv.height !== viewH) {
+      cv.width = m.w; cv.height = viewH;
+    }
+    cv.style.width = (m.w * scale) + "px";
+    cv.style.height = (viewH * scale) + "px";
+    const dt = Math.min(0.1, (now - last) / 1000); last = now;
+    fs.y -= BASE * (+spdSel.value) * dt;
+    if (fs.y < viewH) fs.y = m.h;       // dojel na konec -> od zacatku
+    const ctx = cv.getContext("2d");
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(big, 0, Math.round(fs.y) - viewH, m.w, viewH,
+                  0, 0, m.w, viewH);
+    fs.frames++;
+    if (now - fs.t0 > 1000) {
+      fs.fps = fs.frames; fs.frames = 0; fs.t0 = now;
+      hud.textContent = " " + m.name + "  y=" + Math.round(fs.y) +
+        "  " + fs.fps + " Hz";
+    }
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
 }
 
 function paneMusic(p) {
