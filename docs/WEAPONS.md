@@ -52,3 +52,16 @@ part of them.
 - the player weapon coroutine incl. upgrade levels and fire cadence
 - the second/third direction tables (16-dir sets) word-for-word
 - the hardware-sprite palette (COLOR17+) from the copper list
+
+
+## Oprava (M1, 2026-08-18)
+
+Drivejsi domnenka "0x7001 = BULLET#56 hracuv bolt (0xa9ae)" byla
+mylna: `0xa9ae` je smyckovy spawner mapoveho objektu, ktery kazdych
+100 tiku 16× pousti strelu dolu (vy=+6). Hracova zbran je dart system
+`0x8aa0` — viz docs/BEHAVIORS.md, sekce "Zbran hrace".
+
+Tabulka `0x8a80` (±7/±5 px/t) patri VYHRADNE jeep dartum (smer veze);
+vrtulnikovy bolt leti 9 px/t z rozptylove tabulky `0x8b86`.
+Nepratelske strely jsou kanonove granaty (akcelerace 0.5→10.5 px/t)
+a navadene HOMING strely (3 px/t) — nikoli darty.
