@@ -1,0 +1,13 @@
+# Originalni disketa do repa nepatri - dodava si ji uzivatel sam.
+*.ADF
+*.adf
+*.DMS
+*.dms
+
+# Rozbalene herni data - odvozena od diskety, tedy taky ne.
+build/
+work/
+
+__pycache__/
+*.pyc
+.DS_Store
