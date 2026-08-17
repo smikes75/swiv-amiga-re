@@ -696,16 +696,17 @@ const SHOTPAL = (() => {
 
 /* Autenticka strelba (0x89ee + tabulka 0x8a80): kvantizace na 8 smeru,
    rychlosti primo (+-7,0)/(0,+-7), diagonaly (+-5,+-5) px/tick. */
-const DIR8 = [[-7,0],[-5,-5],[0,-7],[5,-5],[7,0],[5,5],[0,7],[-5,5]];
+/* INTERIM tempo pro hratelnost: tabulka 0x8a80 (7 px/tick) plati pro
+   konkretni typ projektilu; univerzalni pouziti delalo hru odstrelovaci.
+   Do prepisu chovani per typ letaji mirene strely ~2.2 px/tick. */
 function aimShot(fromX, fromY, toX, toY) {
   const ang = Math.atan2(toX - fromX, -(toY - fromY)); // 0 = nahoru
   const oct = ((Math.round(ang / (Math.PI / 4)) % 8) + 8) % 8;
-  // DIR8[0]=(-7,0)=doleva; nahoru je index... prevod: uhel 0(nahoru)->(0,-7)=idx2
-  const map = [2, 3, 4, 5, 6, 7, 0, 1];
-  const [vx, vy] = DIR8[map[oct]];
-  // snimek: 16dir sada 8-23 podle jemnejsiho uhlu (jako 0xa268)
+  const v = 2.2;
+  const OCT = [[0,-1],[0.707,-0.707],[1,0],[0.707,0.707],[0,1],[-0.707,0.707],[-1,0],[-0.707,-0.707]];
+  const [nx, ny] = OCT[oct];
   const dir16 = 8 + ((Math.round(ang / (Math.PI / 8)) + 16) & 15);
-  return { vx, vy, dir: dir16 };
+  return { vx: nx * v, vy: ny * v, dir: dir16 };
 }
 
 /* ---- start urovne ---- */
@@ -864,9 +865,11 @@ function step(g) {
         s.x += s.fx;
         s.y += s.fy;                            // leti "dolu" proti scrollu
       }
-      // strilej jen za letu - zaparkovane jednotky v originale nestrili
-      if (s.flying && p.alive && s.sy > 8 && s.sy < 248 && --s.cool <= 0) {
-        s.cool = 140 + ((s.x * 13 + g.tick) % 80);
+      // INTERIM: pozemni obcas vystreli (hratelnost), letici casteji;
+      // presne vzory prijdou z prepisu korutin
+      const canShoot = s.flying || !s.heli;
+      if (canShoot && p.alive && s.sy > 8 && s.sy < 248 && --s.cool <= 0) {
+        s.cool = (s.flying ? 130 : 210) + ((s.x * 13 + g.tick) % 80);
         const a = aimShot(s.x, s.sy, p.x, p.y);
         g.shots.push({ x: s.x, y: s.sy, vx: a.vx, vy: a.vy, dir: a.dir });
       }
