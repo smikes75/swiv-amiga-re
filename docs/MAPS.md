@@ -117,6 +117,9 @@ ohrady, balvanová pole, plošiny). Rozdíly jsou jen dynamické entity
 - opakování FINAL arény
 - typy chování objektů (kreslíme jen jejich grafiku na pozici spawnu)
 - zrcadlící flagy dílů (bity 1–2) zatím neaplikujeme
-- krajních 16 px vlevo a vpravo hřiště (352 px) hra nikdy neukazuje
-  (okno má 320 px), drobné artefakty na krajích plakátů jsou tedy
-  v neviditelné zóně
+
+Hřiště má 352 px (44B řádka), ale okno hry ukazuje 320 z nich
+(bitmapa x 16..336; kreslič pouští x −32..320, `0x3f02`). Render
+proto kreslí přímo viditelné okno — prvky zasahující do okrajů se
+oříznou stejně, jako je ořezává hra. „Uříznuté" kusy u krajů plakátů
+jsou tedy věrné: hráč je vidí stejně oříznuté.

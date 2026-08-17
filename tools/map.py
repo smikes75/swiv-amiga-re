@@ -46,7 +46,7 @@ from gfx import lin_frames, rgb12             # noqa: E402
 from PIL import Image
 
 LEVTAB = 0x384C          # tabulka urovni v AMPROG.OBJ
-FIELD_W = 352            # sirka hriste (44 B radka v enginu)
+FIELD_W = 320            # viditelne okno (hriste je 352, okraje hra neukazuje)
 
 
 class Disk:
@@ -122,7 +122,11 @@ def parse(pam, dico):
     return tiles, objs, checks, y
 
 
-XOFF = 32                # vodorovne vystredeni hriste v obrazku
+# Hriste ma 352 px (44B radka), ale okno hry ukazuje jen 320 z nich
+# (bitmapa x 16..336; kreslic pousti x -32..320, 0x3f02). Rendrujeme
+# rovnou viditelne okno - prvky v never-visible okraji se oriznou
+# stejne jako ve hre.
+XOFF = 16
 MARGIN = 160             # rezerva nad korunou mapy (presahy vysokych dlazdic)
 
 
