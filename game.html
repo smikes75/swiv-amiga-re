@@ -806,22 +806,29 @@ function step(g) {
   // ODHAD: vzdusne vlny (v originale je ridi kod, ne mapa)
   if (!g.over && --g.nextWave <= 0) {
     g.nextWave = 300 + (g.tick % 150);
-    const n = 4, side = (g.tick >> 8) & 1;
-    for (let i = 0; i < n; i++)
-      g.air.push({ x: side ? 40 + i * 26 : 280 - i * 26,
-                   y: -20 - i * 26, vy: 1.4, sway: i * 1.3,
-                   alive: true, cool: 90 + i * 25, apos: 0, at: 0 });
+    // FODDERA vlna dle 0x8008/0xa2a2: svisly sloupec 4 kusu,
+    // clenove nastupuji po 10 ticich, spawn 32 px nad obrazovkou
+    const wx = 48 + ((g.tick * 37) % 224);
+    for (let i = 0; i < 4; i++)
+      g.air.push({ x: wx, y: -32 - i * 4, vy: 1.4, sway: 0.6,
+                   alive: false, delay: i * 10,
+                   cool: 90 + i * 25, apos: 0, at: 0 });
   }
+  for (const a of g.air) if (!a.alive && --a.delay <= 0) a.alive = true;
   for (const a of g.air) {
+    if (!a.alive) continue;
     a.y += a.vy;
     a.x += Math.sin((g.tick / 20) + a.sway) * 0.8;
+    // odrazy od kraju dle 0x8100: x<32 doprava, x>288 doleva
+    if (a.x < 32) a.sway = Math.abs(a.sway);
+    if (a.x > 288) a.sway = -Math.abs(a.sway);
     if (p.alive && --a.cool <= 0) {
       a.cool = 130;
       const aa = aimShot(a.x, a.y, p.x, p.y);
       g.shots.push({ x: a.x, y: a.y, vx: aa.vx, vy: aa.vy, dir: aa.dir });
     }
   }
-  g.air = g.air.filter(a => a.alive && a.y < 300);
+  g.air = g.air.filter(a => (a.alive || a.delay > 0) && a.y < 300);
 
   // spawny: oziv, kdyz vjedou do okna (+64 rezerva)
   for (const s of g.spawns) {
@@ -887,6 +894,7 @@ function step(g) {
   }
   // kolize strel se vzdusnymi
   for (const a of g.air) {
+    if (!a.alive) continue;
     for (const b of g.bullets) {
       if (b.dead) continue;
       if (Math.abs(b.x - a.x) < 12 && Math.abs(b.y - a.y) < 12) {
@@ -967,6 +975,7 @@ function frame(now) {
   }
   // vzdusni nepratele: FODDERA s rotorem z dat + stin na zemi
   for (const a of g.air) {
+    if (!a.alive) continue;
     const fr = g.fodAnim.frames[a.apos];
     const spr = sprite(fr.file, fr.frame, wpc.pal, wpc.ci);
     if (!spr) continue;
