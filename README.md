@@ -26,6 +26,8 @@ Jiný obraz může mít jiné offsety — je to crackovaná verze a těch koluje
 ```sh
 python3 tools/check.py                   # ověřovací kontrakt — změří všechna tvrzení z docs/
 python3 tools/extract.py SWIVFIX.ADF build/files   # vysype všech 128 souborů
+python3 tools/gfx.py raw build/files/032_COVER.RAW cover.png   # obrazovka → PNG
+python3 tools/gfx.py sheets build/files build/sheets           # archy všech spritů
 python3 tools/unboot.py SWIVFIX.ADF      # projde zaváděcí řetěz, vysype do build/
 python3 tools/depack.py <in> <out> <off> [a|b]   # jednotlivý blok
 ```
@@ -46,8 +48,11 @@ Na disassembly je potřeba `m68k-elf-binutils` (`brew install m68k-elf-binutils`
 | zavaděč hry | ✅ vrstvy cracku odděleny, rutiny identifikovány |
 | katalog a soubory | ✅ **všech 128 souborů vysypaných a rozbalených** |
 | packer C (proudový) rozebraný a přepsaný | ✅ `extract.py` |
-| `AMPROG.OBJ` | ⬜ 55 668 B kódu 68000 — další na řadě |
-| formáty `.LIN` a `.PAM` (grafika, mapy) | ⬜ |
+| formát `.RAW` (obrazovky) | ✅ dekodér, 9 obrázků v `docs/img/` |
+| formát `.LIN` (sprity) | ✅ dekodér + archy, 934 snímků |
+| herní palety | ✅ nalezené v `AMPROG.OBJ` od `0x299C` |
+| formát `.PAM` (mapy úrovní) | ⬜ další na řadě |
+| `AMPROG.OBJ` | ⬜ 55 668 B kódu 68000 |
 
 Podrobný popis všeho zjištěného je v **[docs/FORMAT.md](docs/FORMAT.md)**,
 anotované disassembly obou dekrunčerů v [`src-asm/`](src-asm/).
@@ -58,6 +63,7 @@ anotované disassembly obou dekrunčerů v [`src-asm/`](src-asm/).
 ├── tools/
 │   ├── check.py         ověřovací kontrakt (27 měření proti obrazu)
 │   ├── extract.py       katalog + proudový packer C → všech 128 souborů
+│   ├── gfx.py           dekodér .RAW obrazovek a .LIN spritů → PNG
 │   ├── unboot.py        projde zaváděcí řetěz a vysype všechny články
 │   ├── depack.py        packery A a B přepsané do Pythonu
 │   └── scan.py          hledání zabalených bloků hrubou silou
@@ -67,7 +73,9 @@ anotované disassembly obou dekrunčerů v [`src-asm/`](src-asm/).
 └── docs/
     ├── FORMAT.md        formát diskety, zaváděcí řetěz, packery A a B
     ├── LOADER.md        vrstvy cracku vs. vlastní zavaděč hry
-    └── CATALOG.md       katalog, formát souborů, proudový packer C
+    ├── CATALOG.md       katalog, formát souborů, proudový packer C
+    ├── GRAPHICS.md      formáty .RAW a .LIN, palety
+    └── img/             titulka a spol. dekódované z diskety
 ```
 
 ## Poznámka k obsahu

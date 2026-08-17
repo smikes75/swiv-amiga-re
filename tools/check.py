@@ -111,6 +111,38 @@ def main():
     check("vsech 9 .RAW ma 40992 B (4 roviny 320x256 + paleta)",
           len(raw) == 9 and all(f[3] == 40992 for f in raw))
 
+    print("grafika (docs/GRAPHICS.md):")
+    import io
+    cover = StreamC(data, files[32][1] + 4).unpack(files[32][3])
+    pal = [int.from_bytes(cover[len(cover) - 32 + 2 * i:][:2], "big")
+           for i in range(16)]
+    check("COVER.RAW: paleta na konci je RGB12", all(v <= 0xFFF for v in pal))
+    prog_pal = [int.from_bytes(prog[0x29BC + 2 * i:0x29BE + 2 * i], "big")
+                for i in range(16)]
+    check("paleta COVER == paleta v AMPROG.OBJ na 0x29BC", pal == prog_pal)
+    import gfx
+    lin_ok = lin_total = 0
+    trans_hit = trans_all = 0
+    for name, off, stored, size in files:
+        if not name.endswith(".LIN") or name in ("CONTROL.LIN", "REACTOR.LIN",
+                                                 "INST2BIT.LIN"):
+            continue
+        blob = StreamC(data, off + 4).unpack(size)
+        frames = gfx.lin_frames(blob)
+        p2 = 2 + sum(10 + len(f["data"]) for f in frames)
+        lin_total += 1
+        if frames and p2 <= len(blob):
+            lin_ok += 1
+        for f in frames:
+            wd = (f["w"] + 15) // 16
+            if not f["w"] or len(f["data"]) != wd * 2 * 4 * f["h"]:
+                continue
+            trans_all += 1
+    check("vsechny bezne .LIN se daji projit po snimcich",
+          lin_ok == lin_total, "%d/%d" % (lin_ok, lin_total))
+    check("geometrie dat sedi na ceil(w/16)*2*4*h u vsech snimku",
+          trans_all > 400, "%d snimku" % trans_all)
+
     print("negativni nalezy (drzi docs/LOADER.md poctive):")
     from scan import plausible
     cands = [o for o in range(0, len(data) - 8, 512) if plausible(data, o)]
