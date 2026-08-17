@@ -191,9 +191,11 @@ def render(disk, lv, out, with_objects=True):
                 if v != f["trans"]:
                     px[tx, ty] = pal[v]
 
-    # seznam hry je razeny SESTUPNE (0x4826): vrstva 4 = podklad se
-    # kresli prvni, mensi vrstvy pres ni; dlazdice pak objekty
-    for y, x, gfx, layer, _ in sorted(tiles, key=lambda t: -t[3]):
+    # poradi kresleni (empiricky proti realne hre): koberce vespod -
+    # vrstva 0 je "nejdalsi pozadi" (0 -> 5), pak 4, detaily 3/2/1
+    # navrch; v ramci vrstvy poradi zaznamu mapy
+    for y, x, gfx, layer, _ in sorted(
+            tiles, key=lambda t: -(5 if t[3] == 0 else t[3])):
         blit(x, y, gfx)
     nobj = 0
     if with_objects:

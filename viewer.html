@@ -333,8 +333,10 @@ function parsePam(pam, dico) {
     while (x >= 416) { x -= 512; layer--; }
     (typ === 0 ? tiles : objs).push({ y, x, gfx: dico[loc] || 0, layer, typ });
   }
-  // seznam hry je razeny sestupne (0x4826): vrstva 4 = podklad
-  tiles.sort((a, b) => b.layer - a.layer);
+  // koberce vespod: vrstva 0 = nejdalsi pozadi (0 -> 5), pak 4,
+  // detaily 3/2/1 navrch; v ramci vrstvy poradi zaznamu (stabilni sort)
+  const prio = t => t.layer === 0 ? 5 : t.layer;
+  tiles.sort((a, b) => prio(b) - prio(a));
   return { tiles, objs, checks, height: y };
 }
 
