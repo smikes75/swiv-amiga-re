@@ -69,17 +69,16 @@ a který z nich runtime používá, rozhodne až přečtení konvertoru
 hlaviček. Svislý směr: scroll čítač klesá, mapa se staví odspodu —
 render klade start úrovně dolů a čte se nahoru, jak hra letí.
 
-## Pozadí není plocha — je to šum
+## Pozadí
 
 Engine maže pás scrollovací bitmapy hodnotou `-1` do **rovin 1 a 3**
-(`0x34f2`; řádka má 44 B = 352 px, rovina 44×320). Roviny 0 a 2 ale
-nesou **předgenerovanou šumovou texturu**, která výmaz přežívá —
-prázdný pixel má index `10 | šum0 | šum2<<2`, tedy 10/11/14/15:
-tmavé krápání terénu, které je v celé hře vidět jako struktura hlíny,
-trávy i vody. Hustoty změřené z videa skutečné hry: rovina 0 ≈ 36 %,
-rovina 2 ≈ 17 %. Přesný generátor hry jsme zatím nehledali; render
-používá deterministický LCG, v Pythonu i JS týž (proto jsou obě
-implementace stále bit po bitu shodné).
+(`0x34f2`; řádka má 44 B = 352 px, rovina 44×320) — prázdno je barva
+10. Struktura terénu (tečkovaná hlína, tráva, vlnky vody) NENÍ žádný
+šumový trik: dělají ji **výplňové kompozity přímo z mapy** — čtyřdílné
+řetězené pásy 128×64 px (viz GRAPHICS.md, řetězy), tři vedle sebe
+pokryjí celou šířku hřiště. Dřívější domněnka o šumu v rovinách 0+2
+byla mylná — vznikla z chybného číslování snímků, které výplně
+posunulo na jinou grafiku.
 
 ## Čísla úrovní (proměřeno)
 
@@ -102,11 +101,7 @@ FINAL je krátký, protože finální aréna se opakuje smyčkou za běhu.
 - interpolace barevných přechodů (render skáče po checkpointech)
 - opakování FINAL arény
 - typy chování objektů (kreslíme jen jejich grafiku na pozici spawnu)
-- flip bity: kreslič má zrcadlové varianty (`0x3e70`, výběr podle
-  flagů struktury snímku); bajt +7 hlavičky je zřejmě nese, zatím
-  neaplikujeme — diagonální hrany ranveje proto úplně nenavazují
-- přesný generátor šumu pozadí (aproximace se změřenými hustotami)
-
-Obojí čeká na přečtení konvertoru hlaviček → runtime struktur
-(vzniká při nahrání souboru; struktura má kotvu na +12/+14, rozměry
-na +16/+18 a flagy na +26).
+- zrcadlící flagy dílů (bity 1–2) zatím neaplikujeme
+- krajních 16 px vlevo a vpravo hřiště (352 px) hra nikdy neukazuje
+  (okno má 320 px), drobné artefakty na krajích plakátů jsou tedy
+  v neviditelné zóně

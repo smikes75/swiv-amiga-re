@@ -124,24 +124,24 @@ def main():
     lin_ok = lin_total = 0
     trans_hit = trans_all = 0
     for name, off, stored, size in files:
-        if not name.endswith(".LIN") or name in ("CONTROL.LIN", "REACTOR.LIN",
-                                                 "INST2BIT.LIN"):
+        if not name.endswith(".LIN"):
             continue
         blob = StreamC(data, off + 4).unpack(size)
         frames = gfx.lin_frames(blob)
-        p2 = 2 + sum(10 + len(f["data"]) for f in frames)
+        cnt_hdr = int.from_bytes(blob[:2], "big")
+        p2 = 2 + sum(10 + len(pt["data"]) for f in frames for pt in f["parts"])
         lin_total += 1
-        if frames and p2 <= len(blob):
+        if len(frames) == cnt_hdr and p2 == len(blob):
             lin_ok += 1
         for f in frames:
-            wd = (f["w"] + 15) // 16
-            if not f["w"] or len(f["data"]) != wd * 2 * 4 * f["h"]:
-                continue
-            trans_all += 1
-    check("vsechny bezne .LIN se daji projit po snimcich",
+            for pt in f["parts"]:
+                wd = (pt["w"] + 15) // 16
+                if pt["w"] and len(pt["data"]) == wd * 2 * 4 * pt["h"]:
+                    trans_all += 1
+    check("hlavicka = pocet LOGICKYCH snimku a proud konci presne",
           lin_ok == lin_total, "%d/%d" % (lin_ok, lin_total))
-    check("geometrie dat sedi na ceil(w/16)*2*4*h u vsech snimku",
-          trans_all > 400, "%d snimku" % trans_all)
+    check("geometrie dilu sedi na ceil(w/16)*2*4*h",
+          trans_all > 900, "%d dilu" % trans_all)
 
     print("mapy urovni (docs/MAPS.md):")
     import map as swivmap

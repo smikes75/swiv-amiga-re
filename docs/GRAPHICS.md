@@ -17,22 +17,31 @@ Náhledy v `docs/img/`.
 ## .LIN — sady snímků objektů (~100 souborů)
 
 ```
-+0   word   počet snímků
-na každý snímek:
++0   word   počet LOGICKÝCH snímků (řetězené díly se nepočítají!)
+na každý fyzický díl:
 +0   word   délka dat = ceil(š/16)·2 · 4 · v
 +2   byte   šířka v pixelech
 +3   byte   výška
-+4   byte   střed x        +5  byte  střed y
++4   byte   kotva x (SIGNED — díly kompozitů kotví mimo svůj obdélník)
++5   byte   kotva y (signed)
 +6   byte   PRŮHLEDNÁ BARVA (index 0–15)
-+7   byte   ?
-+8   word   ?  (u většiny znovu střed)
++7   byte   flagy: bit 0 = řetěz, bity 1–2 = zrcadlení
++8   byte   w2  +9  byte  v2 (druhé rozměry pro runtime)
 +10  data   řádky prokládaně [p0 p1 p2 p3], na rovinu ceil(š/16) wordů
 ```
 
-Klíčové zjištění: **snímky nemají masku a nejsou ořezané** — jsou to
-plné obdélníky 4rovinných dat a průhlednost určuje **index barvy
-z hlavičky**. Hra si masky zjevně staví při nahrávání (jeden index →
-`BLTAFWM`-styl maska se generuje OR-em rovin XOR průhledná).
+**Řetězy (flag bit 0).** Díl s nastaveným bitem 0 pokračuje dalším
+fyzickým dílem téhož logického snímku; kreslič (`0x3e5a`) maluje celý
+řetěz na jedné pozici, každý díl za svou kotvu. Tak se skládají široké
+kompozity: čtyřdílné 128px pásy textury země, diagonální ranvej,
+budovy. Ověřeno na všech 91 souborech: počet z hlavičky == počet
+logických skupin a proud končí přesně na bajt (díky tomu se konečně
+rozparsovaly i CONTROL, REACTOR a SKI, které dřív neseděly).
+
+Převod hlavičky na runtime strukturu dělá konvertor `0x457e`/`0x45b2`
+(kotvy sign-extenduje `ext.w`, flagy kopíruje na +26); masku generuje
+`0x4678` při nahrání tabulkou rutin na `0x46d2` podle průhledné barvy —
+proto v souborech žádná maska není.
 
 Důkaz je statistický: modus barvy okrajových pixelů == bajt +6
 u naprosté většiny snímků napříč soubory (HOMING 16/16, MAMA 15/15,

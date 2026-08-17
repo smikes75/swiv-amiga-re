@@ -144,16 +144,12 @@ def render(disk, lv, out, with_objects=True):
 
     img = Image.new("RGB", (FIELD_W, H))
     px = img.load()
-    # pozadi: krapani 10/11/14/15 podle palety platne na danem radku
-    seed = 0x1234 ^ lv
+    # pozadi: plocha barva 10 (roviny 1+3 = -1); texturu zeme delaji
+    # vyplnove kompozity primo z mapy
     for y in range(H):
-        pal = pal_at_ry(ry_of(y))
+        c = pal_at_ry(ry_of(y))[10]
         for x in range(FIELD_W):
-            seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
-            b0 = 1 if ((seed >> 16) & 0xFF) < 92 else 0
-            seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
-            b2 = 4 if ((seed >> 16) & 0xFF) < 44 else 0
-            px[x, y] = pal[10 | b0 | b2]
+            px[x, y] = c
 
     def blit(rx, ry, gfx):
         pal = pal_at_ry(ry)
@@ -162,11 +158,14 @@ def render(disk, lv, out, with_objects=True):
         fi = gfx >> 9
         if fi >= len(frames):
             return
-        f = frames[fi]
+        for f in frames[fi]["parts"]:
+            blit_part(rx, ry, f, pal)
+
+    def blit_part(rx, ry, f, pal):
         w, h, wd, data = f["w"], f["h"], (f["w"] + 15) // 16, f["data"]
         if len(data) < wd * 8 * h:
             return
-        # kotva za stred (0x3ef0); svet jede citacem dolu -> preklopit
+        # kazdy dil kotvi za svou kotvu na teze pozici (0x3e5a/0x3ef0)
         x0 = rx - f["cx"] + XOFF
         y0 = (height + MARGIN - ry) - f["cy"]
         for y in range(h):
