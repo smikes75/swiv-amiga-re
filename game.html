@@ -821,10 +821,12 @@ function step(g) {
     g.nextWave = 300 + (g.tick % 150);
     // FODDERA vlna dle 0x8008/0xa2a2: svisly sloupec 4 kusu,
     // clenove nastupuji po 10 ticich, spawn 32 px nad obrazovkou
+    // vsichni startuji ze STEJNEHO bodu nad obrazovkou; rozestup
+    // vytvari 10tikovy nastup clenu (0x8008), ne pozicni offset
     const wx = 48 + ((g.tick * 37) % 224);
     for (let i = 0; i < 4; i++)
-      g.air.push({ x: wx, y: -32 - i * 4, vy: 1.4, sway: 0.6,
-                   alive: false, delay: i * 10,
+      g.air.push({ x: wx, y: -32, vy: 1.4, sway: 0.6,
+                   alive: false, delay: 1 + i * 10,
                    cool: 90 + i * 25, apos: 0, at: 0 });
   }
   for (const a of g.air) if (!a.alive && --a.delay <= 0) a.alive = true;
