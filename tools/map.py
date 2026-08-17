@@ -162,6 +162,8 @@ def render(disk, lv, out, with_objects=True):
         fi = gfx >> 9
         if fi >= len(frames):
             return
+        if frames[fi]["parts"][0]["flags"] & 0x10:
+            return                      # bit 4 = znacka editoru, hra nekresli
         for f in frames[fi]["parts"]:
             blit_part(rx, ry, f, pal)
 

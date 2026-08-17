@@ -384,6 +384,7 @@ function renderMap(state, lv) {
     if (!fname) return;
     const lf = frames(fname)[gfx >> 9];
     if (!lf) return;
+    if (lf.parts[0].flags & 0x10) return;  // bit 4 = znacka, hra nekresli
     const pal = palAtRy(ry);
     for (const fr of lf.parts) blitPart(rx, ry, fr, pal);
   }
