@@ -43,9 +43,11 @@ Na disassembly je potřeba `m68k-elf-binutils` (`brew install m68k-elf-binutils`
 | ochrana proti kopírování | ✅ **žádná** — v tomhle obrazu už není |
 | packer A rozebraný a přepsaný | ✅ 5 328 B → 21 548 B |
 | packer B rozebraný a přepsaný | ✅ ověřeno vlastním kontrolním součtem |
-| zavaděč hry (`0x50000`) | ⬜ další na řadě |
-| katalog a soubory | ⬜ |
-| `AMPROG.OBJ` | ⬜ |
+| zavaděč hry | ✅ vrstvy cracku odděleny, rutiny identifikovány |
+| katalog a soubory | ✅ **všech 128 souborů vysypaných a rozbalených** |
+| packer C (proudový) rozebraný a přepsaný | ✅ `extract.py` |
+| `AMPROG.OBJ` | ⬜ 55 668 B kódu 68000 — další na řadě |
+| formáty `.LIN` a `.PAM` (grafika, mapy) | ⬜ |
 
 Podrobný popis všeho zjištěného je v **[docs/FORMAT.md](docs/FORMAT.md)**,
 anotované disassembly obou dekrunčerů v [`src-asm/`](src-asm/).
