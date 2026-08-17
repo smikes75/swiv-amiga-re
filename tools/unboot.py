@@ -17,6 +17,10 @@ from depack import unpack_a, unpack_b        # noqa: E402
 
 # Presne hodnety, ktere bootblock nastavuje do IOStdReq pred kazdym DoIO.
 # (io_Data = kam v RAM, io_Offset = odkud na disketach, io_Length = kolik)
+# Obal na 0x50000 presouva tenhle usek jinam a spousti ho: je to
+# vlastni zavadec hry. move.w #0x73f,d7 + move.l (a1)+,(a0)+ = 1856 longwordu.
+LOADER_OFF, LOADER_LEN = 0x1D8, 1856 * 4
+
 CHUNKS = [
     # jmeno      RAM        disk       delka   rozbalit  data od
     ("c50000", 0x50000, 0x0D9400, 0x2C00, None, None),
@@ -57,10 +61,21 @@ def main():
                  100.0 * (length - hdr - 8) / len(blob), dst,
                  "OK" if ok else "NESEDI"))
 
+    # Blok na 0x50000 je obal opravy N.O.M.A.D. Vlastni zavadec hry je
+    # tech 7424 B, ktere si obal presune do fast (nebo chip) RAM a skoci
+    # do nich - viz docs/LOADER.md.
+    c50 = data[CHUNKS[0][2]:CHUNKS[0][2] + CHUNKS[0][3]]
+    loader = c50[LOADER_OFF:LOADER_OFF + LOADER_LEN]
+    open(os.path.join(out, "loader.bin"), "wb").write(loader)
+    print()
+    print("loader.bin: %d B z 0x50000+0x%X - vlastni zavadec hry,"
+          % (len(loader), LOADER_OFF))
+    print("            obal ho presune do fast RAM a skoci do nej")
+
     print()
     print("bootblock pak dela:  jsr 0x70000   (rozbali na 0x60000)")
     print("                     jmp 0x30000   (rozbali na 0x40000, rts do nej)")
-    print("0x40000 pak skace na 0x50070 - vlastni zavadec hry.")
+    print("0x40000 zapatkuje trap #0 do zavadece a skoci na 0x50070.")
 
 
 if __name__ == "__main__":
