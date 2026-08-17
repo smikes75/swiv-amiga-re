@@ -54,6 +54,13 @@ a { color:#cfe0ff }
 <p><small><a href="index.html">&larr; disk explorer</a> &middot;
 tools &amp; docs: <a href="https://github.com/smikes75/swiv-amiga-re">swiv-amiga-re</a></small></p>
 <input type="file" id="fpick" accept=".adf" hidden>
+<div id="errbox" style="display:none;position:fixed;left:8px;bottom:8px;right:8px;background:#a00;color:#fff;padding:8px;font:12px monospace;z-index:9;text-align:left"></div>
+<script>
+window.onerror = function (m, src, l) {
+  const e = document.getElementById("errbox");
+  e.style.display = ""; e.textContent = "JS error: " + m + " (line " + l + ")";
+};
+</script>
 <script>
 function unpackC(d, pos, size) {
   const out = new Uint8Array(size); let op = 0;
@@ -614,6 +621,20 @@ function sprite(name, idx) {
   const s = { cv, ox: bb.x0, oy: bb.y0, w, h };
   state.spriteCache[key] = s;
   return s;
+}
+
+/* stinova silueta spritu (cerna kopie) */
+function shadowOf(spr) {
+  if (spr._sh) return spr._sh;
+  const c = document.createElement("canvas");
+  c.width = spr.w; c.height = spr.h;
+  const x = c.getContext("2d");
+  x.drawImage(spr.cv, 0, 0);
+  x.globalCompositeOperation = "source-in";
+  x.fillStyle = "#000";
+  x.fillRect(0, 0, spr.w, spr.h);
+  spr._sh = { cv: c, ox: spr.ox, oy: spr.oy };
+  return spr._sh;
 }
 
 /* ---- zvuk (8bit signed PCM ze .SND) ---- */
