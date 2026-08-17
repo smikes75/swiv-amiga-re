@@ -39,9 +39,15 @@ this:
   `−0x800`; when `+336 ≥ 3` the y-velocity accumulator `+348` is
   cleared
 
-Still open: the exact per-tick magnitude of the fixed-point velocity
-for airborne units (the ×2 terrain mover is the ground-vehicle path),
-the parked-FODDERA (map spawn) coroutine, and the `0x813a` side call.
+**Measured trajectory** (frame-by-frame tracking of the original
+footage, 25 fps, ~5 s of descent): the wave descends **straight down
+at ~0.7 px/tick screen-space with no horizontal weaving at all** —
+x stays constant for the whole pass. Members trail ~9 px apart, which
+matches the 10-frame member stagger from `0x8008`. Column x is random
+per wave, matching `0x813a` (x = 32 + rand·255). Code and footage
+confirm each other; the open item is only the engine's fixed-point
+velocity scale (`+348 = 0x800` ↔ 0.7 px/t implies the integrator
+scales by ~×23, not yet located).
 
 ## Player systems (read earlier, summarized)
 
