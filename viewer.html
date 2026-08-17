@@ -346,8 +346,9 @@ function renderMap(state, lv) {
   const pamName = order[fid];
   const pam = unpackFile(state.adf, state.files.find(f => f.name === pamName));
   const { tiles, objs, checks, height } = parsePam(pam, dico);
-  // viditelne okno hry: 320 z 352 px hriste (bitmapa x 16..336)
-  const XOFF = 16, MARGIN = 160;
+  // viditelne okno hry = hriste x 0..320: pointer bez posunu, fetch
+  // 40 B, modulo 4 na konci radky -> skryty okraj je cely vpravo
+  const XOFF = 0, MARGIN = 160;
   const W = 320, H = height + 2 * MARGIN;
   const px = new Uint8ClampedArray(W * H * 4);
 

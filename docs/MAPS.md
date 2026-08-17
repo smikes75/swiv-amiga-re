@@ -121,8 +121,10 @@ ohrady, balvanová pole, plošiny). Rozdíly jsou jen dynamické entity
 - typy chování objektů (kreslíme jen jejich grafiku na pozici spawnu)
 - zrcadlící flagy dílů (bity 1–2) zatím neaplikujeme
 
-Hřiště má 352 px (44B řádka), ale okno hry ukazuje 320 z nich
-(bitmapa x 16..336; kreslič pouští x −32..320, `0x3f02`). Render
-proto kreslí přímo viditelné okno — prvky zasahující do okrajů se
-oříznou stejně, jako je ořezává hra. „Uříznuté" kusy u krajů plakátů
-jsou tedy věrné: hráč je vidí stejně oříznuté.
+Hřiště má 352 px (44B řádka), okno hry ukazuje 320 z nich — a poloha
+okna je změřená z kódu, ne odhadnutá: bitplane pointer = začátek řádky
+bez posunu (`0x5cc2`), `BPLCON1 = 0`, fetch 40 B (`DDFSTRT 0x38`,
+`DDFSTOP 0xD0`) a modulo 4 přeskočí 4 bajty na konci řádky. Skrytý
+okraj je tedy **celý vpravo** (hřiště x 320..352); viditelné okno =
+hřiště x 0..320 a render kreslí přesně jej. Ořezy u krajů plakátů
+odpovídají ořezům, které vidí hráč.

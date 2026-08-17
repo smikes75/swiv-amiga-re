@@ -122,11 +122,11 @@ def parse(pam, dico):
     return tiles, objs, checks, y
 
 
-# Hriste ma 352 px (44B radka), ale okno hry ukazuje jen 320 z nich
-# (bitmapa x 16..336; kreslic pousti x -32..320, 0x3f02). Rendrujeme
-# rovnou viditelne okno - prvky v never-visible okraji se oriznou
-# stejne jako ve hre.
-XOFF = 16
+# Hriste ma 352 px (44B radka), okno hry ukazuje 320: bitplane
+# pointer = zacatek radky bez posunu (0x5cc2), BPLCON1=0, fetch 40 B
+# a modulo 4 preskoci 4 bajty na KONCI radky - cely skryty okraj je
+# tedy VPRAVO (hriste x 320..352). Viditelne okno = hriste x 0..320.
+XOFF = 0
 MARGIN = 160             # rezerva nad korunou mapy (presahy vysokych dlazdic)
 
 
