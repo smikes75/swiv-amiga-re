@@ -625,6 +625,19 @@ function sprite(name, idx, pal, ci) {
   return s;
 }
 
+function whiteOf(spr) {
+  if (spr._wh) return spr._wh;
+  const c = document.createElement("canvas");
+  c.width = spr.w; c.height = spr.h;
+  const x = c.getContext("2d");
+  x.drawImage(spr.cv, 0, 0);
+  x.globalCompositeOperation = "source-in";
+  x.fillStyle = "#fff";
+  x.fillRect(0, 0, spr.w, spr.h);
+  spr._wh = { cv: c, ox: spr.ox, oy: spr.oy };
+  return spr._wh;
+}
+
 /* stinova silueta spritu (cerna kopie) */
 function shadowOf(spr) {
   if (spr._sh) return spr._sh;
@@ -745,7 +758,7 @@ function startGame(lv) {
     { frames: [{ file: "FODDERA.LIN", frame: 2 }], period: 4, loop: true };
   const g = state.g = {
     lv, big, spawns, mapH: m.h, fodAnim,
-    scroll: m.h - 256,             // horni hrana okna v mape
+    scroll: m.h - MARGIN - 256,    // start = spodek obsahu urovne (bez okraje)
     frac: 0,
     player: { x: 160, y: 200, alive: true, inv: 100, bank: 0,
               weapon: 0 /* citac zbrane; tier = weapon/5 (0x70c0) */ },
@@ -849,8 +862,8 @@ function step(g) {
         s.x += s.fx;
         s.y += s.fy;                            // leti "dolu" proti scrollu
       }
-      // ODHAD chovani: strelba
-      if (p.alive && s.sy > 8 && s.sy < 248 && --s.cool <= 0) {
+      // strilej jen za letu - zaparkovane jednotky v originale nestrili
+      if (s.flying && p.alive && s.sy > 8 && s.sy < 248 && --s.cool <= 0) {
         s.cool = 140 + ((s.x * 13 + g.tick) % 80);
         const a = aimShot(s.x, s.sy, p.x, p.y);
         g.shots.push({ x: s.x, y: s.sy, vx: a.vx, vy: a.vy, dir: a.dir });
@@ -997,14 +1010,24 @@ function frame(now) {
   }
   // hrac: telo 0 + rotor 5-8
   const p = g.player;
-  if (p.alive && (p.inv === 0 || (g.tick & 4))) {
+  if (p.alive) {
     const body = sprite("JEEPHELI.LIN", 1 + ((g.tick >> 1) & 3), wpc.pal, wpc.ci);
     if (body) {
       const sh = shadowOf(body);
       ctx.globalAlpha = 0.45;
       ctx.drawImage(sh.cv, Math.round(p.x + sh.ox + 16), Math.round(p.y + sh.oy + 22));
       ctx.globalAlpha = 1;
-      ctx.drawImage(body.cv, Math.round(p.x + body.ox), Math.round(p.y + body.oy));
+      if (p.inv > 0) {
+        // spawn: bila silueta jako v originale (h10), ke konci blika
+        if (p.inv > 40 || (g.tick & 4)) {
+          const wh = whiteOf(body);
+          ctx.drawImage(wh.cv, Math.round(p.x + wh.ox), Math.round(p.y + wh.oy));
+        } else {
+          ctx.drawImage(body.cv, Math.round(p.x + body.ox), Math.round(p.y + body.oy));
+        }
+      } else {
+        ctx.drawImage(body.cv, Math.round(p.x + body.ox), Math.round(p.y + body.oy));
+      }
     }
   }
   // HUD
