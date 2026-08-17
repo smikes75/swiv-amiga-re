@@ -670,6 +670,15 @@ function palAtImgY(imgY) {
   return { pal: state.checks[ci].pal, ci };
 }
 
+/* strely jedou v originale jako HW sprity s vlastni paletou -
+   nez ji docteme z copperu, aproximace: svetle sedobile tony */
+const SHOTPAL = (() => {
+  const p = [];
+  for (let i = 0; i < 16; i++) p.push([230, 230, 240]);
+  p[0] = [0, 0, 0]; p[1] = [170, 170, 180]; p[2] = [221, 221, 230]; p[3] = [255, 255, 255];
+  return p;
+})();
+
 /* smer strely -> snimek BULLET 8-23 (16 smeru po 22.5 st.) */
 function shotDir(nx, ny) {
   const ang = Math.atan2(nx, -ny);              // 0 = nahoru, po smeru rucicek
@@ -708,14 +717,17 @@ function startGame(lv) {
     })
     .map(o => {
       const fn = state.order[o.gfx & 0x1FF], fi = o.gfx >> 9;
-      // zaparkovane vrtulniky netoci rotorem (vzlet = chovani, jeste neni)
-      const an = fn === "FODDERA.LIN" ? null : animFor(fn, fi);
+      const heli = fn === "FODDERA.LIN" || fn === "YELLOW.LIN";
+      // zaparkovani netoci rotorem; vzlet dostanou stavovym automatem
+      const an = heli ? null : animFor(fn, fi);
       return {
         file: fn, idx: fi,
         x: o.x + XOFF, y: (parsed.height + MARGIN - o.y),
         typ: o.typ, alive: true, born: false,
         cool: 60 + ((o.x * 7) % 90),
         anim: an, apos: 0, at: 0,
+        heli, takeoff: heli ? 70 + ((o.x * 11) % 60) : -1,
+        flying: false, fx: 0, fy: 0,
       };
     });
 
@@ -803,7 +815,21 @@ function step(g) {
     if (!s.born && s.y > g.scroll - 64 && s.y < g.scroll + 320) s.born = true;
     if (s.born && s.alive) {
       s.sy = s.y - g.scroll;                    // screen y
-      // ODHAD chovani: pozemni jednotky stoji a obcas vystreli
+      // ODHAD: vzlet zaparkovanych vrtulniku (chovani jeste neni z dat)
+      if (s.heli && !s.flying && s.sy > -10 && s.sy < 240 && --s.takeoff <= 0) {
+        s.flying = true;
+        s.anim = animFor(s.file, s.idx);
+        s.apos = 0; s.at = 0;
+        s.fx = 0; s.fy = 0;
+      }
+      if (s.flying && p.alive) {
+        s.fx += (p.x > s.x ? 0.03 : -0.03);
+        s.fx = Math.max(-1, Math.min(1, s.fx));
+        s.fy = Math.min(1.3, s.fy + 0.02);
+        s.x += s.fx;
+        s.y += s.fy;                            // leti "dolu" proti scrollu
+      }
+      // ODHAD chovani: strelba
       if (p.alive && s.sy > 8 && s.sy < 248 && --s.cool <= 0) {
         s.cool = 140 + ((s.x * 13 + g.tick) % 80);
         const dx = p.x - s.x, dy = p.y - s.sy;
@@ -911,7 +937,14 @@ function frame(now) {
     const pc = palAtImgY(s.y);
     const spr = fr ? sprite(fr.file, fr.frame, pc.pal, pc.ci)
                    : sprite(s.file, s.idx, pc.pal, pc.ci);
-    if (spr) ctx.drawImage(spr.cv, Math.round(s.x + spr.ox), Math.round(sy + spr.oy));
+    if (!spr) continue;
+    if (s.flying) {
+      const sh = shadowOf(spr);
+      ctx.globalAlpha = 0.45;
+      ctx.drawImage(sh.cv, Math.round(s.x + sh.ox + 16), Math.round(sy + sh.oy + 22));
+      ctx.globalAlpha = 1;
+    }
+    ctx.drawImage(spr.cv, Math.round(s.x + spr.ox), Math.round(sy + spr.oy));
   }
   // exploze (EXPL1, 14 snimku po 2 ticich)
   for (const bm of g.booms) {
@@ -931,12 +964,12 @@ function frame(now) {
     ctx.drawImage(spr.cv, Math.round(a.x + spr.ox), Math.round(a.y + spr.oy));
   }
   // strely: hracova BULLET#56, nepratelska kulata BULLET#1
-  const pb = sprite("BULLET.LIN", 56, wpc.pal, wpc.ci);
+  const pb = sprite("BULLET.LIN", 56, SHOTPAL, "shot");
   for (const b of g.bullets)
     if (pb) ctx.drawImage(pb.cv, Math.round(b.x + pb.ox), Math.round(b.y + pb.oy));
     else { ctx.fillStyle = "#fff"; ctx.fillRect(b.x - 1, b.y - 4, 2, 6); }
   for (const s of g.shots) {
-    const eb = sprite("BULLET.LIN", s.dir || 1, wpc.pal, wpc.ci);
+    const eb = sprite("BULLET.LIN", s.dir || 1, SHOTPAL, "shot");
     if (eb) ctx.drawImage(eb.cv, Math.round(s.x + eb.ox), Math.round(s.y + eb.oy));
     else { ctx.fillStyle = "#ffd080"; ctx.fillRect(s.x - 2, s.y - 2, 4, 4); }
   }
