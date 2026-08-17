@@ -24,9 +24,13 @@ Jiný obraz může mít jiné offsety — je to crackovaná verze a těch koluje
 ## Použití
 
 ```sh
+python3 tools/check.py                   # ověřovací kontrakt — změří všechna tvrzení z docs/
 python3 tools/unboot.py SWIVFIX.ADF      # projde zaváděcí řetěz, vysype do build/
 python3 tools/depack.py <in> <out> <off> [a|b]   # jednotlivý blok
 ```
+
+Kontrakt je jediná pravda projektu: každé tvrzení z `docs/` má v něm
+řádek, který ho změří. Když prochází, dokumentace není názor.
 
 Na disassembly je potřeba `m68k-elf-binutils` (`brew install m68k-elf-binutils`).
 
@@ -49,8 +53,10 @@ anotované disassembly obou dekrunčerů v [`src-asm/`](src-asm/).
 
 ```
 ├── tools/
+│   ├── check.py         ověřovací kontrakt (18 měření proti obrazu)
 │   ├── unboot.py        projde zaváděcí řetěz a vysype všechny články
-│   └── depack.py        oba packery přepsané do Pythonu
+│   ├── depack.py        oba packery přepsané do Pythonu
+│   └── scan.py          hledání zabalených bloků hrubou silou
 ├── src-asm/
 │   ├── decrunch-a.asm   anotovaná disassembly, 296 B
 │   └── decrunch-b.asm   anotovaná disassembly, 160 B
