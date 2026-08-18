@@ -142,3 +142,19 @@ Kreslime aktualni paletou okna; presna casova osa fadu = otevreny ukol.
 Objekty uvnitr uvodniho okna se NEaktivuji; korutiny startuji az kdyz
 radek mapy vjede shora do obrazu (prvni vlna ~2 s po startu — video
 22.35 st06→st08).
+
+### Dodatky (2. iterace M1)
+- **Granat rotuje**: telo strely (`0x96b4`) kazdy tik prohazuje
+  graficke slovo mezi 24+smer a 40+smer (+0x2000 = +16 snimku);
+  BULLET 24–39 a 40–55 jsou dve faze rotace.
+- **Kazda 4. vlna FODDERA se rozptyluje**: `0x806c` — kdyz
+  (citac vln fp@(146) & 3)==0, kazdy clen si vola `0x813a` sam
+  (vlastni nahodne x). Ostatni vlny drzi spolecne x leadera.
+- **Hangar** INST2#2 → `0xb9da` (hp 2000, anim otevreni INST2 3–6):
+  po najeti na obrazovku spusti `0x8008` = **proud 16 clenu po
+  10 ticich** z vlastniho x (y = horni okraj −32). Na TOWN zadny
+  neni (60× FODDERA#2 trigger); hangary jsou na dalsich urovnich.
+- Klonovaci utilita `0xa2a2(dx,dy,n,dtyp)`: spawnuje na navratove
+  adrese volajiciho; MEZI klony posouva sebe o (dx,dy) a +276 o dtyp.
+- `0xa2c6` d2 = margin pro cekani na obrazovku (`0x9ac8`), d4/d5 =
+  dalsi vizualni parametry, d3 patrne HP.
