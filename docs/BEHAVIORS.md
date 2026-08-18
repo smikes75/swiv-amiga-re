@@ -158,3 +158,19 @@ radek mapy vjede shora do obrazu (prvni vlna ~2 s po startu — video
   adrese volajiciho; MEZI klony posouva sebe o (dx,dy) a +276 o dtyp.
 - `0xa2c6` d2 = margin pro cekani na obrazovku (`0x9ac8`), d4/d5 =
   dalsi vizualni parametry, d3 patrne HP.
+
+### Dodatky (3. iterace M1)
+- **Palba clenu vlny** (`0x80c8`): vychozi +276 = −1 (nikdy nestrili).
+  Strelcem se clen stava jen kdyz `rand&3 + pocet_hracu >= 5` —
+  **v 1P hre tedy clenove vln NIKDY nestrili** (2P: ~25 %). Strelec
+  vystreli JEDNOU (0x95d2) po 32+rand&63 ticich; pak citac pretece
+  a dalsi rana nikdy neprijde.
+- **fp@(-76)** = pocet hernich tiku za snimek (normalne 1) — cte ho
+  i kadence hrace (0x7296). NENI to scroll.
+- **Rotace veze tanku** (`0xa096` docteno): smycka — krok ±16
+  jednotek (22.5°), prekresleni spritu (0xa290), 6 tiku pauza,
+  dokud neni zamereno; pocet kroku = (|rozdil|+8)>>4. Vez se tedy
+  VIDITELNE otaci na hrace, vystreli az po zamereni, a stejnym
+  tempem se vraci ke smeru korby.
+- **+336 < 3 → +348 se nemaze** (`0x80f4`): sekundarni sestup 0x800
+  prezije jen pri pomalem primarnim vy; rychli padaci ho ztraceji.
