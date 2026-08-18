@@ -882,6 +882,7 @@ function step(g) {
   // u okraju (x<32 / x>288) prirazeni +-1 px/t (0x8100, +344=0x800).
   // Clenove strili mirene kanonove granaty (0x95d2 @ 0x812c).
   for (const a of g.air) {
+    if (a.dead) continue;
     if (!a.alive) { if (--a.delay <= 0) a.alive = true; continue; }
     if (a.kind === "fod") {
       if (a.x < 32) a.vx = 1; else if (a.x > 288) a.vx = -1;
@@ -908,7 +909,7 @@ function step(g) {
     if (++a.at >= a.per) { a.at = 0; a.apos = (a.apos + 1) % a.seq.length; }
   }
   g.air = g.air.filter(a =>
-    (a.alive || a.delay > 0) &&
+    !a.dead && (a.alive || a.delay > 0) &&
     (a.kind === "fod" ? a.y < 300 : a.y - g.scroll < 300));
 
   // mapove objekty -> prelozene korutiny (dispatch 0x7462)
@@ -919,14 +920,20 @@ function step(g) {
         : (esy > -64 && esy < -8))) {
       s.born = true;
       if (s.beh === "wave") {
-        // 0x8048: leader si x NAHODI (0x813a: 32+rand&255), 5 stroju
-        // (1+4 klony via 0xa2a2), nastup po 10 ticich, start -48 px
+        // 0x8048: leader si x NAHODI (0x813a: 32+rand&255), 5 stroju,
+        // nastup po ~10 ticich (kalibrovano zaberem: volny sled, ne stos);
+        // kazda 4. vlna (citac fp@(146), 0x806c) se ROZPTYLI - kazdy clen
+        // si hodi vlastni x (0x813a per clen)
+        g.waveSeq = (g.waveSeq || 0) + 1;
+        const scatter = (g.waveSeq & 3) === 0;
         const wx = 32 + (Math.random() * 256 | 0);
         const vx = (Math.random() * 2 - 1);     // +332 = rand, max +-1 px/t
         const rotor = s.typ === 1;
         for (let i = 0; i < 5; i++)
-          g.air.push({ kind: "fod", x: wx, y: -48, vx, vy: 1,
-                       alive: false, delay: 1 + i * 10,
+          g.air.push({ kind: "fod",
+                       x: scatter ? 32 + (Math.random() * 256 | 0) : wx,
+                       y: -48, vx: scatter ? (Math.random() * 2 - 1) : vx,
+                       vy: 1, alive: false, delay: 1 + i * 10,
                        cool: 250 + i * 35, hp: 1,
                        seq: rotor ? [2, 3, 2, 4, 2, 5, 2, 6] : [0, 1],
                        per: 2, apos: 0, at: 0 });
@@ -1058,7 +1065,7 @@ function step(g) {
       if (Math.abs(b.x - a.x) < 12 && Math.abs(b.y - ay) < 12) {
         b.dead = true;
         if (--a.hp > 0) continue;
-        a.alive = false; a.delay = 0; g.score += 150;
+        a.dead = true; a.alive = false; g.score += 150;
         if (g.score >= g.nextLife) { g.lives++; g.nextLife += 30000; }
         g.booms.push({ x: a.x, y: ay + g.scroll, t: 0 });
         snd("BIGEXPL.SND", 8000);
@@ -1179,7 +1186,8 @@ function frame(now) {
   for (const s of g.shots) {
     const eb = s.kind === "hom"
       ? sprite("HOMING.LIN", dir16(s.ang), SHOTPAL, "shot")
-      : sprite("BULLET.LIN", 24 + dir16(s.ang), SHOTPAL, "shot");
+      : sprite("BULLET.LIN", ((g.tick & 1) ? 24 : 40) + dir16(s.ang),
+               SHOTPAL, "shot");
     if (eb) ctx.drawImage(eb.cv, Math.round(s.x + eb.ox), Math.round(s.y + eb.oy));
     else { ctx.fillStyle = "#ffd080"; ctx.fillRect(s.x - 2, s.y - 2, 4, 4); }
   }
