@@ -48,7 +48,20 @@ a { color:#cfe0ff }
 </div>
 
 <div id="gamewrap" style="display:none">
-  <canvas id="game" width="320" height="256"></canvas>
+  <div id="cvwrap" style="position:relative;display:inline-block;line-height:0">
+    <canvas id="game" width="320" height="256" style="image-rendering:pixelated"></canvas>
+    <div id="crtfx" style="display:none;position:absolute;inset:0;pointer-events:none;
+      background:repeating-linear-gradient(to bottom, rgba(0,0,0,0) 0 2px, rgba(0,0,0,.28) 2px 3px),
+                 repeating-linear-gradient(to right, rgba(255,0,0,.045) 0 1px, rgba(0,255,0,.045) 1px 2px, rgba(0,0,255,.045) 2px 3px);
+      box-shadow:inset 0 0 42px rgba(0,0,0,.55);border-radius:6px"></div>
+  </div>
+  <div id="testbar" style="margin-top:6px;font:12px monospace;color:#9ab">
+    <label><input type="checkbox" id="crtchk"> CRT</label>
+    &nbsp;&middot;&nbsp; &#x2665; <input type="number" id="livesbox" value="3" min="1" max="99"
+      style="width:3.5em;font:inherit">
+    &nbsp;&middot;&nbsp; scroll <input type="range" id="scrollpct" min="25" max="200" step="5"
+      value="100" style="width:130px;vertical-align:middle"><span id="scrollval">100%</span>
+  </div>
 </div>
 
 <p><small><a href="index.html">&larr; disk explorer</a> &middot;
@@ -801,14 +814,33 @@ function startGame(lv) {
     nextLife: 10000,   // extra zivot: prvni na 10k, pak po 30k (0x7116)
     bullets: [], shots: [], booms: [], plops: [], air: [],
     score: 0, tick: 0, over: false, won: false,
-    lives: +(new URLSearchParams(location.search).get("lives")) || 3,
+    lives: +(new URLSearchParams(location.search).get("lives")) ||
+           +(document.getElementById("livesbox").value) || 3,
+    scrollMul: (+document.getElementById("scrollpct").value || 100) / 100,
     keys: {},
   };
+  for (const s of g.spawns) s.armed = (s.y - g.scroll) < -32;
   if (state.titleMod) { state.titleMod.stop(); state.titleMod = null; }
   $("#levelpick").style.display = "none";
   $("#gamewrap").style.display = "";
   if (!state.loopRunning) { state.loopRunning = true; requestAnimationFrame(frame); }
 }
+
+/* ---- testovaci lista (CRT, zivoty, rychlost scrollu) ---- */
+document.getElementById("crtchk").onchange = e =>
+  document.getElementById("crtfx").style.display = e.target.checked ? "" : "none";
+document.getElementById("livesbox").onchange = e => {
+  const g = state.g; if (!g) return;
+  g.lives = Math.max(1, +e.target.value || 3);
+  if (g.over && !g.won) {           // oziveni po game over pro dalsi testovani
+    g.over = false; g.player.alive = true; g.player.inv = 120;
+    g.player.x = 160; g.player.y = 200; g.shots = [];
+  }
+};
+document.getElementById("scrollpct").oninput = e => {
+  document.getElementById("scrollval").textContent = e.target.value + "%";
+  if (state.g) state.g.scrollMul = e.target.value / 100;
+};
 
 /* ---- vstup ---- */
 const KEYMAP = { ArrowLeft: "l", ArrowRight: "r", ArrowUp: "u", ArrowDown: "d",
@@ -825,7 +857,7 @@ window.addEventListener("keyup", e => {
 /* ---- logika (50 Hz) ---- */
 function step(g) {
   g.tick++;
-  g.scroll -= SCROLL * TICK;                    // scroll nahoru
+  g.scroll -= SCROLL * TICK * (g.scrollMul || 1);   // scroll nahoru
   if (g.scroll <= 0) { g.won = true; g.over = true; }
   const p = g.player;
 
@@ -887,8 +919,8 @@ function step(g) {
     if (a.kind === "fod") {
       if (a.x < 32) a.vx = 1; else if (a.x > 288) a.vx = -1;
       a.x += a.vx; a.y += a.vy;
-      if (p.alive && a.y > 8 && --a.cool <= 0) {
-        a.cool = 300 + ((a.x * 31 + g.tick * 7) % 150);
+      if (a.shooter && p.alive && a.y > 8 && --a.cool <= 0) {
+        a.shooter = false;                       // jedina rana (0x8122)
         fireCannonAimed(g, a.x, a.y);
       }
     } else {                                    // yellow: bezi po zemi
@@ -915,9 +947,18 @@ function step(g) {
   // mapove objekty -> prelozene korutiny (dispatch 0x7462)
   for (const s of g.spawns) {
     const esy = s.y - g.scroll;
-    if (!s.born && (s.beh === "static"
-        ? (esy > -64 && esy < 320)
-        : (esy > -64 && esy < -8))) {
+    // radek "vystrelil" trigger jen pri PREKROCENI linie -32 shora
+    // (v originale mapovy ctec zpracovava radky postupne se scrollem;
+    // objekty uvnitr uvodniho okna korutinu nedostanou - zaber 22.35:
+    // prvni vlna ~2 s po startu, po jedne)
+    let fire = false;
+    if (!s.born) {
+      if (s.armed) { if (esy >= -32) { fire = true; } }
+      else if (s.beh === "static" && esy > -64 && esy < 320) {
+        fire = true; s.quiet = true;      // dekorace z uvodniho okna: nestrili
+      }
+    }
+    if (fire) {
       s.born = true;
       if (s.beh === "wave") {
         // 0x8048: leader si x NAHODI (0x813a: 32+rand&255), 5 stroju,
@@ -933,8 +974,12 @@ function step(g) {
           g.air.push({ kind: "fod",
                        x: scatter ? 32 + (Math.random() * 256 | 0) : wx,
                        y: -48, vx: scatter ? (Math.random() * 2 - 1) : vx,
-                       vy: 1, alive: false, delay: 1 + i * 10,
-                       cool: 250 + i * 35, hp: 1,
+                       vy: 1, alive: false, delay: 1 + i * 10, hp: 1,
+                       // 0x80c8: strelcem jen kdyz rand&3+hraci >= 5
+                       // -> v 1P hre clen vlny NEstrili (zaber 22.35 ✓);
+                       // strelec pali JEDNOU po 32+rand&63 ticich (0x95d2)
+                       shooter: ((Math.random() * 4 | 0) + 1) >= 5,
+                       cool: 32 + (Math.random() * 64 | 0),
                        seq: rotor ? [2, 3, 2, 4, 2, 5, 2, 6] : [0, 1],
                        per: 2, apos: 0, at: 0 });
         s.alive = false;                        // mapovy zaznam je spoustec
@@ -995,13 +1040,32 @@ function step(g) {
       } else if (s.st === 2 && --s.t <= 0) {
         if (--s.drives > 0) { s.st = 1; s.t = 300; } else s.st = 0;
       }
-      // vez (0x9faa): kazdych (12-hraci)*16=176 tiku krok k hraci
-      // max 16 jednotek, vystrel, krok zpet ke korbe (0xa054-0xa08c)
-      if (s.sy > -16 && s.sy < 272 && p.alive && --s.gate <= 0) {
-        s.gate = 176;
-        s.tang = turnToward(s.tang, angTo(s.x, s.sy, p.x, p.y - 8), 16);
-        fireCannon(g, s.x, s.sy, s.tang);
-        s.tang = turnToward(s.tang, s.ang, 16);
+      // vez (0x9faa + 0xa096): po (12-hraci)*16=176 ticich se VIDITELNE
+      // otaci k hraci po krocich 16 jednotek (22.5°) kazdych 6 tiku;
+      // po zamereni 16 tiku pauza, vystrel v uhlu veze (0x95ca),
+      // 8 tiku, pak stejnym tempem rotace zpet ke korbe
+      if (s.sy > -16 && s.sy < 272 && p.alive) {
+        if (s.tph === 1) {                       // rotace na cil
+          if (++s.tt >= 6) {
+            s.tt = 0; s.tang = turnToward(s.tang, s.twant, 16);
+            if (s.tang === s.twant) { s.tph = 2; s.tt = 16; }
+          }
+        } else if (s.tph === 2) {                // zamereno: pauza + vystrel
+          if (--s.tt <= 0) {
+            fireCannon(g, s.x, s.sy, s.tang);
+            s.tph = 3; s.tt = 8;
+          }
+        } else if (s.tph === 3) {                // kratka pauza po vystrelu
+          if (--s.tt <= 0) { s.tph = 4; s.tt = 0; }
+        } else if (s.tph === 4) {                // rotace zpet ke korbe
+          if (++s.tt >= 6) {
+            s.tt = 0; s.tang = turnToward(s.tang, s.ang, 16);
+            if (s.tang === s.ang) { s.tph = 0; s.gate = 176; }
+          }
+        } else if (--s.gate <= 0) {              // gate: novy cyklus
+          s.tph = 1; s.tt = 0;
+          s.twant = angTo(s.x, s.sy, p.x, p.y - 8);
+        }
       }
     } else if (s.beh === "roto") {
       if (++s.at >= 4) {                        // spin 4..11
@@ -1017,7 +1081,7 @@ function step(g) {
       }
     } else if (s.beh === "static") {
       // neprelozene typy: mirena kanonova strela obcas (interim kadence)
-      if (p.alive && s.sy > 8 && s.sy < 248 && --s.cool <= 0) {
+      if (!s.quiet && p.alive && s.sy > 8 && s.sy < 248 && --s.cool <= 0) {
         s.cool = 210 + ((s.x * 13 + g.tick) % 80);
         fireCannonAimed(g, s.x, s.sy);
       }
@@ -1112,7 +1176,7 @@ function frame(now) {
 
   const cv = $("#game"), ctx = cv.getContext("2d");
   const scale = Math.max(1, Math.floor(Math.min(
-    (window.innerWidth - 40) / 320, (window.innerHeight - 120) / 256)));
+    (window.innerWidth - 40) / 320, (window.innerHeight - 160) / 256))) * 1.5;
   cv.style.width = (320 * scale) + "px"; cv.style.height = (256 * scale) + "px";
   ctx.imageSmoothingEnabled = false;
   const top = Math.round(g.scroll);
