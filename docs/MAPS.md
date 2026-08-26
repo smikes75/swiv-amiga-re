@@ -33,7 +33,7 @@ edge (`0x365e`).
 Field breakdown (`0x3674`):
 
 ```
-type   = D & 15          0 = background tile, else object (type = behaviour)
+type   = D & 15          0 = background tile, else object (routine parameter)
 local  = (D >> 4) & 255  index into the level dictionary
 Δy     = (D >> 12) & 255 scroll-counter step (the map runs bottom-up)
 x      = D >> 20         12 bits; values ≥ 416 wrap by −512 and
@@ -41,8 +41,11 @@ x      = D >> 20         12 bits; values ≥ 416 wrap by −512 and
 ```
 
 Objects (`type ≠ 0`) are not drawn into the bitmap but **spawned** —
-`0x36fe` creates a structure with position and behaviour type. The map
-therefore also carries enemy and pickup placement.
+`0x36fe` creates a structure with position and stores `type` in `+276`.
+The coroutine itself is selected separately by the full graphic word
+(`frame << 9 | file`) through the table at `0x7462`; `type` is its
+routine-specific initial parameter. The map therefore also carries enemy
+and pickup placement.
 
 **Draw order** (verified against real gameplay): **carpets at the
 bottom** — layer 0 is "farthest background" (sorts as 5), then

@@ -2,8 +2,8 @@
 """Spawn tabulky vsech urovni -> docs/OBJECTS.md + build/spawns.json.
 
 Z map (.PAM) vytezi vsechny objektove zaznamy: soubor, snimek, TYP
-(= selektor chovani v enginu) a pocty. Zaklad pro dekompilaci
-chovani: stejna grafika s ruznym typem = ruzne chovani.
+(= vstupni parametr korutiny) a pocty. Korutinu vybira samostatna
+dispatch tabulka podle grafickeho slova; viz tools/dispatch.py.
 """
 
 import json
@@ -21,9 +21,9 @@ def main():
     disk = Disk()
     out = {}
     md = ["# Objekty a typy chovani (vytezeno z map)", "",
-          "TYP je index chovani v enginu - tataz grafika s jinym typem",
-          "se chova jinak (MEDTANK ma v TOWN typy 1,2,3,4). Mapovani",
-          "typ -> rutina zbyva precist z dispatche objektu.", ""]
+          "Korutinu vybira dispatch podle grafickeho slova (soubor + snimek).",
+          "TYP se ji preda jako pocatecni stav v poli objektu `+276`; jeho",
+          "vyznam je specificky pro danou rutinu (napr. smer najezdu tanku).", ""]
     for lv in range(7):
         pam, dico = level_info(disk, lv)
         tiles, objs, checks, h = parse(disk.load(pam), dico)

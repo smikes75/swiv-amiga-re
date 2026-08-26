@@ -107,6 +107,19 @@ def main():
           mod[1080:1084] == b"M.K." and mod.startswith(b"swiv-title"))
     prog = StreamC(data, files[1][1] + 4).unpack(files[1][3])
     check("AMPROG.OBJ zacina bra.w", prog[:2] == b"\x60\x00")
+    from dispatch import behavior_dispatch
+    dispatch = behavior_dispatch(prog)
+    routes = {row["gfx"]: row["coroutine"] for row in dispatch}
+    known_routes = {
+        0x0404: 0x8048, 0x0014: 0x86BC, 0x0015: 0x862E,
+        0x000E: 0xA6AE, 0x0011: 0x9B16, 0x000F: 0xA9E0,
+        0x0010: 0x9B7E, 0x0058: 0x79D4, 0x0003: 0x9ECA, 0x180D: 0x994E,
+        0x0013: 0xAB10, 0x0016: 0xAC12,
+    }
+    check("dispatch: 73 unikatnich gfx + zname rutiny TOWN",
+          len(dispatch) == 73 and len(routes) == 73 and
+          all(routes.get(gfx) == routine
+              for gfx, routine in known_routes.items()))
     raw = [f for f in files if f[0].endswith(".RAW")]
     check("vsech 9 .RAW ma 40992 B (4 roviny 320x256 + paleta)",
           len(raw) == 9 and all(f[3] == 40992 for f in raw))
@@ -147,10 +160,12 @@ def main():
     import map as swivmap
     disk = swivmap.Disk(src)
     stats = []
+    object_gfx = []
     for lv in range(7):
         pam_name, dico = swivmap.level_info(disk, lv)
         tiles, objs, chk, h = swivmap.parse(disk.load(pam_name), dico)
         stats.append((pam_name, len(tiles), len(objs), h))
+        object_gfx.extend(obj[2] for obj in objs)
     check("poradi map TOWN..FINAL podle tabulky 0x384C",
           [s0[0] for s0 in stats] == ["TOWN.PAM", "DESERT.PAM", "GRASS.PAM",
            "RIVER.PAM", "ICE.PAM", "SCIFI.PAM", "FINAL.PAM"])
@@ -162,6 +177,8 @@ def main():
     first_pal = g[2][0][1] if g[2] else []
     check("paleta GRASS z hlavicky mapy: barva 10 je zelena 0x366",
           len(first_pal) == 16 and any(p[1] == 0x366 for p in [(0, first_pal[10])]))
+    check("dispatch pokryva vsech 1497 mapovych objektu",
+          len(object_gfx) == 1497 and all(gfx in routes for gfx in object_gfx))
 
     print("negativni nalezy (drzi docs/LOADER.md poctive):")
     from scan import plausible

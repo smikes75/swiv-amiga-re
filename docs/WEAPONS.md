@@ -36,6 +36,14 @@ aiming helpers in ENGINE.md describe.
 | `0x7fa2` | `0x0601` = BULLET#3 | spark |
 | `0x4cb8` | `0x0401` = BULLET#2 | round ball |
 
+## Cannon hardware-sprite palette (`0x2afc`)
+
+The rotating cannon shell uses sprite colour indices 1–3, written to
+all four hardware-sprite banks every frame: COLOR17 is white `0xFFF`,
+COLOR18 grey `0x999`, and COLOR19 follows a 16-tick red/yellow accent
+table at `0x2b62`. COLOR16 values from `0x5b4e` belong to the fifth HUD
+bitplane and must not be used to colour the shell.
+
 ## A composite enemy pattern, read end-to-end
 
 At `0xa976`: a spawner waits until on screen, then repeatedly
@@ -51,7 +59,7 @@ part of them.
 
 - the player weapon coroutine incl. upgrade levels and fire cadence
 - the second/third direction tables (16-dir sets) word-for-word
-- the hardware-sprite palette (COLOR17+) from the copper list
+- the separate 4-bit palette path used by HOMING.LIN
 
 
 ## Oprava (M1, 2026-08-18)
@@ -63,5 +71,6 @@ mylna: `0xa9ae` je smyckovy spawner mapoveho objektu, ktery kazdych
 
 Tabulka `0x8a80` (±7/±5 px/t) patri VYHRADNE jeep dartum (smer veze);
 vrtulnikovy bolt leti 9 px/t z rozptylove tabulky `0x8b86`.
-Nepratelske strely jsou kanonove granaty (akcelerace 0.5→10.5 px/t)
+Nepratelske strely jsou kanonove granaty (bezna varianta akceleruje
+0.5→10.5 px/t; CAMOGUN pres vstup `0x95ec` leti konstantnich 5 px/t)
 a navadene HOMING strely (3 px/t) — nikoli darty.

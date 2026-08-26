@@ -38,15 +38,23 @@ locally) and insert your `.adf`. Screens, 900+ sprite frames with
 selectable palettes, all seven levels assembled from the map data,
 a smooth fly-over mode, music metadata, and the file catalogue.
 
+**Playable transcription:** open `game.html`, insert the same ADF,
+press Space and choose TOWN. The TOWN runtime currently routes all 155
+map objects; 154 use transcribed behaviour coroutines and the remaining
+GOOSE placeholder is deliberately inert instead of inventing enemy fire.
+Other levels are still research previews, not complete ports.
+
 **Command line:**
 
 ```sh
 python3 tools/check.py                     # verification contract: measures
                                            #   every claim in docs/ against the image
 python3 tools/extract.py SWIVFIX.ADF out/  # unpack all 128 files
+python3 tools/dispatch.py                  # extract the 73 gfx → coroutine routes
 python3 tools/gfx.py raw ... cover.png     # decode a full screen to PNG
 python3 tools/gfx.py sheets out/ sheets/   # sprite sheets for every .LIN
 python3 tools/map.py                       # render all 7 levels as tall PNGs
+python3 tools/uitest.py                    # Chromium runtime/behaviour regressions
 ```
 
 Disassembly needs `m68k-elf-binutils` (`brew install m68k-elf-binutils`).
@@ -65,7 +73,7 @@ Disassembly needs `m68k-elf-binutils` (`brew install m68k-elf-binutils`).
 | `.LIN` sprites | ✅ logical frames, chained multi-part composites, signed anchors |
 | `.PAM` level maps | ✅ tiles, object spawns, in-map palette script, layers, display window |
 | verification | ✅ 37-check contract + frame-by-frame match against gameplay video |
-| `AMPROG.OBJ` (55,668 B game code) | ⬜ partially mapped (map interpreter, sound engine, animation scripts, bob drawer, loader) |
+| `AMPROG.OBJ` (55,668 B game code) | 🟨 partially mapped (73-route dispatch + 154/155 TOWN objects, map interpreter, sound, animations, bob drawer) |
 
 Detailed write-ups live in [`docs/`](docs/):
 [FORMAT](docs/FORMAT.md) · [LOADER](docs/LOADER.md) ·
@@ -77,8 +85,10 @@ decrunchers is in [`src-asm/`](src-asm/).
 
 ```
 ├── index.html           browser disk explorer (single file, no dependencies)
+├── game.html            playable coroutine transcription (TOWN focus)
 ├── tools/
 │   ├── check.py         verification contract (measures docs against the image)
+│   ├── dispatch.py      AMPROG gfx → behaviour coroutine registry
 │   ├── extract.py       catalogue + streaming packer C → all 128 files
 │   ├── gfx.py           .RAW screens and .LIN sprites → PNG
 │   ├── map.py           .PAM level maps → whole levels as PNG

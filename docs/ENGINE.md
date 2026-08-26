@@ -37,13 +37,16 @@ defaults at `0x61f4+`). Known fields:
 | +276 | spawn TYPE, then reused as behaviour state |
 | +308 | parent object (position inheritance) |
 | +320/+324 | x / map-y |
+| +328 | third position/depth coordinate |
 | +332.. | velocity area (cleared on spawn) |
 | +356 | misc param (e.g. countdown ×896 seen) |
 | +358 | **angle, 0–255 = full circle** |
-| +360 | timer |
-| +362/+368/+370 | visual params from `0xa2c6` (d4/d0/d5) |
+| +360 | hit points installed by `0xa2c6` from d3 |
+| +362 | score value installed by `0xa2c6` from d4 |
+| +368 | loaded graphic/file handle from `0xa2c6` d0 |
+| +370 | active-budget cost installed by `0xa2c6` from d5 |
 | +364 | draw priority (−64 default) |
-| +367 | flag bits (bit 3 = follow parent) |
+| +367 | flag bits (bit 3 = follow parent; bit 4 = compensate camera-scroll delta) |
 | +376 | handler (default `0x894a`) |
 | +397 | flags (bit 0 inherited on spawn) |
 | +486 | cleared on spawn |
@@ -60,7 +63,17 @@ defaults at `0x61f4+`). Known fields:
 | `0x6c88` | 89 | attach animation sequencer |
 | `0x883c` | 73 | random |
 | `0x6178` | 60 | spawn child object |
-| `0xa2a2` | 10 | formation spawner: d2 clones with (dx,dy,dtype) deltas |
+| `0xa2a2` | 10 | formation spawner: d2 total members with (dx,dy,dtype) deltas |
+
+`0xa2a2` does `subq #1,d2` and enters its `dbf` before the clone body:
+it allocates `d2-1` children and the original coroutine becomes the last
+member. Thus BIRD/FODDERA `d2=4` means four objects total, and YELLOW
+`d2=6` means six, not one extra parent.
+
+Airborne flag bit 4 is applied in housekeeping at `0x6434–0x644e`.
+The camera y is saved before a yield and its delta is added back to object
+y afterwards. Once active, these objects therefore change **screen y only
+by their own velocity**; terrain scroll must not be added a second time.
 
 ## Aiming: angle → sprite frame
 
@@ -124,7 +137,8 @@ Also read along the way:
 
 - HUD copper events (`0x5b34`): BPLCON0 switches 5↔4 bitplanes around
   the HUD strip, and **COLOR16 changes per band: 0xAAE / 0xCCF /
-  0x88D** — the light steel-blues of the score text and shots.
+  0x88D** — light steel-blues of the fifth HUD bitplane. Projectile
+  sprite colours come separately from `0x2afc` (COLOR17–19).
 - A level-select cheat handler reads raw keys at `0x20e4`.
 - The title sequence (`0xf42+`) loads COVER.RAW with palette `0x2abc`
   and preloads REACTOR frames for the logo animation.

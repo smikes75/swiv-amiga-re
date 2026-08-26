@@ -1,8 +1,8 @@
 # Objekty a typy chovani (vytezeno z map)
 
-TYP je index chovani v enginu - tataz grafika s jinym typem
-se chova jinak (MEDTANK ma v TOWN typy 1,2,3,4). Mapovani
-typ -> rutina zbyva precist z dispatche objektu.
+Korutinu vybira dispatch podle grafickeho slova (soubor + snimek).
+TYP se ji preda jako pocatecni stav v poli objektu `+276`; jeho
+vyznam je specificky pro danou rutinu (napr. smer najezdu tanku).
 
 ## 0 — TOWN (155 objektu)
 

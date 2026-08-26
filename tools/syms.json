@@ -77,10 +77,11 @@
   "0x8aa0": "dart_volley: hracovy darty dle smeru veze, tabulka 0x8b86",
   "0x8b86": "spread tabulka: 8 smeru x [odd/even blok] x (vx,vy,dx,dy)",
   "0x8dd6": "max-power 8-smerova salva (vx,vy,dx,dy,gfx) x 8",
+  "0x95c2": "fire_shell_straight: nemireny granat konstantnich 5 px/t",
   "0x95ca": "fire_shell: kanonovy granat v aktualnim uhlu +358",
   "0x95d2": "fire_shell_aimed: granat zamireny na hrace (snap) + PLOP",
   "0x95ec": "fire_shell entry: nemireny (konstantnich 5 px/t)",
-  "0x9602": "shell telo: krok 16px, 0.5 px/t + 0.5/5 tiku, strop 10.5; budget fp@(206)",
+  "0x9602": "shell telo: krok 16px, rovnych 5 px/t nebo akcelerace dle vstupu; budget fp@(206)",
   "0x994e": "ROTOBASE: spin 4..11, kazdych 200+rand&127 t salva 4x do krize",
   "0x9ac8": "wait_on_screen_preload",
   "0x9afa": "wait_on_screen",
@@ -88,19 +89,21 @@
   "0x9faa": "MEDTANK vez: kazdych (12-hraci)*16 t krok k hraci, vystrel, krok zpet",
   "0xa096": "turret_step: otoc +358 k d0 max o 16 (22.5 deg)",
   "0xa2a2": "ui_obj_create_a",
-  "0xa2c6": "ui_obj_create_b",
+  "0xa2c6": "obj_visual_init(d0=gfx,d1=collision,d2=margin,d3=hp,d4=score,d5=active_cost)",
   "0xa34c": "behavior_exit",
   "0xa6ae": "POPUP: cekej 64+rand&63, otevri 1-7, salva homing +-6, zavri",
   "0xa976": "ring_spawner",
   "0xa9a0": "ring_child",
-  "0xaa9c": "ring_dart6"
+  "0xaa9c": "ring_dart6",
+  "0xac12": "CAMOGUN: 100t, granat dolu 5 px/t, recoil 8 px/8t"
  },
  "data": {
   "0x0004": "file_name_table",
   "0x299c": "screen_palettes",
   "0x384c": "level_table",
   "0x46d2": "mask_routine_table",
-  "0x6d0c": "anim_opcode_table"
+  "0x6d0c": "anim_opcode_table",
+  "0x7462": "behavior dispatch table: gfx -> coroutine word offset"
  },
  "loader_jumptable": {
   "-1414": "ldr_obj_kill",
