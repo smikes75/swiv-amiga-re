@@ -45,6 +45,50 @@ def main():
             page.wait_for_selector("#gamewrap", state="visible")
             expect(page.is_visible("#gamewrap"), "po vyberu TOWN chybi herni canvas")
 
+            # Fade z cerne: 0x3092 vola 0x2868, driver 0x28b0 pak odcernuje
+            # krokem 16 za snimek, tedy presne 16 tiku z 256 na 0.
+            fade = page.evaluate("""() => {
+              const g = state.g, seq = [g.fadeBlack];
+              // HUD merime zvlast: jeho text jde pres COLOR16 (0x1A0), ktera
+              // je uz mimo fadovany rozsah 0x180-0x19F, takze fade neztmavi.
+              const shot = () => {
+                g.last = performance.now();
+                frame(performance.now());
+                const cv = document.querySelector('#game');
+                const c2 = cv.getContext('2d');
+                const count = (y0, y1) => {
+                  const px = c2.getImageData(0, y0, cv.width, y1 - y0).data;
+                  let n = 0;
+                  for (let i = 0; i < px.length; i += 4)
+                    if (px[i] || px[i + 1] || px[i + 2]) n++;
+                  return n;
+                };
+                return { hud: count(0, 20), field: count(24, cv.height) };
+              };
+              const atStart = shot();
+              for (let i = 0; i < 16; i++) { step(g); seq.push(g.fadeBlack); }
+              const atEnd = shot(), dirAt16 = g.fadeDir;
+              step(g);   // 17. tik: teprve ted subiw podtece a priznak spadne
+              return { seq, dirAt16, dir: g.fadeDir, lvl: g.fadeBlack,
+                       atStart, atEnd };
+            }""")
+            expect(fade["seq"] == list(range(256, -1, -16)),
+                   "fade z cerne nekrokuje po 16 az na nulu: %s" % fade["seq"])
+            expect(fade["dirAt16"] != 0,
+                   "priznak fp@(142) spadl uz po 16 ticich; subiw #16 na "
+                   "0x28b8 podtece az 17. tikem, blokujici 0x2868 se vraci "
+                   "o snimek pozdeji nez je obraz hotovy")
+            expect(fade["dir"] == 0 and fade["lvl"] == 0,
+                   "17. tik nevynuloval fp@(142) nebo uroven fadu")
+            expect(fade["atStart"]["field"] == 0,
+                   "hraci plocha ma byt na startu cerna, ma %d barevnych "
+                   "pixelu" % fade["atStart"]["field"])
+            expect(fade["atStart"]["hud"] > 0,
+                   "HUD ma zustat svitit i pri plnem fadu: COLOR16 (0x1A0) "
+                   "lezi mimo fadovany rozsah 0x180-0x19F")
+            expect(fade["atEnd"]["field"] > 1_000,
+                   "po 16 ticich se hraci plocha neodcernila")
+
             rendered = page.evaluate("""() => {
               frame(performance.now());
               const cv = document.querySelector('#game');

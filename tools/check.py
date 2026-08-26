@@ -116,6 +116,23 @@ def main():
         0x0010: 0x9B7E, 0x0058: 0x79D4, 0x0003: 0x9ECA, 0x180D: 0x994E,
         0x0013: 0xAB10, 0x0016: 0xAC12,
     }
+    # Fade palety (docs/BEHAVIORS.md): skalovac, krok driveru a rozsah
+    # registru. Kdyby kterakoliv konstanta v obrazu byla jina, cislo
+    # "16 snimku" a "jen COLOR00-15" by prestalo platit.
+    fade = {
+        0x4A48: "44410641 0100",    # negw d1 ; addiw #256,d1  (skalovac)
+        0x28B8: "046e0010 2ba2",    # subiw #16,fp@(11170)     fade z cerne
+        0x28CA: "066e0010 2ba2",    # addiw #16,fp@(11170)     fade do cerne
+        0x28E8: "302e2ba0",         # movew fp@(11168),d0      krok bile
+        0x5E4C: "0c410180",         # cmpiw #384,d1            spodni mez
+        0x5E52: "0c4101a0",         # cmpiw #416,d1            horni mez
+        0x2864: "70ff",             # moveq #-1,d0 = fade do cerne
+        0x2868: "7001",             # moveq #1,d0  = fade z cerne
+    }
+    check("fade: skalovac 0x4a48, krok 16/snimek, jen registry 0x180-0x19F",
+          all(prog[a:a + len(bytes.fromhex(h.replace(" ", "")))]
+              == bytes.fromhex(h.replace(" ", ""))
+              for a, h in fade.items()))
     check("dispatch: 73 unikatnich gfx + zname rutiny TOWN",
           len(dispatch) == 73 and len(routes) == 73 and
           all(routes.get(gfx) == routine

@@ -224,8 +224,71 @@ smycka: nahodny uhel, cekej 200+rand&127, **4× granat po 90°**
 
 ### Paleta spritu
 Barvy 13–15 jsou copper registry — **globalni pro celou obrazovku**
-(meni se fade skriptem mezi sekcemi), objekt si barvy nenese s sebou.
-Kreslime aktualni paletou okna; presna casova osa fadu = otevreny ukol.
+(meni se paletovym skriptem mapy), objekt si barvy nenese s sebou.
+Kreslime aktualni paletou okna.
+
+### Fade palety (`0x4a48`, `0x4a40`, driver `0x28b0`)
+
+Precteno z disassembly, nikoli zmereno v emulatoru.
+
+**Skalovac `0x4a48` neni interpolator** — je bezstavovy. Bere slovo
+RGB12 v d0 a uroven fadu 0–256 v d1 a vraci kazdy nibble vynasobeny
+`(256 − d1) / 256`:
+
+```
+negw d1 ; addiw #256,d1      ; d1 = 256 - d1
+rolw #8,d0  -> nibble R
+rolw #4,d0  -> nibble G
+rolw #4,d0  -> nibble B      ; 8+4+4 = 16, slovo vypadne zpet v poradi
+per nibble:  d7 = (nibble * d1) >> 8
+```
+
+`0x4a40` je `notw d0` → `0x4a48` → `notw d0`, tedy tataz rampa, ale
+k **bile**.
+
+**Uroven** drzi dve globalni promenne, obe v rozsahu 0–256; obe se
+testuji na nulu, takze 0 = zadny fade:
+
+| promenna | smysl | aplikuje se v |
+|---|---|---|
+| `fp@(11170)` | fade do cerne → `0x4a48` | `0x5da8` (cela paleta), `0x5e58` (jedna udalost) |
+| `fp@(11166)` | fade do bile → `0x4a40` | tamtez |
+
+Aplikuji se **jen na registry `0x180`–`0x19F`** (`cmpiw #384` na
+`0x5e4c` a `cmpiw #416` na `0x5e52`) — coz nezavisle potvrzuje, ze
+barvy spritu od `0x1A0` prochazeji nedotcene.
+
+**Casova osa je korutina `0x28b0`**, registrovana pres `fp@(-1470)`
+s prioritou −1; jeji telo konci `bsrw 0x5f0a` (yield) a `bras 0x28b0`,
+takze krokuje **jednou za snimek**:
+
+- **cerna**: smer dava znamenko `fp@(142)`. Zaporne → `+16` za snimek
+  az na 256, kladne → `−16` az na 0; na konci se `fp@(142)` sam
+  vynuluje. Rozsah 0–256 krokem 16 = **presne 16 snimku**, tj. 0,32 s
+  pri 50 Hz. Pozor na jeden snimek navic: `subiw #16` na `0x28b8` testuje
+  prenos, takze pri kroku 16→0 jeste nepodtece a priznak spadne az
+  **17. snimek**. Obraz je tedy hotovy po 16 snimcich, ale blokujici
+  `0x2864`/`0x2868` se vrati o snimek pozdeji.
+- **bila**: pricita **znamenkovy** krok `fp@(11168)` za snimek, strop
+  256, zastavi se na nule. V kodu se vyskytuje krok `+16`, `−16`
+  a `−4`, tedy 16 snimku (rychle) nebo 64 snimku (1,28 s, pomale
+  doznivani).
+
+**API:** `0x2864` = fade do cerne, `0x2868` = fade z cerne. Oba nastavi
+`fp@(142)` a pak **blokuji** — yielduji, dokud driver priznak
+nevynuluje; volajici tedy dostane rizeni az po dokoncenem fadu.
+`0x2856` je pouzity obal: fade do cerne + zbourani obrazovky, volany
+pred kazdou vymenou obrazovky.
+
+**Start hry se odcernuje**: `0x3092` (po zalozeni hracskych korutin)
+i `0x330a` volaji `0x2868`. Prechody mezi obrazovkami tedy jdou pres
+cernou v 16 snimcich na kazdou stranu.
+
+**Bily fade slouzi jako zablesk s doznivanim**: uvodni sekvence na
+`0xfd2` nastavi krok `+16` a uroven 8, pocka na 256, pozdeji prepne
+krok na `−16` a nakonec na `−4`. Nektera mista naopak nastavi
+uroven primo a hned ji zase smazou (`0xc12e` = 64 pri zasahu bosse)
+— to je jednosnimkovy zablesk, ne rampa.
 
 ### Triggery chovani
 Objekty uvnitr uvodniho okna se NEaktivuji; korutiny jsou zakladany

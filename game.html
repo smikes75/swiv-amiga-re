@@ -756,6 +756,33 @@ const CANNON_PALS = CANNON_ACCENTS.map(accent => {
 });
 const cannonPal = tick => CANNON_PALS[tick & 15];
 
+/* ---- Fade palety: 0x4a48 (k cerne), 0x4a40 (k bile), driver 0x28b0 ----
+   Skalovac je BEZSTAVOVY, nikoli interpolator: kazdy nibble RGB12 se
+   vynasobi (256 - level) >> 8. Uroven drzi dve globalni promenne
+   fp@(11170) / fp@(11166) a krokuje je korutina 0x28b0 jednou za snimek.
+   Fade plati jen pro registry 0x180-0x19F = COLOR00-15, takze pozadi
+   i boby ano, ale HW sprity granatu (COLOR17+) a HUD (COLOR16) ne. */
+/* 0x28b0: registrovana korutina, telo konci yieldem 0x5f0a a skokem
+   na sebe, takze krokuje presne jednou za snimek. */
+function stepFade(g) {
+  if (g.fadeDir) {                       // fp@(142): znamenko = smer
+    if (g.fadeDir > 0) {                 // 0x28b8: z cerne, -16 az na 0
+      g.fadeBlack -= 16;
+      if (g.fadeBlack < 0) { g.fadeBlack = 0; g.fadeDir = 0; }
+    } else {                             // 0x28ca: do cerne, +16 az na 256
+      g.fadeBlack += 16;
+      if (g.fadeBlack >= 256) { g.fadeBlack = 256; g.fadeDir = 0; }
+    }
+  }
+  if (g.fadeWhite) {                     // 0x28e2: += znamenkovy fp@(11168)
+    g.fadeWhite += g.fadeWhiteStep;
+    if (g.fadeWhite > 256) g.fadeWhite = 256;
+    // Original spodni mez nehlida - spoleha, ze krok deli 256 beze zbytku
+    // (v kodu jen +-16 a -4). Zde orezavame pro jistotu.
+    if (g.fadeWhite < 0) g.fadeWhite = 0;
+  }
+}
+
 /* HOMING.LIN je 4bitovy bob s jinou paletovou cestou; tato aproximace
    zustava oddelena, aby oprava kanonovych HW spritu nemenila jeho barvy. */
 const HOMINGPAL = (() => {
@@ -1089,6 +1116,9 @@ function startGame(lv) {
            +(document.getElementById("livesbox").value) || 3,
     scrollMul: (+document.getElementById("scrollpct").value || 100) / 100,
     keys: {},
+    // 0x3092 vola po zalozeni hracskych korutin 0x2868 = fade z cerne,
+    // tedy uroven 256 a smer +1: 16 snimku do plne palety.
+    fadeBlack: 256, fadeWhite: 0, fadeDir: 1, fadeWhiteStep: 0,
   };
   for (const s of g.spawns) s.armed = (s.y - g.scroll) < -32;
   if (state.titleMod) { state.titleMod.stop(); state.titleMod = null; }
@@ -1128,6 +1158,7 @@ window.addEventListener("keyup", e => {
 /* ---- logika (50 Hz) ---- */
 function step(g) {
   g.tick++;
+  stepFade(g);
   const oldScroll = g.scroll;
   g.scroll -= SCROLL * TICK * (g.scrollMul || 1);   // scroll nahoru
   const scrollDelta = g.scroll - oldScroll;
@@ -1764,11 +1795,11 @@ function frame(now) {
     if (pb) ctx.drawImage(pb.cv, Math.round(b.x + pb.ox), Math.round(b.y + pb.oy));
     else { ctx.fillStyle = "#fff"; ctx.fillRect(b.x - 1, b.y - 4, 2, 6); }
   }
+  // HOMING je bob (paleta okna), granat je HW sprite - ten se kresli az
+  // za fade prekryvem, protoze COLOR17+ fade nepodleha.
   for (const s of g.shots) {
-    const eb = s.kind === "hom"
-      ? sprite("HOMING.LIN", dir16(s.ang), HOMINGPAL, "homing")
-      : sprite("BULLET.LIN", ((g.tick & 1) ? 24 : 40) + dir16(s.ang),
-               cannonPal(g.tick), "cannon:" + (g.tick & 15));
+    if (s.kind !== "hom") continue;
+    const eb = sprite("HOMING.LIN", dir16(s.ang), HOMINGPAL, "homing");
     if (eb) ctx.drawImage(eb.cv, Math.round(s.x + eb.ox), Math.round(s.y + eb.oy));
     else { ctx.fillStyle = "#ffd080"; ctx.fillRect(s.x - 2, s.y - 2, 4, 4); }
   }
@@ -1794,6 +1825,31 @@ function frame(now) {
       }
     }
   }
+  // Fade (0x4a48 k cerne / 0x4a40 k bile) meni copper registry COLOR00-15,
+  // takze zasahne pozadi i VSECHNY boby stejne - vcetne bile spawn siluety,
+  // stinu a vybuchu, ktere nejdou pres paletu okna. Proto jeden prekryv nad
+  // celou bobovou vrstvou, ne fade po paletach: skalovani nibblu na
+  // (256-level)/256 je totez jako cerna s alfou level/256, az na orezani
+  // na nibblech.
+  if (g.fadeBlack) {
+    ctx.fillStyle = "rgba(0,0,0," + (g.fadeBlack / 256) + ")";
+    ctx.fillRect(0, 0, 320, 256);
+  }
+  if (g.fadeWhite) {
+    ctx.fillStyle = "rgba(255,255,255," + (g.fadeWhite / 256) + ")";
+    ctx.fillRect(0, 0, 320, 256);
+  }
+
+  // Granaty jsou HW sprity (COLOR17-19) a HUD je 5. bitplane (COLOR16);
+  // fade plati jen pro 0x180-0x19F, takze obojí kreslime az ted, nedotcene.
+  for (const s of g.shots) {
+    if (s.kind === "hom") continue;
+    const eb = sprite("BULLET.LIN", ((g.tick & 1) ? 24 : 40) + dir16(s.ang),
+                      cannonPal(g.tick), "cannon:" + (g.tick & 15));
+    if (eb) ctx.drawImage(eb.cv, Math.round(s.x + eb.ox), Math.round(s.y + eb.oy));
+    else { ctx.fillStyle = "#ffd080"; ctx.fillRect(s.x - 2, s.y - 2, 4, 4); }
+  }
+
   // HUD
   ctx.fillStyle = "#aab0ff"; ctx.font = "bold 10px monospace";
   ctx.fillText("HELI " + g.lives + "\u2665  " + String(g.score).padStart(7, "0"), 8, 12);

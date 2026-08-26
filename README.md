@@ -42,6 +42,9 @@ a smooth fly-over mode, music metadata, and the file catalogue.
 press Space and choose TOWN. The TOWN runtime currently routes all 155
 map objects; 154 use transcribed behaviour coroutines and the remaining
 GOOSE placeholder is deliberately inert instead of inventing enemy fire.
+The level fades in from black over 16 frames, as the engine's own fade
+driver does — and the HUD stays lit through it, because the fade only
+touches COLOR00-15.
 Other levels are still research previews, not complete ports.
 
 **Command line:**

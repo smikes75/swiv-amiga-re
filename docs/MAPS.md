@@ -73,9 +73,19 @@ colour       = word >> 4        RGB12
 ```
 
 The opening batch of commands in every map sets **the level's whole
-palette**; further commands during the map **fade colours smoothly**
-(the engine interpolates, `0x4a48`). The famous sunset over the river
-is not code — **it is data in the map.**
+palette**; further commands during the map change individual colours
+at their raster line. Each command is a **discrete write**, not a
+tween — the engine holds no interpolation state between checkpoints.
+The smooth sunset over the river comes from the *density of commands
+in the data* (RIVER: 19 changes over 4,127 px), so it is still true
+that it is not code — **it is data in the map.**
+
+`0x4a48` does **not** belong to this mechanism. It is the global
+fade-to-black/white multiplier laid on top of the whole palette, with
+its own two level variables and its own per-frame driver; see the
+fade section in [BEHAVIORS](BEHAVIORS.md). An earlier version of this
+document claimed the engine interpolated between checkpoints using
+`0x4a48` — reading the routine disproved it.
 
 Measured structure: colours 0–9 are identical across levels 0–4 (the
 objects — jeep, helicopter, explosions), 10–15 carry the terrain.
@@ -128,7 +138,8 @@ moved enemies) which a static map by definition does not carry.
 
 ## Deliberately not rendered / known deviations
 
-- colour-fade interpolation (the render steps between checkpoints)
+- the global fade-to-black/white multiplier (`0x4a48`): the static
+  renders always show the palette unfaded
 - the FINAL arena's runtime looping
 - object behaviour (only the spawn graphic at the spawn position)
 - the drawer's mirror-flag slots (see above)
