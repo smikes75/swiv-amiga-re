@@ -290,6 +290,34 @@ krok na `−16` a nakonec na `−4`. Nektera mista naopak nastavi
 uroven primo a hned ji zase smazou (`0xc12e` = 64 pri zasahu bosse)
 — to je jednosnimkovy zablesk, ne rampa.
 
+### TOWN boss GOOSE (dispatch `0x0017` → `0xc78a`)
+
+- **rodic je nosic**: `a2c6(GOOSE#0, coll 0, margin 0, hp 0, body 0,
+  cost 100)` — dokud se sklada, nema HP a nejde zasahnout
+- flag bit 4 (`0xc7b6`) odpoji scroll; `0xc7bc` prenese objekt na
+  `x = 160` a `mapY += 288`, takze naleti **zespodu** rychlosti
+  `+336 = −2.0` px/t
+- **tri casti** (`0x6144`): `0xc9e2` = GOOSE#7 na ofsetu `(0,−44)`,
+  `0xc9ec` a `0xc9f0` = GOOSE#6 na `(±16,−12)`. Kazda ceka nahodne
+  0–63 snimku, pak vstoupi shora (`screen y −24`) z nahodneho
+  `x = 32 + rand&255` a jeji ofset se **sbiha k cili po 4 jednotkach
+  za tik** (`0xca7a`). Je-li u rodice nastaven bit 1, ofsety se
+  zdvojnasobi (`0xca5e`).
+- `0xc826`: po dosazeni `screen y 72` zastavi a **teprve ted**
+  `+360 = 25` HP (`0xc842`)
+- **pohyb v boji**: vodorovne zrychleni `1536/65536` px/t² k hraci,
+  `vx` orezane na ⟨−2, 1⟩ (`0xc888`); svisle `screen y < 64` → `vy = 4`,
+  `> 192` → `vy = −0.25`, mezi tim drzi (`0xc8b2`)
+- **palba** jen pri `screen y <= 128`, kadence `(12 − pocet hracu) × 4`
+  (`0xc8da`): mireny kanonovy granat `0x95d2` + **dve navadene strely**
+  `0x8530` s ofsety `+6` uhel 0 a `−6` uhel 128
+- zasah (`0xc974`): `−1 HP` a **obraceni `vx`** (`negl +332`)
+- **bonusy** (`0xc9a0`): za kazdeho zijiciho hrace jeden kruh — pocet
+  urcuje volajici, krok uhlu `256/pocet`, pocatecni uhel nahodny, kazdy
+  bonus je korutina TOKEN `0x96d8`. Znicen → **2** kruhy (3, kdyz uz
+  ubehla vetsina casu, `+280 <= 500`); casovac `+280 = 2000` vyprsi
+  a boss nebyl ani skrabnuty → **5** a odleti (`vy = −4`)
+
 ### Triggery chovani
 Objekty uvnitr uvodniho okna se NEaktivuji; korutiny jsou zakladany
 pred obrazem a jejich `a2c6` je pusti podle vlastniho marginu. FODDERA

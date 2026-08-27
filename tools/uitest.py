@@ -229,6 +229,62 @@ def main():
                    formations["cappedCost"] == 160,
                    "active budget dovolil prekrocit 160")
 
+            # TOWN boss GOOSE (0xc78a): nalet, skladani ze tri casti,
+            # nezranitelnost behem skladani, palba a kruh bonusu.
+            boss = page.evaluate("""() => {
+              const g = state.g;
+              const s = g.spawns.find(o => o.beh === 'boss');
+              if (!s) return { err: 'boss v TOWN neni' };
+              g.scrollMul = 0.000001;
+              g.player.alive = true; g.player.x = 100; g.player.y = 200;
+              g.shots = []; g.tokens = [];
+              s.born = false; s.armed = true; s.alive = true;
+              s.y = g.scroll;                    // margin 0
+              step(g);
+              const born = { x: s.x, sy: Math.round(s.y - g.scroll),
+                             hp: s.hp, st: s.st, parts: s.parts.length,
+                             coroutine: s.coroutine };
+              let guard = 0;
+              while (s.st === 0 && guard++ < 2000) step(g);
+              const fight = { st: s.st, hp: s.hp,
+                              sy: Math.round(s.y - g.scroll) };
+              guard = 0;
+              while (!s.parts.every(q => q.entered &&
+                                    q.ox === q.tx && q.oy === q.ty)
+                     && guard++ < 4000) step(g);
+              const assembled = s.parts.map(q => [q.ox, q.oy]);
+              g.shots = []; s.fireT = 1;
+              guard = 0;
+              while (g.shots.length === 0 && guard++ < 400) step(g);
+              const salvo = g.shots.map(x => x.kind).sort();
+              g.tokens = [];
+              dropBossTokens(g, s, 2);
+              const ring = g.tokens.map(k => k.ang);
+              return { born, fight, assembled, salvo, ring,
+                       tokenTypes: g.tokens.map(k => k.typ) };
+            }""")
+            expect("err" not in boss, boss.get("err", ""))
+            expect(boss["born"]["coroutine"] == 0xC78A,
+                   "boss neni routovany na korutinu 0xc78a")
+            expect(boss["born"]["x"] == 160 and boss["born"]["sy"] == 288,
+                   "boss se po aktivaci nepresunul na stred a o 288 px dal: %s"
+                   % boss["born"])
+            expect(boss["born"]["hp"] == 0 and boss["born"]["parts"] == 3,
+                   "boss ma byt behem naletu bez HP a mit tri casti: %s"
+                   % boss["born"])
+            expect(boss["fight"]["st"] == 1 and boss["fight"]["hp"] == 25 and
+                   boss["fight"]["sy"] <= 72,
+                   "boss nezastavil na y 72 s 25 HP: %s" % boss["fight"])
+            expect(sorted(boss["assembled"]) == [[-16, -12], [0, -44], [16, -12]],
+                   "casti se nesbehly na ofsety z 0xc9e2/0xc9ec/0xc9f0: %s"
+                   % boss["assembled"])
+            expect(boss["salvo"] == ["can", "hom", "hom"],
+                   "salva bosse ma byt mireny granat + dve navadene: %s"
+                   % boss["salvo"])
+            expect(len(boss["ring"]) == 2 and
+                   (boss["ring"][1] - boss["ring"][0]) % 256 == 128,
+                   "kruh bonusu nema krok 256/pocet: %s" % boss["ring"])
+
             summary = page.evaluate("""() => ({
               dispatch: state.behaviorDispatch.size,
               mapObjects: state.mapMeta.objects,
@@ -252,7 +308,7 @@ def main():
                                   "popup": 6, "mine": 6, "proxmine": 13,
                                   "train": 3, "mill": 2, "tank": 18, "roto": 9,
                                   "flame": 6, "camogun": 10,
-                                  "unimplemented": 1}
+                                  "boss": 1}
             expect(summary["spawns"] == 155 and
                    summary["behaviors"] == expected_behaviors,
                    "TOWN nema spravnych 155 routovanych runtime spawnu")
@@ -322,7 +378,7 @@ def main():
                 const gs = {
                   tick: 0, scroll: 100, scrollMul: 1, over: false, won: false,
                   player: { alive: false }, keys: {}, bullets: [], shots: [],
-                  plops: [], spawns: [], booms: [], effects: [],
+                  plops: [], spawns: [], booms: [], effects: [], tokens: [],
                   air: [{ kind: 'bird', x: 10, y: 100, vx: 0, vy: 1,
                           alive: true, pending: false, dead: false,
                           cost: 10, budgeted: true, hp: 2, scoreValue: 55,
@@ -341,6 +397,7 @@ def main():
                   tick: 0, scroll: 100, scrollMul: 1, over: false, won: false,
                   player: { alive: false }, keys: {}, bullets: [], shots: [],
                   plops: [], air: [], hazards: [], booms: [], effects: [],
+                  tokens: [],
                   activeCost: 15, score: 0, nextLife: 10000, lives: 3,
                   spawns: [{ born: true, alive: true, beh: 'mill',
                              file: 'MILL.LIN', idx: 0, fr: 0,
@@ -362,7 +419,7 @@ def main():
                   player: { x: 160, y: 200, alive: true, inv: 1000,
                             bank: 0, cool: 0, weapon: 0 }, keys: {},
                   bullets: [], shots: [], plops: [], air: [], hazards: [],
-                  booms: [], effects: [], activeCost: 0, score: 0,
+                  booms: [], effects: [], tokens: [], activeCost: 0, score: 0,
                   nextLife: 10000, lives: 3,
                   spawns: [{ born: true, alive: true, beh: 'unimplemented',
                              file: 'GOOSE.LIN', idx: 0, x: 100, y: 1100,

@@ -21,29 +21,23 @@ kus enginu.
 - **Dusledek:** dokud engine nebude precteny, nelze zvuky doplnit
   "priblizne" bez porusení pravidla o nehadani.
 
-## 2. TOWN boss (GOOSE) — zalozeny, ale inertni
+## 2. TOWN boss (GOOSE) — PREPSANY 2026-08-27
 
-`GOOSE.LIN` snimek 0, gfx `0x0017` → korutina **`0xc78a`**. V TOWN je
-presne jeden. Dnes je to zamerne necinny placeholder.
+`GOOSE.LIN` snimek 0 → `0xc78a`. Prepsano vcetne naletu, skladani ze
+tri casti, palby (mireny granat + dve navadene) a kruhu bonusu; popis
+je v [BEHAVIORS](BEHAVIORS.md), regrese v `tools/uitest.py`.
+**TOWN tim ma 155/155 objektu na prepsanych korutinach.**
 
-Korutina je pritom cela citelna:
+Zbyva u nej dvoje:
 
-| adresa | co dela |
-|---|---|
-| `0xc7a0` | `a2c6(gfx 23, coll 0, margin 0, hp 0, body 0, cost 100)` — rodic je bez HP, je to nosic |
-| `0xc7b6` | flag bit 4 = airborne (kompenzuje scroll, jako FODDERA/BIRD) |
-| `0xc7bc` | start 288 px pod obrazem, x = 160 (stred), `+328 = 32` |
-| `0xc7d2`–`0xc7ee` | **ctyri `bsrw 0x6144`** — casti `0xcaac`, `0xc9f0`, `0xc9ec`, `0xc9e2` se pripoji za letu |
-| `0xc80a` | `+336 = -2`, tedy nalet |
-| `0xc818`–`0xc824` | leti, dokud `mapY − scroll > 72`; pak zastavi |
-| `0xc842` | **teprve ted `+360 = 25` HP** — dokud se sklada, je nesmrtelny |
-| `0xc848` | callback `0xc974` pres `0x653e` |
-| `0xc934` | vetev pri predcasnem konci |
-
-Rizene rakety: `HOMING.LIN`, telo navadene strely uz popsane
-(`0x8530` / `0x8566`, viz BEHAVIORS.md).
-
-**Dalsi krok:** prepsat `0xc78a` vcetne ctyr casti a `0xc974`.
+- **ctvrty potomek `0xcaac`** (GOOSE#8) neni cast tela — nesbiha se
+  k rodici, ale leti vlastni hadovitou drahou (`0xcb14`: `+356 = 0x1200`,
+  uhel 64, pak stridave `±8` po sesti krocich). Je to doprovod, ne kus
+  bosse; **neprepsany**.
+- **bodovy soucet po smrti**: vetev `0xc934` prochazi smyckou `0xc950`
+  tabulku slov a pricita je do `fp@(3560)`. Tabulka neni prectena,
+  takze boss zatim **nedava zadne body** — radsi nula nez vymyslene
+  cislo.
 
 ## 3. Bonusovy TOKEN — neprepsany
 
@@ -62,7 +56,13 @@ Sem patri hlasena **ochranna bublina**: hrac do ni naleti a v originale
 ho urcitou dobu chrani, v prepisu misto toho vybuchne. Ktery ze ctyr
 typu to je, se docte z kolizniho callbacku — **zatim neprecteno**.
 
+**Stav:** bonusy uz **vznikaji** — boss je po smrti rozhazuje do kruhu
+a v `game.html` se pohybuji i stridaji ctyri typy podle `0x9780`.
+Chybi **ucinek pri sebrani**: kolizni callback `0x9734` neni precteny,
+takze token na dotek nic nedela (a hrace rozhodne nezabiji).
+
 **Dalsi krok:** precist callback na `0x9734` a ucinky vsech ctyr typu.
+Tam patri hlasena ochranna bublina.
 
 ## Co uz je vedomo jinde
 

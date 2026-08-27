@@ -272,6 +272,7 @@ const IMPLEMENTED_BEHAVIORS = new Map([
   [0x180D, { coroutine: 0x994E, id: "roto" }],
   [0x0013, { coroutine: 0xAB10, id: "flame" }],
   [0x0016, { coroutine: 0xAC12, id: "camogun" }],
+  [0x0017, { coroutine: 0xC78A, id: "boss" }],
 ]);
 
 function parsePam(pam, dico) {
@@ -864,6 +865,82 @@ function releaseCost(g, o) {
   g.activeCost = Math.max(0, (g.activeCost || 0) - (o.cost || 0));
   o.budgeted = false;
 }
+/* ---- TOWN boss GOOSE (0xc78a) ----
+   Rodic je nosic bez HP a bez bodu (a2c6 d3=d4=0, cost 100). Tri casti
+   priletaji samostatne, kazda s nahodnym zpozdenim a z nahodneho x, a
+   sbihaji se k rodici po 4 jednotkach za tik (0xc9f8..0xcaa8). Teprve po
+   zastaveni na screen y 72 dostane rodic 25 HP (0xc842) - behem skladani
+   je nezranitelny. */
+const BOSS_PARTS = [                             // 0xc9e2 / 0xc9ec / 0xc9f0
+  { dx:   0, dy: -44, gfx: 0x0e17 },             // GOOSE#7 (vrsek)
+  { dx:  16, dy: -12, gfx: 0x0c17 },             // GOOSE#6 (bok)
+  { dx: -16, dy: -12, gfx: 0x0c17 },             // GOOSE#6 (bok)
+];
+function spawnBossParts(g, boss) {
+  return BOSS_PARTS.map(t => ({
+    tx: t.dx, ty: t.dy, frame: t.gfx >> 9,
+    // 0xca0a: nahodne cekani 0..63 snimku, pak vstup shora z nahodneho x
+    delay: random32() & 63,
+    ox: 0, oy: 0, entered: false,
+  }));
+}
+function stepBossParts(g, boss) {
+  for (const q of boss.parts) {
+    if (!q.entered) {
+      if (q.delay-- > 0) continue;
+      q.entered = true;                          // 0xca3c: x = 32 + rand&255
+      q.ox = (32 + (random32() & 255)) - boss.x;
+      q.oy = -24 - (boss.y - g.scroll);          // 0xca4c: screen y = -24
+      continue;
+    }
+    // 0xca7a: offset se sbiha k cili po 4 jednotkach na osu
+    if (q.ox !== q.tx) q.ox -= (q.ox > q.tx) ? 4 : -4;
+    if (q.oy !== q.ty) q.oy -= (q.oy > q.ty) ? 4 : -4;
+    if (Math.abs(q.ox - q.tx) < 4) q.ox = q.tx;
+    if (Math.abs(q.oy - q.ty) < 4) q.oy = q.ty;
+  }
+}
+function bossAssembled(boss) {
+  return boss.parts.every(q => q.entered && q.ox === q.tx && q.oy === q.ty);
+}
+
+/* 0xc9a0: po jednom kruhu bonusu za kazdeho zijiciho hrace. Krok uhlu je
+   256/pocet, pocatecni uhel nahodny, kazdy bonus je korutina TOKEN 0x96d8. */
+function dropBossTokens(g, boss, perPlayer) {
+  // 0xc9a2/0xc9aa: prispiva kazdy ZIJICI hrac, ne pocet hracu ve hre.
+  const living = g.player.alive ? 1 : 0;   // druhy hrac v prepisu zatim neni
+  const count = perPlayer * living;
+  if (count <= 0) return;
+  const stepAng = (256 / count) | 0;
+  let ang = random32() & 255;
+  for (let i = 0; i < count; i++) {
+    g.tokens.push({
+      x: boss.x, y: boss.y, ang, spd: 1.2,
+      typ: 0, t: 4, cycles: 12, locked: false, born: g.tick,
+    });
+    ang = (ang + stepAng) & 255;
+  }
+}
+/* 0x9780: bonus prepina typ po 4 ticich pres tabulku 0x97bc (TOKEN#1..#4)
+   a po 12 cyklech se zamkne na typ 4. Ucinek pri sebrani je v kolizim
+   callbacku 0x9734 a zatim NENI precteny - token proto na dotek nic nedela
+   (viz docs/GAPS.md), rozhodne ale hrace nezabiji. */
+function stepTokens(g, scrollDelta) {
+  for (const k of g.tokens) {
+    k.y += scrollDelta;                          // bit 4: odpojeny scroll
+    const v = angVel(k.ang, k.spd);
+    k.x += v.vx; k.y += v.vy;
+    k.x = Math.max(8, Math.min(312, k.x));       // 0x9742: orez na 8..312
+    if (!k.locked && --k.t <= 0) {
+      k.t = 4;
+      k.typ = (k.typ + 1) & 3;
+      if (k.typ === 0 && --k.cycles <= 0) { k.locked = true; k.typ = 3; }
+    }
+  }
+  const sy = y => y - g.scroll;
+  g.tokens = g.tokens.filter(k => sy(k.y) > -48 && sy(k.y) < 320);
+}
+
 function fodderInitial() {                     // 0x813a
   const r = random32(), hi = r >>> 16;
   return { x: 32 + (r & 255),
@@ -1109,7 +1186,7 @@ function startGame(lv) {
               weapon: 0 /* citac zbrane; tier = weapon/5 (0x70c0) */ },
     nextLife: 10000,   // extra zivot: prvni na 10k, pak po 30k (0x7116)
     bullets: [], shots: [], booms: [], plops: [], effects: [],
-    air: [], hazards: [],
+    air: [], hazards: [], tokens: [],
     players: 1, activeCost: 0,
     score: 0, tick: 0, over: false, won: false,
     lives: +(new URLSearchParams(location.search).get("lives")) ||
@@ -1299,6 +1376,7 @@ function step(g) {
         else if (s.beh === "mine" || s.beh === "camogun") margin = -16;
         else if (s.beh === "flame") margin = 128;
         else if (s.beh === "train") margin = 100;
+        else if (s.beh === "boss") margin = 0;   // 0xc7ae: a2c6 d2 = 0
         else if (s.beh === "proxmine") {
           // 0xa9e0: RNG probe zacina az kdyz se objekt blizi nejnizsimu
           // moznemu prahu; pak uz hodnota zustava pro tento objekt stabilni.
@@ -1370,6 +1448,17 @@ function step(g) {
         // osmitikovym recoil citacem. Aktivacni margin z a2c6 je -16.
         s.hp = 2; s.scoreValue = 40; s.st = 0; s.t = 100; s.fr = 0;
         s.recoil = 0; s.animT = 0;
+      } else if (s.beh === "boss") {
+        // 0xc7bc: po a2c6 se presune na stred a o 288 px dal do urovne,
+        // takze na scenu naleti zespodu. Bit 4 (+367) odpoji scroll.
+        s.x = 160;
+        s.y += 288;
+        s.scrollLocked = true;
+        s.st = 0; s.vx = 0; s.vy = -2;   // 0xc80a: +336 = -2.0
+        s.hp = 0;                        // a2c6 d3 = 0: behem skladani nezranitelny
+        s.scoreValue = 0;
+        s.fr = 0;
+        s.parts = spawnBossParts(g, s);
       } else if (s.beh === "roto") {
         // 0x994e: rotujici antena 4..11 (smer stridave), salva 4 do krize
         s.hp = 4; s.sd = (s.x & 1) ? 1 : -1; s.spin = 4; s.at = 0;
@@ -1500,6 +1589,45 @@ function step(g) {
         if (!fired && s.fr === 1 && --s.animT <= 0) s.fr = 0;
         if (--s.recoil <= 0) { s.st = 0; s.t = 100; s.fr = 0; }
       }
+    } else if (s.beh === "boss" && !fire) {
+      // Aktivacni tik se jen presune (0xc7bc); krokovat zacina az dalsi
+      // yield, stejne jako u CAMOGUN.
+      s.y += scrollDelta;                       // bit 4: screen-y meni jen vy
+      stepBossParts(g, s);
+      const bsy = s.y - g.scroll;
+      if (s.st === 0) {                         // nalet zdola az na y 72
+        s.y += s.vy;
+        if (bsy <= 72) {                        // 0xc826: zastavi a ozije
+          s.st = 1; s.vy = 0; s.hp = 25;        // 0xc842: +360 = 25
+          s.timer = 2000; s.fireT = 10;         // 0xc86c / 0xc872
+        }
+      } else if (s.st === 1) {
+        // 0xc882: zrychleni 1536/65536 k hraci, vx orezane na <-2, 1>
+        const ax = 1536 / 65536;
+        if (p.alive) {
+          if (p.x < s.x) { if (s.vx > -2) s.vx -= ax; }
+          else if (s.vx < 1) s.vx += ax;
+        }
+        s.x += s.vx;
+        // 0xc8b2: nad 64 klesa 4 px/t, pod 192 stoupa 0.25, mezi tim drzi
+        if (bsy < 64) s.vy = 4;
+        else if (bsy > 192) s.vy = -0.25;
+        s.y += s.vy;
+        // 0xc8ce: pali jen v horni polovine, kadence (12 - hraci) * 4
+        if (bsy <= 128 && --s.fireT <= 0) {
+          s.fireT = (12 - (g.players || 1)) * 4;
+          fireCannonAimed(g, s.x, bsy);          // 0x95d2
+          fireHoming(g, s.x + 6, bsy, 0);        // 0x8530 (d0 +6, uhel 0)
+          fireHoming(g, s.x - 6, bsy, 128);      // 0x8530 (d0 -6, uhel 128)
+        }
+        if (--s.timer <= 0) {                    // 0xc910: vyprsel cas
+          if (s.hp === 25) dropBossTokens(g, s, 5);  // 0xc91c: nedotceny
+          s.st = 2; s.vy = -4;                   // 0xc926: odlet
+        }
+      } else {
+        s.y += s.vy;
+        if (bsy < -80) { s.alive = false; releaseCost(g, s); }
+      }
     } else if (s.beh === "roto") {
       if (++s.at >= 4) {                        // spin 4..11
         s.at = 0; s.spin += s.sd;
@@ -1517,6 +1645,8 @@ function step(g) {
     }
   }
 
+  stepTokens(g, scrollDelta);
+
   // animace dosud neprelozenych objektu podle vytezenych skriptu
   for (const s of g.spawns) {
     if (!s.born || !s.alive || !s.anim) continue;
@@ -1531,6 +1661,7 @@ function step(g) {
     if (!s.born || !s.alive) continue;
     if (s.beh === "unimplemented" || s.beh === "missing-dispatch") continue;
     if (s.beh === "popup" && (s.st === 0 || s.st === 6)) continue; // pancir
+    if (s.beh === "boss" && s.st !== 1) continue;  // sklada se / odleti
     const spr = sprite(s.file, s.fr >= 0 ? s.fr : s.idx);
     if (!spr) { s.alive = false; continue; }
     const sy = s.y - g.scroll;
@@ -1542,6 +1673,18 @@ function step(g) {
         b.dead = true;
         if (s.beh === "mine") {
           detonateMine(g, s, true);
+          break;
+        }
+        if (s.beh === "boss") {
+          if (--s.hp > 0) { s.vx = -s.vx; continue; }   // 0xc97a: negl +332
+          s.alive = false;
+          releaseCost(g, s);
+          // 0xc98c: dva kruhy bonusu, tri kdyz uz ubehla vetsina casu
+          dropBossTokens(g, s, s.timer <= 500 ? 3 : 2);
+          spawnBoom(g, s.x, s.y, "big");
+          snd("BIGEXPL.SND", 8000);
+          // Bodovy soucet ma boss vlastni (smycka 0xc950 nad tabulkou);
+          // ta zatim neni prectena, takze zadne body nepripisujeme.
           break;
         }
         if (--s.hp > 0) continue;
@@ -1677,6 +1820,18 @@ function frame(now) {
     const sy = s.y - top;
     if (sy < -60 || sy > 320) continue;
     const pc = wpc;   // sprite barvy = aktualni copper paleta obrazovky
+    if (s.beh === "boss") {
+      const body = sprite(s.file, 0, pc.pal, pc.ci);
+      if (body) ctx.drawImage(body.cv, Math.round(s.x + body.ox),
+                              Math.round(sy + body.oy));
+      for (const q of s.parts) {
+        if (!q.entered) continue;
+        const pr = sprite(s.file, q.frame, pc.pal, pc.ci);
+        if (pr) ctx.drawImage(pr.cv, Math.round(s.x + q.ox + pr.ox),
+                              Math.round(sy + q.oy + pr.oy));
+      }
+      continue;
+    }
     if (s.beh === "tank") {
       const hull = sprite(s.file, s.hullF, pc.pal, pc.ci);
       if (hull) ctx.drawImage(hull.cv, Math.round(s.x + hull.ox), Math.round(sy + hull.oy));
@@ -1784,6 +1939,13 @@ function frame(now) {
     ctx.globalAlpha = 1;
     ctx.drawImage(spr.cv, Math.round(a.x + spr.ox), Math.round(ay + spr.oy));
   }
+  // bonusy z bosse: TOKEN#1..#4, typ se strida (0x9780)
+  for (const k of g.tokens) {
+    const tk = sprite("TOKEN.LIN", 1 + k.typ, wpc.pal, wpc.ci);
+    if (tk) ctx.drawImage(tk.cv, Math.round(k.x + tk.ox),
+                          Math.round(k.y - top + tk.oy));
+  }
+
   // strely: hracovy dart BULLET#14 (0x8b86), granaty BULLET#24+16smeru,
   // navadene HOMING#smer; granaty maji dynamickou COLOR17-19 paletu
   // hracuv bolt BULLET#14: jehla barvy 1-2 (bila), kulicka barva 3
