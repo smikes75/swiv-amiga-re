@@ -285,6 +285,71 @@ def main():
                    (boss["ring"][1] - boss["ring"][0]) % 256 == 128,
                    "kruh bonusu nema krok 256/pocet: %s" % boss["ring"])
 
+            # Bonus TOKEN (0x96d8): strela prepina typ (0x9780), dotek
+            # hrace sebere (0x97c6). Typ 3 je hlasena ochranna bublina.
+            token = page.evaluate("""() => {
+              const g = state.g, p = g.player;
+              g.scrollMul = 0.000001;
+              const mk = typ => {
+                const k = { x: 100, y: g.scroll + 100, ang: 64, spd: 0,
+                            typ, cycles: 12, blink: false, hitLock: false,
+                            dead: false };
+                g.tokens = [k]; return k;
+              };
+              // strela: typ obiha 0->1->2->3->0
+              const k = mk(0), cycle = [];
+              for (let i = 0; i < 5; i++) { k.hitLock = false; shootToken(g, k);
+                                            cycle.push(k.typ); }
+              // po dvanacti obehnutich se zamkne na 4
+              const k2 = mk(0);
+              for (let i = 0; i < 12 * 4; i++) { k2.hitLock = false;
+                                                 shootToken(g, k2); }
+              const locked = k2.typ;
+              // ucinky
+              const eff = {};
+              p.alive = true; p.inv = 0; p.weapon = 0; p.mode = 0;
+              p.reload = null; g.score = 0;
+              pickupToken(g, mk(3));
+              eff.guard = { inv: p.inv, score: g.score };
+              p.reload = null;
+              pickupToken(g, mk(2));
+              eff.rate = p.reload;
+              pickupToken(g, mk(4));
+              eff.max = { weapon: p.weapon, reload: p.reload };
+              p.weapon = 0; p.mode = 0;
+              pickupToken(g, mk(0));            // stejny rezim -> +1 sila
+              const afterSame = p.weapon;
+              pickupToken(g, mk(1));            // jiny rezim -> jen prepnuti
+              eff.power = { afterSame, afterSwitch: p.weapon, mode: p.mode };
+              // bonus hrace nezrani: 300 tiku dotyku a hrac zije
+              p.inv = 0; p.alive = true; p.x = 100; p.y = 100;
+              const kk = mk(1); kk.x = 100; kk.y = g.scroll + 100;
+              let hp = true;
+              for (let i = 0; i < 5; i++) { step(g); if (!p.alive) hp = false; }
+              eff.harmless = hp;
+              return { cycle, locked, eff };
+            }""")
+            expect(token["cycle"] == [1, 2, 3, 0, 1],
+                   "strela neprepina typ bonusu po 0x9780: %s" % token["cycle"])
+            expect(token["locked"] == 4,
+                   "po 12 obehnutich se bonus nezamkl na typ 4: %s"
+                   % token["locked"])
+            expect(token["eff"]["guard"] == {"inv": 500, "score": 500},
+                   "typ 3 nedal 500 tiku ochrany a 500 bodu: %s"
+                   % token["eff"]["guard"])
+            expect(token["eff"]["rate"] == 8,
+                   "typ 2 nezkratil prodlevu palby na 8: %s"
+                   % token["eff"]["rate"])
+            expect(token["eff"]["max"] == {"weapon": 6, "reload": 8},
+                   "typ 4 nedal plnou silu: %s" % token["eff"]["max"])
+            expect(token["eff"]["power"]["afterSame"] == 1 and
+                   token["eff"]["power"]["afterSwitch"] == 1 and
+                   token["eff"]["power"]["mode"] == 1,
+                   "sila se ma pridat jen pri shodnem rezimu: %s"
+                   % token["eff"]["power"])
+            expect(token["eff"]["harmless"] is True,
+                   "bonus hrace zranil - nikdy nesmi")
+
             summary = page.evaluate("""() => ({
               dispatch: state.behaviorDispatch.size,
               mapObjects: state.mapMeta.objects,

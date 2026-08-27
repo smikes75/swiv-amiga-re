@@ -133,6 +133,10 @@ def main():
           all(prog[a:a + len(bytes.fromhex(h.replace(" ", "")))]
               == bytes.fromhex(h.replace(" ", ""))
               for a, h in fade.items()))
+    check("tabulka zbrane 0x70c0 = (2,11)(3,10)(4,10)(5,8) bajtove",
+          prog[0x70C0:0x70C8] == bytes.fromhex("020b030a040a0508"))
+    check("TOKEN ikony 0x97bc = TOKEN#1..#5",
+          prog[0x97BC:0x97C6] == bytes.fromhex("02180418061808180a18"))
     check("dispatch: 73 unikatnich gfx + zname rutiny TOWN",
           len(dispatch) == 73 and len(routes) == 73 and
           all(routes.get(gfx) == routine

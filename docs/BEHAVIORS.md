@@ -318,6 +318,37 @@ uroven primo a hned ji zase smazou (`0xc12e` = 64 pri zasahu bosse)
   ubehla vetsina casu, `+280 <= 500`); casovac `+280 = 2000` vyprsi
   a boss nebyl ani skrabnuty → **5** a odleti (`vy = −4`)
 
+### Bonus TOKEN (`0x96d8`) a hracska pole
+
+TOKEN neni v dispatchi — zaklada ho kod, v TOWN jedine boss.
+
+- `a2c6(TOKEN#0, coll 32, margin −16, hp 0, body 0, cost 5)`, flag bity
+  0 a 4; `x` se orezava na 8–312 (`0x9742`), takze bonus neuteče z obrazu
+- hlavni smycka `0x9764` **strida kazdy snimek ikonu typu a TOKEN#0**,
+  takze bonus blika; pritom pred kazdym cyklem uvolni zamek zasahu
+  (`+278 = −1`)
+- **strela typ prepina** (callback `+510`, `0x9780`): bonus vyskoci
+  o 8 px, `+276 = (+276+1) & 3`; po dvanacti obehnutich vsech ctyr
+  (`+280`) se zamkne na typ 4
+- ikony jsou tabulka `0x97bc` = TOKEN#1..#5, index je typ
+
+**Sebrani** (callback `+514`, `0x97c6`) podle typu:
+
+| typ | ucinek | zapis |
+|---|---|---|
+| 0 / 1 | prepne **rezim zbrane** na 0 / −1; kdyz uz hrac tento rezim mel, prida **+1 silu** (strop 5) | `+104`, `+100` |
+| 2 | **rychlejsi palba**: prodleva −3, minimum 8 | `+98` |
+| 3 | **ochrana +500 tiku** (~10 s pri 50 Hz) a **+500 bodu** | `+108`, `+76` |
+| 4 | **plna sila**: sila 6 (nad bezny strop), prodleva 8, k tomu zablesk `0x8852` | `+100`, `+98` |
+
+Typ 3 je tedy hlasena „ochranna bublina" — nechrani predmet na mape,
+ale hrace po sebrani.
+
+Odtud plynou vyznamy hracskych poli: `+76` skore (long), `+98` prodleva
+palby, `+100` sila zbrane, `+104` rezim, `+108` doba ochrany.
+Tabulka zbrane `0x70c0` je **bajtova** — `02 0b / 03 0a / 04 0a / 05 08`,
+tedy (sila, kadence) indexovane primo hodnotou `+100`.
+
 ### Triggery chovani
 Objekty uvnitr uvodniho okna se NEaktivuji; korutiny jsou zakladany
 pred obrazem a jejich `a2c6` je pusti podle vlastniho marginu. FODDERA

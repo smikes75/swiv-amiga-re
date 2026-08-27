@@ -25,8 +25,8 @@
   "0x49c8": "event_queue_flush",
   "0x49ec": "event_queue_init",
   "0x4a04": "color_fade_event",
-  "0x4a40": "color_lerp_dec",
-  "0x4a48": "color_lerp_inc",
+  "0x4a40": "fade k bile: notw -> 0x4a48 -> notw",
+  "0x4a48": "fade skalovac: nibble RGB12 * (256-uroven) >> 8",
   "0x4a66": "cia_sound_timer_init",
   "0x4abc": "sound_irq_entry",
   "0x4ae0": "sound_channel_tick",
@@ -45,7 +45,7 @@
   "0x62b8": "wait_n_yields",
   "0x62cc": "yield_until_alive",
   "0x62d2": "yield_frame",
-  "0x653e": "anim_install",
+  "0x653e": "install_event_cb: +510 = a0, bit 0 v +508 (NE anim_install)",
   "0x6566": "obj_set_main",
   "0x65be": "steer_to_point(d0=x,d1=y,d2=max_otocka; 0=snap) -> +358",
   "0x65f2": "apply_angle_speed: vel = sin/cos(+358) * +356/256 px/t -> +332/+336",
@@ -95,7 +95,18 @@
   "0xa976": "ring_spawner",
   "0xa9a0": "ring_child",
   "0xaa9c": "ring_dart6",
-  "0xac12": "CAMOGUN: 100t, granat dolu 5 px/t, recoil 8 px/8t"
+  "0xac12": "CAMOGUN: 100t, granat dolu 5 px/t, recoil 8 px/8t",
+  "0x6564": "install_event_cb2: +514 = a0, bit 3 v +508",
+  "0x96d8": "TOKEN bonus: blika ikonu typu s TOKEN#0, x orez 8..312",
+  "0x9780": "TOKEN zasah: vyhodi o 8 px, typ = (typ+1)&3, po 12 obehu typ 4",
+  "0x97c6": "TOKEN sebrani: +100 sila, +104 rezim, +98 palba, +108 ochrana, +76 body",
+  "0x8852": "zablesk do bila (fp@(11166) = 256) pres korutinu 0x885a",
+  "0xc78a": "TOWN boss GOOSE: nalet zdola, 3 casti, 25 HP na y72, kruh bonusu",
+  "0xc974": "boss damage cb: -1 HP a obraceni vx (negl +332)",
+  "0xc9a0": "boss: rozhodi kruh bonusu, krok uhlu 256/pocet",
+  "0x28b0": "fade driver (korutina): cerna +-16/snimek, bila krokem fp@(11168)",
+  "0x2864": "fade do cerne (blokuje do dokonceni)",
+  "0x2868": "fade z cerne (blokuje do dokonceni)"
  },
  "data": {
   "0x0004": "file_name_table",
@@ -103,7 +114,9 @@
   "0x384c": "level_table",
   "0x46d2": "mask_routine_table",
   "0x6d0c": "anim_opcode_table",
-  "0x7462": "behavior dispatch table: gfx -> coroutine word offset"
+  "0x7462": "behavior dispatch table: gfx -> coroutine word offset",
+  "0x97bc": "TOKEN ikony typu: TOKEN#1..#5",
+  "0x70c0": "tabulka zbrane (sila,kadence) bajtove: 02 0b 03 0a 04 0a 05 08"
  },
  "loader_jumptable": {
   "-1414": "ldr_obj_kill",
@@ -117,5 +130,12 @@
   "-1522": "ldr_stream_read",
   "-1526": "ldr_file_open",
   "-1530": "ldr_file_seek"
+ },
+ "player_struct": {
+  "+76": "skore (long)",
+  "+98": "prodleva palby",
+  "+100": "sila zbrane 0-5 (bonus typu 4 dava 6)",
+  "+104": "rezim zbrane (0 / -1)",
+  "+108": "doba ochrany v ticich"
  }
 }

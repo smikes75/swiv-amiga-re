@@ -916,29 +916,65 @@ function dropBossTokens(g, boss, perPlayer) {
   for (let i = 0; i < count; i++) {
     g.tokens.push({
       x: boss.x, y: boss.y, ang, spd: 1.2,
-      typ: 0, t: 4, cycles: 12, locked: false, born: g.tick,
+      typ: 0, cycles: 12, blink: false, hitLock: false, dead: false,
     });
     ang = (ang + stepAng) & 255;
   }
 }
-/* 0x9780: bonus prepina typ po 4 ticich pres tabulku 0x97bc (TOKEN#1..#4)
-   a po 12 cyklech se zamkne na typ 4. Ucinek pri sebrani je v kolizim
-   callbacku 0x9734 a zatim NENI precteny - token proto na dotek nic nedela
-   (viz docs/GAPS.md), rozhodne ale hrace nezabiji. */
+/* Ikony typu: tabulka 0x97bc drzi graficka slova TOKEN#1..#5, index je
+   typ v poli +276. */
+const TOKEN_ICONS = [1, 2, 3, 4, 5];             // 0x0218,0x0418,...,0x0a18
+
+/* Hlavni smycka 0x9764: kazdy druhy snimek se strida ikona typu a TOKEN#0,
+   takze bonus blika. Zaroven se pred kazdym cyklem uvolni zamek zasahu
+   (+278 = -1), proto lze typ prepnout nejvys jednou za dva tiky. */
 function stepTokens(g, scrollDelta) {
   for (const k of g.tokens) {
     k.y += scrollDelta;                          // bit 4: odpojeny scroll
     const v = angVel(k.ang, k.spd);
     k.x += v.vx; k.y += v.vy;
     k.x = Math.max(8, Math.min(312, k.x));       // 0x9742: orez na 8..312
-    if (!k.locked && --k.t <= 0) {
-      k.t = 4;
-      k.typ = (k.typ + 1) & 3;
-      if (k.typ === 0 && --k.cycles <= 0) { k.locked = true; k.typ = 3; }
-    }
+    k.blink = !k.blink;
+    if (k.blink) k.hitLock = false;
   }
   const sy = y => y - g.scroll;
-  g.tokens = g.tokens.filter(k => sy(k.y) > -48 && sy(k.y) < 320);
+  g.tokens = g.tokens.filter(k => !k.dead && sy(k.y) > -48 && sy(k.y) < 320);
+}
+
+/* 0x9780 (callback +510, instalovany 0x653e): STRELA do bonusu ho vyhodi
+   o 8 px vzhuru a prepne typ. Po dvanacti obehnutich vsech ctyr typu se
+   zamkne na typ 4 (TOKEN#5 = plna sila). */
+function shootToken(g, k) {
+  k.y -= 8;                                      // subqw #8, mapY
+  if (k.hitLock) return;
+  k.hitLock = true;
+  k.typ = (k.typ + 1) & 3;
+  if (k.typ !== 0) return;
+  if (--k.cycles !== 0) return;
+  k.typ = 4;                                     // 0x97a2
+}
+
+/* 0x97c6 (callback +514, instalovany 0x6564): SEBRANI. Hracska pole podle
+   zapisu v teto rutine - +100 sila zbrane, +104 rezim, +98 prodleva palby,
+   +108 doba ochrany, +76 skore. */
+function pickupToken(g, k) {
+  const p = g.player;
+  if (k.typ === 2) {                             // 0x982a: rychlejsi palba
+    p.reload = Math.max(8, (p.reload ?? 11) - 3);
+  } else if (k.typ === 3) {                      // 0x983e: OCHRANA + body
+    p.inv += 500;                                // +108 += 500 (~10 s)
+    awardScore(g, 500);                          // +76 += 500
+  } else if (k.typ === 4) {                      // 0x984e: plna sila
+    p.weapon = 6; p.reload = 8;
+    // 0x8852 jeste zaklada zablesk do bila (fp@(11166) = 256), ale krok
+    // jeho doznivani nikde nenastavuje - neprepsano, viz docs/GAPS.md.
+  } else {                                       // 0x9808 / 0x980c: rezim
+    const mode = (k.typ === 1) ? 1 : 0;
+    // 0x981a: silu prida jen kdyz uz hrac tento rezim mel; strop 5
+    if (p.mode === mode && p.weapon < 5) p.weapon++;
+    p.mode = mode;
+  }
+  k.dead = true;                                 // 0x9826: ldr_obj_kill
 }
 
 function fodderInitial() {                     // 0x813a
@@ -1183,7 +1219,8 @@ function startGame(lv) {
     scroll: m.h - MARGIN - 256,    // start = spodek obsahu urovne (bez okraje)
     frac: 0,
     player: { x: 160, y: 200, ang: 192, alive: true, inv: 100, bank: 0, cool: 0,
-              weapon: 0 /* citac zbrane; tier = weapon/5 (0x70c0) */ },
+              weapon: 0 /* +100: sila 0-5, bonus typu 4 dava 6 */,
+              mode: 0 /* +104 */, reload: null /* +98, null = dle 0x70c0 */ },
     nextLife: 10000,   // extra zivot: prvni na 10k, pak po 30k (0x7116)
     bullets: [], shots: [], booms: [], plops: [], effects: [],
     air: [], hazards: [], tokens: [],
@@ -1259,8 +1296,13 @@ function step(g) {
     // start = 1 strela (zmereno: video 22.35 st06, rozestup salv 97 px
     // = 9 px/t x kadence 11); tabulka 0x70c0 (2,11)(3,10)(4,10)(5,8)
     // nastupuje az s powerupy
-    const tier = Math.min(4, (p.weapon / 5) | 0);
-    const [pow, cad] = [[1, 11], [2, 11], [3, 10], [4, 10], [5, 8]][tier];
+    // Tabulka 0x70c0 je bajtova: 02 0b / 03 0a / 04 0a / 05 08, tedy
+    // (sila, kadence) indexovane primo hodnotou +100 (0 = vychozi stav).
+    const tier = Math.min(4, p.weapon | 0);
+    const [pow, tableCad] = [[1, 11], [2, 11], [3, 10], [4, 10], [5, 8]][tier];
+    // Bonusy 2 a 4 prepisuji +98 primo; jak presne se to snasi se zapisem
+    // z tabulky pri zmene sily, neni prectene (docs/GAPS.md).
+    const cad = p.reload ?? tableCad;
     if (p.cool > 0) p.cool--;
     if (g.keys.f && p.cool <= 0) {
       p.cool = cad;
@@ -1646,6 +1688,20 @@ function step(g) {
   }
 
   stepTokens(g, scrollDelta);
+  // Strela hrace bonus jen prepne (0x9780), dotek hrace ho sebere (0x97c6).
+  // Bonus hrace za zadnych okolnosti nezrani.
+  for (const k of g.tokens) {
+    if (k.dead) continue;
+    const ky = k.y - g.scroll;
+    for (const b of g.bullets) {
+      if (b.dead) continue;
+      if (Math.abs(b.x - k.x) < 10 && Math.abs(b.y - ky) < 10) {
+        b.dead = true; shootToken(g, k); break;
+      }
+    }
+    if (p.alive && Math.abs(p.x - k.x) < 16 && Math.abs(p.y - ky) < 16)
+      pickupToken(g, k);
+  }
 
   // animace dosud neprelozenych objektu podle vytezenych skriptu
   for (const s of g.spawns) {
@@ -1939,9 +1995,10 @@ function frame(now) {
     ctx.globalAlpha = 1;
     ctx.drawImage(spr.cv, Math.round(a.x + spr.ox), Math.round(ay + spr.oy));
   }
-  // bonusy z bosse: TOKEN#1..#4, typ se strida (0x9780)
+  // bonusy: strida se ikona typu (tabulka 0x97bc) a TOKEN#0, tedy blika
   for (const k of g.tokens) {
-    const tk = sprite("TOKEN.LIN", 1 + k.typ, wpc.pal, wpc.ci);
+    const tk = sprite("TOKEN.LIN", k.blink ? 0 : TOKEN_ICONS[k.typ],
+                      wpc.pal, wpc.ci);
     if (tk) ctx.drawImage(tk.cv, Math.round(k.x + tk.ox),
                           Math.round(k.y - top + tk.oy));
   }

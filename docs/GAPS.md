@@ -39,30 +39,33 @@ Zbyva u nej dvoje:
   takze boss zatim **nedava zadne body** — radsi nula nez vymyslene
   cislo.
 
-## 3. Bonusovy TOKEN — neprepsany
+## 3. Bonusovy TOKEN — PREPSANY 2026-08-27
 
-`TOKEN.LIN` neni v dispatchi (nezaklada ho mapa, ale kod).
-Korutina **`0x96d8`**:
+`TOKEN.LIN` → `0x96d8`. Prepsano vcetne blikani, prepinani typu strelou
+(`0x9780`) a vsech ctyr ucinku pri sebrani (`0x97c6`); tabulka viz
+[BEHAVIORS](BEHAVIORS.md), regrese v `tools/uitest.py`.
 
-- `a2c6(gfx 24 = TOKEN#0, coll 32, margin −16, hp 0, body 0, cost 5)`
-- flag bity 0 a 4; x se orezava na 8–312, takze token neuteče z obrazu
-- update `0x9780` prepina `+276` po **4 ticich** pres tabulku `0x97bc`
-  = snimky `0x0218, 0x0418, 0x0618, 0x0818`, tedy **TOKEN#1..#4**
-  → bonus **cykluje ctyri typy** a po 12 cyklech (`+280`) se zamkne
-  na typ 4
-- kolizni callback instalovany na `0x9734`
+**Hlasena ochranna bublina je bonus typu 3**: da hraci `+500` tiku
+ochrany (`+108`, ~10 s) a 500 bodu. V prepisu uz funguje a bonus hrace
+za zadnych okolnosti nezrani.
 
-Sem patri hlasena **ochranna bublina**: hrac do ni naleti a v originale
-ho urcitou dobu chrani, v prepisu misto toho vybuchne. Ktery ze ctyr
-typu to je, se docte z kolizniho callbacku — **zatim neprecteno**.
+Pri tom se opravily dve veci jinde:
 
-**Stav:** bonusy uz **vznikaji** — boss je po smrti rozhazuje do kruhu
-a v `game.html` se pohybuji i stridaji ctyri typy podle `0x9780`.
-Chybi **ucinek pri sebrani**: kolizni callback `0x9734` neni precteny,
-takze token na dotek nic nedela (a hrace rozhodne nezabiji).
+- `syms.json` vedl `0x653e` jako `anim_install`. Je to **instalator
+  callbacku** (`+510`, bit 0 v `+508`); `0x6564` dela totez pro `+514`.
+- `game.html` pocital stupen zbrane jako `weapon/5`. Tabulka `0x70c0`
+  je bajtova a **indexuje se primo** hodnotou `+100`.
 
-**Dalsi krok:** precist callback na `0x9734` a ucinky vsech ctyr typu.
-Tam patri hlasena ochranna bublina.
+Zbyva:
+
+- **zablesk u typu 4**: `0x8852` zalozi korutinu `0x885a`, ktera nastavi
+  `fp@(11166) = 256` (plna bila) a po 50 snimcich skonci — **krok
+  doznivani nikde nenastavuje**. Bez neho by obrazovka zustala bila,
+  takze to neni prepsane; chybi najit, kdo `fp@(11168)` v tuto chvili
+  drzi.
+- **souhra `+98` s tabulkou `0x70c0`**: bonusy 2 a 4 prepisuji prodlevu
+  palby primo, ale jestli ji zapis z tabulky pri zmene sily zase
+  prebije, neni prectene. V prepisu ma bonus prednost.
 
 ## Co uz je vedomo jinde
 
