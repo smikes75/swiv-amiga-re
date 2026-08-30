@@ -1255,9 +1255,10 @@ function dropBossTokens(g, boss, perPlayer) {
   const stepAng = (256 / count) | 0;
   let ang = random32() & 255;
   for (let i = 0; i < count; i++) {
+    // 0x9704: rodi se jako typ 3, 12 obehnuti; rozjezd viz stepTokens
     g.tokens.push({
-      x: boss.x, y: boss.y, ang, spd: 1.2,
-      typ: 0, cycles: 12, blink: false, hitLock: false, dead: false,
+      x: boss.x, y: boss.y, ang, t: 0,
+      typ: 3, cycles: 12, blink: false, hitLock: false, dead: false,
     });
     ang = (ang + stepAng) & 255;
   }
@@ -1266,15 +1267,27 @@ function dropBossTokens(g, boss, perPlayer) {
    typ v poli +276. */
 const TOKEN_ICONS = [1, 2, 3, 4, 5];             // 0x0218,0x0418,...,0x0a18
 
-/* Hlavni smycka 0x9764: kazdy druhy snimek se strida ikona typu a TOKEN#0,
-   takze bonus blika. Zaroven se pred kazdym cyklem uvolni zamek zasahu
+/* 0x96d8: po a2c6 ma bonus vypnute sebrani i zasah (0x65a4, 0x658a) a
+   32 snimku (0x9722) leti rychlosti +356 = 320 = 1.25 px/t ve smeru
+   kruhu z 0xc9a0, k tomu 1 px/t nahoru (subqw #1,+336). Teprve pak
+   nainstaluje 0x97c6 (sebrani) a 0x9780 (strela), zastavi, oreze x na
+   8..312 (0x9742), zapne cull a klesa 0.5 px/t (+338 = 0x8000).
+   Hlavni smycka 0x9764: kazdy druhy snimek se strida ikona typu a
+   TOKEN#0, takze bonus blika; pred kazdym cyklem uvolni zamek zasahu
    (+278 = -1), proto lze typ prepnout nejvys jednou za dva tiky. */
+const TOKEN_LAUNCH = 32;
+function tokenLive(k) { return !(k.t < TOKEN_LAUNCH); }
 function stepTokens(g, scrollDelta) {
   for (const k of g.tokens) {
     k.y += scrollDelta;                          // bit 4: odpojeny scroll
-    const v = angVel(k.ang, k.spd);
-    k.x += v.vx; k.y += v.vy;
-    k.x = Math.max(8, Math.min(312, k.x));       // 0x9742: orez na 8..312
+    if (!tokenLive(k)) {
+      const v = angVel(k.ang, 1.25);
+      k.x += v.vx; k.y += v.vy - 1;
+      if (++k.t === TOKEN_LAUNCH)
+        k.x = Math.max(8, Math.min(312, k.x));   // 0x9742: orez na 8..312
+      continue;
+    }
+    k.y += 0.5;
     k.blink = !k.blink;
     if (k.blink) k.hitLock = false;
   }
@@ -2183,7 +2196,7 @@ function step(g) {
   // Strela hrace bonus jen prepne (0x9780), dotek hrace ho sebere (0x97c6).
   // Bonus hrace za zadnych okolnosti nezrani.
   for (const k of g.tokens) {
-    if (k.dead) continue;
+    if (k.dead || !tokenLive(k)) continue;       // behem rozjezdu bez kolizi
     const ky = k.y - g.scroll;
     for (const b of g.bullets) {
       if (b.dead) continue;
@@ -2516,7 +2529,8 @@ function frame(now) {
   }
   // bonusy: strida se ikona typu (tabulka 0x97bc) a TOKEN#0, tedy blika
   for (const k of g.tokens) {
-    const tk = sprite("TOKEN.LIN", k.blink ? 0 : TOKEN_ICONS[k.typ],
+    // behem rozjezdu drzi ikonu typu (0x9710), blika az smycka 0x9764
+    const tk = sprite("TOKEN.LIN", k.blink && tokenLive(k) ? 0 : TOKEN_ICONS[k.typ],
                       wpc.pal, wpc.ci);
     if (tk) ctx.drawImage(tk.cv, Math.round(k.x + tk.ox),
                           Math.round(k.y - top + tk.oy));

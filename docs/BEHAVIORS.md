@@ -379,7 +379,14 @@ uroven primo a hned ji zase smazou (`0xc12e` = 64 pri zasahu bosse)
 TOKEN neni v dispatchi — zaklada ho kod, v TOWN jedine boss.
 
 - `a2c6(TOKEN#0, coll 32, margin −16, hp 0, body 0, cost 5)`, flag bity
-  0 a 4; `x` se orezava na 8–312 (`0x9742`), takze bonus neuteče z obrazu
+  0 a 4, `st +534` (imunni vuci smart bombe), `st +538` (bez cullu)
+- **rozjezd**: po a2c6 vypne sebrani i zasah (`0x65a4`, `0x658a`), rodi
+  se jako **typ 3** (`0x9704`) s 12 obehnutimi, `+356 = 320` = 1.25 px/t
+  ve smeru kruhu z `0xc9a0` a k tomu `subqw #1,+336` = 1 px/t nahoru;
+  tak leti **32 snimku** (`0x9722`) a nejde sebrat ani prepnout
+- teprve pak (`0x9728`) nainstaluje `0x97c6` (sebrani) a `0x9780`
+  (strela), zastavi, klesa 0.5 px/t (`+338 = 0x8000`), jednorazove oreze
+  `x` na 8–312 (`0x9742`) a zapne cull (`sf +538`)
 - hlavni smycka `0x9764` **strida kazdy snimek ikonu typu a TOKEN#0**,
   takze bonus blika; pritom pred kazdym cyklem uvolni zamek zasahu
   (`+278 = −1`)

@@ -596,14 +596,35 @@ def main():
               g.tokens = [];
               dropBossTokens(g, s, 2);
               const ring = g.tokens.map(k => k.ang);
+              g.player.x = 0; g.player.y = 0;
               // smrt: 0 bodu, maly vybuch, casti zmizi, pod exploduje
               g.score = 0; g.booms = []; g.tokens = []; s.hp = 1;
               g.bullets = [{ x: s.x, y: s.y - g.scroll + 9 }];
               step(g);
               const death = { alive: s.alive, score: g.score,
                               booms: g.booms.map(b => b.kind), tokens: g.tokens.length };
+              // 0x96d8: typ 3, 32 snimku rozjezd 1.25 px/t ve smeru kruhu
+              // + 1 px/t nahoru bez sebrani, pak klesani 0.5 px/t. Hrac
+              // sedi kazdy tik primo na bonusu, sebrat ho smi az po 32.
+              const k0 = g.tokens[0], launch = { typ: k0.typ, ang: k0.ang };
+              g.player.alive = true; g.player.inv = 500;
+              const x0 = k0.x, y0 = k0.y - g.scroll;
+              for (let i = 0; i < 31; i++) {
+                g.player.x = k0.x; g.player.y = k0.y - g.scroll; step(g);
+              }
+              const live = () => g.tokens.filter(k => !k.dead).length;
+              launch.aliveAfter31 = live();
+              launch.dx = k0.x - x0; launch.dy = k0.y - g.scroll - y0;
+              g.player.x = 0; g.player.y = 0; step(g);   // 32. snimek: zastavi
+              const yStop = k0.y - g.scroll;
+              for (let i = 0; i < 10; i++) step(g);
+              launch.driftPerTick = (k0.y - g.scroll - yStop) / 10;
+              launch.aliveAfterDrift = live();
+              g.player.x = k0.x; g.player.y = k0.y - g.scroll; step(g);
+              launch.pickedAfter = live();
               return { born, stopped, entry, dive, hitWhileWaiting, dockedTicks,
-                       docked, podAtDock, fight, hit, pod, salvo, ring, death };
+                       docked, podAtDock, fight, hit, pod, salvo, ring, launch,
+                       death };
             }""")
             expect("err" not in boss, boss.get("err", ""))
             expect(boss["born"]["coroutine"] == 0xC78A,
@@ -654,6 +675,16 @@ def main():
                    boss["death"]["tokens"] == 2,
                    "smrt bosse: 0 bodu, maly EXPL1 + exploze podu, 2 kruhy: %s"
                    % boss["death"])
+            ln = boss["launch"]
+            import math
+            exp_dx = 31 * 1.25 * math.cos(ln["ang"] * math.pi / 128)
+            exp_dy = 31 * (1.25 * math.sin(ln["ang"] * math.pi / 128) - 1)
+            expect(ln["typ"] == 3 and ln["aliveAfter31"] == 2 and
+                   ln["aliveAfterDrift"] == 2 and
+                   abs(ln["dx"] - exp_dx) < 0.5 and abs(ln["dy"] - exp_dy) < 0.5 and
+                   abs(ln["driftPerTick"] - 0.5) < 0.05 and ln["pickedAfter"] == 1,
+                   "rozjezd bonusu podle 0x96d8 (typ 3, 32 snimku bez sebrani, "
+                   "1.25 px/t + 1 nahoru, pak 0.5 dolu a sebrani): %s" % ln)
 
             # Bonus TOKEN (0x96d8): strela prepina typ (0x9780), dotek
             # hrace sebere (0x97c6). Typ 3 je hlasena ochranna bublina.
