@@ -1111,72 +1111,138 @@ function releaseCost(g, o) {
   g.activeCost = Math.max(0, (g.activeCost || 0) - (o.cost || 0));
   o.budgeted = false;
 }
-/* ---- TOWN boss GOOSE (0xc78a) ----
-   Rodic je nosic bez HP a bez bodu (a2c6 d3=d4=0, cost 100). Tri casti
-   priletaji samostatne, kazda s nahodnym zpozdenim a z nahodneho x, a
-   sbihaji se k rodici po 4 jednotkach za tik (0xc9f8..0xcaa8). Teprve po
-   zastaveni na screen y 72 dostane rodic 25 HP (0xc842) - behem skladani
-   je nezranitelny. */
-const BOSS_PARTS = [                             // 0xc9e2 / 0xc9ec / 0xc9f0
-  { dx:   0, dy: -44, gfx: 0x0e17 },             // GOOSE#7 (vrsek)
-  { dx:  16, dy: -12, gfx: 0x0c17 },             // GOOSE#6 (bok)
-  { dx: -16, dy: -12, gfx: 0x0c17 },             // GOOSE#6 (bok)
+/* ---- TOWN boss GOOSE (0xc78a), docs/TOWN-AUDIT.md sekce 4 ----
+   Rodic: a2c6(GOOSE#0, coll 0, margin 0, hp 0, body 0, cost 100),
+   st +534 (imunni vuci smart bombe), bit 4, presun na x 160 a o 288 px
+   dal (nalet zespodu vy = -2). Ctyri potomci pres 0x6144: pod 0xcaac a
+   tri casti tela 0xc9e2/0xc9ec/0xc9f0; +276 = 4 = pocet nezadokovanych.
+   Behem naletu telo blika (0xc7fc: period 1, orflag 128 / andflag 128).
+   Po zastaveni na screen y 72: anim 0xc82e (period 10: 0,0,1,2,3,4,5,
+   end), HP 25 a kolizni trida 34 uz tady (0xc842..0xc854), rotor
+   overlay 0x93e2, a teprve pak ceka na +276 == 0 (0xc85e). */
+const BOSS_PARTS = [                             // 0xcaac / 0xc9f0 / 0xc9ec / 0xc9e2
+  { dx:   0, dy:  24, frame:  8, pod: true },    // GOOSE#8..11 pod (0xcaac)
+  { dx: -16, dy: -12, frame:  6 },               // GOOSE#6 bok (0xc9f0)
+  { dx:  16, dy: -12, frame:  6 },               // GOOSE#6 bok (0xc9ec)
+  { dx:   0, dy: -44, frame:  7 },               // GOOSE#7 vrsek (0xc9e2)
 ];
+const BOSS_ANIM = [0, 0, 1, 2, 3, 4, 5];         // 0xc82e, period 10, end
+/* Pod 0xcb20..0xcb2e: sest kroku -8, sest +8, nahodna pauza, sest +8,
+   sest -8, nahodna pauza; kazdy blok kroku konci cekanim 20 yieldu. */
+const POD_SWING = [-8, 8, "rand", 8, -8, "rand"];
 function spawnBossParts(g, boss) {
   return BOSS_PARTS.map(t => ({
-    tx: t.dx, ty: t.dy, frame: t.gfx >> 9,
+    tx: t.dx, ty: t.dy, frame: t.frame, pod: !!t.pod,
     // 0xca0a: nahodne cekani 0..63 snimku, pak vstup shora z nahodneho x
     delay: random32() & 63,
-    ox: 0, oy: 0, entered: false,
+    entered: false, docked: false, phase: "wait", t: 0,
+    x: boss.x, y: boss.y, ang: 64, ox: 0, oy: 0,
+    swing: 0, swingT: 0, swingLeft: 0, swingStep: 0, animT: 0, animFr: 8,
   }));
 }
-function stepBossParts(g, boss) {
-  for (const q of boss.parts) {
-    if (!q.entered) {
-      if (q.delay-- > 0) continue;
-      q.entered = true;                          // 0xca3c: x = 32 + rand&255
-      q.ox = (32 + (random32() & 255)) - boss.x;
-      q.oy = -24 - (boss.y - g.scroll);          // 0xca4c: screen y = -24
-      continue;
-    }
-    // 0xca7a: offset se sbiha k cili po 4 jednotkach na osu
-    if (q.ox !== q.tx) q.ox -= (q.ox > q.tx) ? 4 : -4;
-    if (q.oy !== q.ty) q.oy -= (q.oy > q.ty) ? 4 : -4;
-    if (Math.abs(q.ox - q.tx) < 4) q.ox = q.tx;
-    if (Math.abs(q.oy - q.ty) < 4) q.oy = q.ty;
+/* 0xcb78: cast (i pod) leti z horniho okraje: 75 snimku rovne dolu
+   2 px/t (uhel 64), pak se naklada na cil = rodic + ofset: otocka max
+   ((63 - dist) clamp >= 2) / 2 jednotek za tik, rychlost 2 px/t; pri
+   Manhattan < 6 jeden tik dvojnasobnou rychlosti (0xcc16), pak snap na
+   ofset s bitem 3 (sleduje rodice) a rodicovo +276 klesne (0xcc52). */
+function stepBossPart(g, boss, q) {
+  if (q.phase === "wait") {
+    if (q.delay-- > 0) return;
+    q.entered = true; q.phase = "dive"; q.t = 75;   // 0xcbc2: wait 75
+    q.x = 32 + (random32() & 255);                  // 0xca3c / 0xcaf2
+    q.y = g.scroll - 24;                            // 0xca4c: screen y -24
+    q.ang = 64;
+    return;
   }
+  if (q.docked) {
+    if (q.pod) stepBossPod(g, boss, q);
+    else {
+      // 0xca5e: pri hit flashi rodice se ofset zdvojnasobi, 0xca7a pak
+      // vraci po 4 px/tik na osu
+      if (boss.jolt) { q.ox = 2 * q.tx; q.oy = 2 * q.ty; }
+      if (q.ox !== q.tx) q.ox -= (q.ox > q.tx) ? 4 : -4;
+      if (q.oy !== q.ty) q.oy -= (q.oy > q.ty) ? 4 : -4;
+    }
+    q.x = boss.x + q.ox; q.y = boss.y + q.oy;
+    return;
+  }
+  if (q.phase === "dive") {
+    q.y += 2;
+    if (--q.t <= 0) q.phase = "home";
+    return;
+  }
+  // home (0xcbc6..0xcc14): cil se cte z rodice kazdy tik
+  const tx = boss.x + q.tx, ty = boss.y + q.ty;
+  const dist = Math.abs(q.x - tx) + Math.abs(q.y - ty);
+  if (dist < 6) {
+    const v = angVel(q.ang, 4);                     // 0xcc16: rychlost x2
+    q.x += v.vx; q.y += v.vy;
+    q.docked = true; q.ox = q.tx; q.oy = q.ty;      // 0xcc2a: snap + bit 3
+    q.x = boss.x + q.ox; q.y = boss.y + q.oy;
+    boss.undocked--;                                // 0xcc52
+    if (q.pod) { q.phase = "podWait"; q.t = 20; }   // 0xcb0e: wait 20 yieldu
+    return;
+  }
+  const maxTurn = Math.max(2, 63 - dist) >> 1;      // 0xcbf6..0xcc02
+  q.ang = turnToward(q.ang, angTo(q.x, q.y, tx, ty), maxTurn);
+  const v = angVel(q.ang, 2);
+  q.x += v.vx; q.y += v.vy;
 }
-/* Dotek hrace s bossem: telo ma tridu 34 az od 0xc854 (po zastaveni) a
-   damage handler 0xc974 i v +514; casti a pod maji tridu 34 od a2c6
-   (0xca26/0xcabe), HP 0 -> bez handleru, jen zabijeji. */
+/* 0xcb14..0xcb76: pod visi na rameni 18 px (+356 = 0x1200) pod telem,
+   uhel 64 +- kroky po 8 jednotkach; po kazdem kroku +336 += 12 px. */
+function stepBossPod(g, boss, q) {
+  if (q.phase === "podWait") { if (--q.t <= 0) { q.phase = "swing"; q.ang = 64; q.swing = 0; q.swingLeft = 0; q.t = 0; } return; }
+  if (q.phase !== "swing") return;
+  if (q.t > 0) { q.t--; return; }                   // cekani 20 / nahodne
+  if (q.swingLeft === 0) {
+    const cmd = POD_SWING[q.swing];
+    q.swing = (q.swing + 1) % POD_SWING.length;
+    if (cmd === "rand") { q.t = (random32() & 31) + 10; return; }   // 0xcb32
+    q.swingStep = cmd; q.swingLeft = 6;             // 0xcb4c: +276 = 6
+  }
+  q.ang = (q.ang + q.swingStep) & 255;              // 0xcb52
+  const v = angVel(q.ang, 18);                      // 0xcb5a: 0x65f2
+  q.ox = v.vx; q.oy = v.vy + 12;                    // 0xcb5e: +336 += 12
+  if (--q.swingLeft === 0) q.t = 20;                // 0xcb70: wait 20 yieldu
+}
+function stepBossParts(g, boss) {
+  for (const q of boss.parts) stepBossPart(g, boss, q);
+  boss.jolt = false;
+}
+/* 0xc974: zasah -1 HP, negl +332, zvuk 0x8834 a hit flash (0xa35a);
+   casti ho vidi jako zdvojnaseni ofsetu (0xca5e). */
+function hitBoss(g, s) {
+  if (--s.hp > 0) { s.vx = -s.vx; s.flashT = 1; s.jolt = true; return false; }
+  killBoss(g, s); return true;
+}
+/* Dotek hrace: telo ma tridu 34 az od 0xc854 (po zastaveni) a handler
+   0xc974 i v +514; casti a pod maji tridu 34 od a2c6 (0xca26/0xcabe),
+   HP 0 -> bez handleru, jen zabijeji. */
 function bossTouch(g, s, touches) {
   let lethal = false;
   const sy = s.y - g.scroll;
   if (s.st >= 1) {
-    const body = sprite(s.file, 0);
-    if (body && touches(body)(s.x, sy)) {
-      lethal = true;
-      if (--s.hp > 0) { s.vx = -s.vx; s.flashT = 1; }
-      else killBoss(g, s);
-    }
+    const body = sprite(s.file, s.bodyFr);
+    if (body && touches(body)(s.x, sy)) { lethal = true; hitBoss(g, s); }
   }
   for (const q of s.parts) {
     if (!q.entered) continue;
-    const pr = sprite(s.file, q.frame);
-    if (pr && touches(pr)(s.x + q.ox, sy + q.oy)) lethal = true;
+    const pr = sprite(s.file, q.pod ? q.animFr : q.frame);
+    if (pr && touches(pr)(q.x, q.y - g.scroll)) lethal = true;
   }
   return lethal;
 }
-function killBoss(g, s) {                     // 0xc986
+/* 0xc986: 0x60e0 odpoji deti, 2 nebo 3 kruhy TOKENu, zvuk 0x8838 a
+   0xa36a s +376 = 0x894a (maly EXPL1), 0 bodu. Sirotci handler +542:
+   casti (0x6db4) zmizi, pod (0xa36a) exploduje. */
+function killBoss(g, s) {
   s.alive = false;
   releaseCost(g, s);
-  // 0xc98c: dva kruhy bonusu, tri kdyz uz ubehla vetsina casu
-  dropBossTokens(g, s, s.timer <= 500 ? 3 : 2);
-  spawnBoom(g, s.x, s.y, "big");
+  dropBossTokens(g, s, s.timer <= 500 ? 3 : 2);   // 0xc98c
+  spawnBoom(g, s.x, s.y);
+  for (const q of s.parts)
+    if (q.entered && q.pod) spawnBoom(g, q.x, q.y);
   snd("BIGEXPL.SND", 8000);
-}
-function bossAssembled(boss) {
-  return boss.parts.every(q => q.entered && q.ox === q.tx && q.oy === q.ty);
 }
 
 /* 0xc9a0: po jednom kruhu bonusu za kazdeho zijiciho hrace. Krok uhlu je
@@ -1644,6 +1710,11 @@ window.addEventListener("keyup", e => {
 /* ---- logika (50 Hz) ---- */
 function step(g) {
   g.tick++;
+  // 0x6452: hit flash (bit 1 v +367) plati jeden snimek - maze se az
+  // v dalsim tiku, aby ho render po zasahu videl.
+  for (const a of g.air) if (a.flashT > 0) a.flashT--;
+  for (const h of g.hazards) if (h.flashT > 0) h.flashT--;
+  for (const s of g.spawns) if (s.flashT > 0) s.flashT--;
   stepFade(g);
   const oldScroll = g.scroll;
   g.scroll -= SCROLL * TICK * (g.scrollMul || 1);   // scroll nahoru
@@ -1892,10 +1963,11 @@ function step(g) {
         s.y += 288;
         s.scrollLocked = true;
         s.st = 0; s.vx = 0; s.vy = -2;   // 0xc80a: +336 = -2.0
-        s.hp = 0;                        // a2c6 d3 = 0: behem skladani nezranitelny
+        s.hp = 0;                        // a2c6 d3 = 0: behem naletu bez kolize
         s.scoreValue = 0;
-        s.fr = 0;
+        s.fr = 0; s.bodyFr = 0; s.animT = 0; s.rotorTick = 0;
         s.parts = spawnBossParts(g, s);
+        s.undocked = s.parts.length;     // 0xc7f2: +276 = 4
       } else if (s.beh === "roto") {
         // 0x9960: NOT.W fp@(138) strida skripty podle poradi aktivace,
         // nikoli podle polohy objektu. Z nuly zacina reverzni 0x9986.
@@ -2039,15 +2111,21 @@ function step(g) {
       // Aktivacni tik se jen presune (0xc7bc); krokovat zacina az dalsi
       // yield, stejne jako u CAMOGUN.
       s.y += scrollDelta;                       // bit 4: screen-y meni jen vy
-      stepBossParts(g, s);
       const bsy = s.y - g.scroll;
       if (s.st === 0) {                         // nalet zdola az na y 72
         s.y += s.vy;
-        if (bsy <= 72) {                        // 0xc826: zastavi a ozije
-          s.st = 1; s.vy = 0; s.hp = 25;        // 0xc842: +360 = 25
-          s.timer = 2000; s.fireT = 10;         // 0xc86c / 0xc872
+        if (bsy <= 72) {                        // 0xc826: zastavi
+          s.st = 1; s.vy = 0; s.hp = 25;        // 0xc842: +360 = 25, +504 = 34
+          s.animT = 0;                          // 0xc82e: anim od ted
         }
-      } else if (s.st === 1) {
+      } else if (s.st === 1) {                  // 0xc85e: ceka na +276 == 0
+        s.animT++;
+        if (s.undocked <= 0) {
+          s.st = 2; s.timer = 2000; s.fireT = 10;   // 0xc86c / 0xc872
+          s.vy = 1;                             // 0xc878: +336 = 1
+        }
+      } else if (s.st === 2) {
+        s.animT++;
         // 0xc882: zrychleni 1536/65536 k hraci, vx orezane na <-2, 1>
         const ax = 1536 / 65536;
         if (p.alive) {
@@ -2068,12 +2146,22 @@ function step(g) {
         }
         if (--s.timer <= 0) {                    // 0xc910: vyprsel cas
           if (s.hp === 25) dropBossTokens(g, s, 5);  // 0xc91c: nedotceny
-          s.st = 2; s.vy = -4;                   // 0xc926: odlet
+          s.st = 3; s.vy = -4;                   // 0xc926: odlet, sf +538
         }
       } else {
+        s.animT++;
         s.y += s.vy;
-        if (bsy < -80) { s.alive = false; releaseCost(g, s); }
+        if (bsy <= -64) { s.alive = false; releaseCost(g, s); }  // cull -64
       }
+      if (s.st >= 1) {
+        s.bodyFr = BOSS_ANIM[Math.min(6, (s.animT / 10) | 0)];
+        s.rotorTick = (s.rotorTick + 1) & 7;    // 0x93e2 overlay
+      }
+      stepBossParts(g, s);
+      for (const q of s.parts)                  // 0xcae2: GOOSE#8..11 period 8
+        if (q.pod && q.entered && ++q.animT >= 8) {
+          q.animT = 0; q.animFr = 8 + ((q.animFr - 8 + 1) & 3);
+        }
     } else if (s.beh === "roto") {
       if (++s.at >= 2) {                        // 0x996a/0x9986: period(2)
         s.at = 0; s.spin += s.sd;
@@ -2121,8 +2209,9 @@ function step(g) {
     if (!s.born || !s.alive) continue;
     if (s.beh === "unimplemented" || s.beh === "missing-dispatch") continue;
     if (s.beh === "popup" && s.st === 0) continue; // zavreny pancir pred otevrenim
-    if (s.beh === "boss" && s.st !== 1) continue;  // sklada se / odleti
-    const spr = sprite(s.file, s.fr >= 0 ? s.fr : s.idx);
+    if (s.beh === "boss" && s.st === 0) continue;  // trida 0 az do 0xc854
+    const spr = sprite(s.file, s.beh === "boss" ? s.bodyFr
+                               : (s.fr >= 0 ? s.fr : s.idx));
     if (!spr) { s.alive = false; continue; }
     const sy = s.y - g.scroll;
     if (sy < -40 || sy > 300) continue;
@@ -2136,10 +2225,9 @@ function step(g) {
           break;
         }
         if (s.beh === "boss") {
-          // 0xc974: -1 HP, negl +332, hit flash; body zadne (a2c6 d4 = 0;
-          // smycka 0xc950 je kontrolni soucet programu, ne skore).
-          if (--s.hp > 0) { s.vx = -s.vx; s.flashT = 1; continue; }
-          killBoss(g, s);
+          // 0xc974; body zadne (a2c6 d4 = 0; smycka 0xc950 je kontrolni
+          // soucet programu, ne skore).
+          if (!hitBoss(g, s)) continue;
           break;
         }
         if (--s.hp > 0) { s.flashT = 1; continue; }   // 0xa35a
@@ -2267,10 +2355,6 @@ function step(g) {
   g.booms = g.booms.filter(bm => bm.t < boomLife(bm));
   for (const ef of g.effects) ef.t++;
   g.effects = g.effects.filter(ef => ef.t < ef.life);
-  // 0x6452: hit flash plati jeden snimek
-  for (const a of g.air) if (a.flashT > 0) a.flashT--;
-  for (const h of g.hazards) if (h.flashT > 0) h.flashT--;
-  for (const s of g.spawns) if (s.flashT > 0) s.flashT--;
 }
 
 /* ---- kresleni ---- */
@@ -2303,14 +2387,31 @@ function frame(now) {
     if (sy < -60 || sy > 320) continue;
     const pc = wpc;   // sprite barvy = aktualni copper paleta obrazovky
     if (s.beh === "boss") {
-      const body = sprite(s.file, 0, pc.pal, pc.ci);
-      if (body) ctx.drawImage(body.cv, Math.round(s.x + body.ox),
-                              Math.round(sy + body.oy));
-      for (const q of s.parts) {
+      // z = 32 (0xc7c8) -> stin (+16,+32); pri naletu blika (0xc7fc:
+      // kazdy druhy snimek skryty), po zastaveni anim 0xc82e a rotor
+      // overlay 0x93e2 (JEEPHELI#5..8, viditelny kazdy druhy snimek)
+      const body = sprite(s.file, s.bodyFr, pc.pal, pc.ci);
+      if (body && (s.st >= 1 || (g.tick & 1) === 0)) {
+        const sh = shadowOf(body);
+        ctx.globalAlpha = 0.45;
+        ctx.drawImage(sh.cv, Math.round(s.x + sh.ox + 16), Math.round(sy + sh.oy + 32));
+        ctx.globalAlpha = 1;
+        const bimg = s.flashT > 0 ? whiteOf(body) : body;
+        ctx.drawImage(bimg.cv, Math.round(s.x + bimg.ox), Math.round(sy + bimg.oy));
+        if (s.st >= 1 && (s.rotorTick & 1) === 0) {
+          const rotor = sprite("JEEPHELI.LIN", 5 + (s.rotorTick >> 1), pc.pal, pc.ci);
+          if (rotor) ctx.drawImage(rotor.cv, Math.round(s.x + rotor.ox), Math.round(sy + rotor.oy));
+        }
+      }
+      for (const q of s.parts) {                // z = 33: nad telem
         if (!q.entered) continue;
-        const pr = sprite(s.file, q.frame, pc.pal, pc.ci);
-        if (pr) ctx.drawImage(pr.cv, Math.round(s.x + q.ox + pr.ox),
-                              Math.round(sy + q.oy + pr.oy));
+        const pr = sprite(s.file, q.pod ? q.animFr : q.frame, pc.pal, pc.ci);
+        if (!pr) continue;
+        const qy = q.y - top, sh = shadowOf(pr);
+        ctx.globalAlpha = 0.45;
+        ctx.drawImage(sh.cv, Math.round(q.x + sh.ox + 16), Math.round(qy + sh.oy + 33));
+        ctx.globalAlpha = 1;
+        ctx.drawImage(pr.cv, Math.round(q.x + pr.ox), Math.round(qy + pr.oy));
       }
       continue;
     }

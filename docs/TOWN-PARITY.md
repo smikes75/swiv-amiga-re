@@ -96,9 +96,11 @@ nemaji fixture, plny viditelny BOB switch zustava zamerne vypnuty.
 - **kanonovy granat — uzavreno**: faze je stav kazdeho objektu prepinany
   na `0x96b4`, ne globalni parita herniho tiku; accel i straight cesta
   maji regresi vcetne poradi pohyb -> akcelerace a budgetu strela+PLOP.
-- **GOOSE**: chybi blikani `0xc7fc`, prechod `0,0,1,2,3,4,5` s periodou 10
-  z `0xc82e`, rotor `0x93e2`, skutecne cekani na slozeni `0xc85e` a animace
-  doprovodu `GOOSE#8..11` z `0xcae2`.
+- **GOOSE — uzavreno 2026-08-30**: blikani `0xc7fc`, prechod
+  `0,0,1,2,3,4,5` s periodou 10 z `0xc82e`, rotor `0x93e2`, cekani na
+  `+276 == 0` (`0xc85e`), dokovani `0xcb78`, pod `0xcaac` s animaci
+  `GOOSE#8..11` (`0xcae2`) a odhozeni casti `0xca5e` jsou v prepisu;
+  regrese v `tools/uitest.py`.
 
 Obecny `scanAnims` je zatim inventarni pomucka, ne uplny runtime interpreter:
 zahazuje `END/KILL`, flagy a offsety a sekvence bezpodminecne cykli. Pro TOWN

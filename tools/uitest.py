@@ -530,30 +530,65 @@ def main():
                    formations["cappedCost"] == 160,
                    "active budget dovolil prekrocit 160")
 
-            # TOWN boss GOOSE (0xc78a): nalet, skladani ze tri casti,
-            # nezranitelnost behem skladani, palba a kruh bonusu.
+            # TOWN boss GOOSE (0xc78a, docs/TOWN-AUDIT.md 4): nalet, HP 25 uz
+            # pri zastaveni, ctyri potomci s dokovanim 0xcb78, pod 0xcaac,
+            # odhozeni casti pri zasahu, palba a kruh bonusu.
             boss = page.evaluate("""() => {
               const g = state.g;
               const s = g.spawns.find(o => o.beh === 'boss');
               if (!s) return { err: 'boss v TOWN neni' };
               g.scrollMul = 0.000001;
               g.player.alive = true; g.player.x = 100; g.player.y = 200;
-              g.shots = []; g.tokens = [];
+              g.player.inv = 0; g.player.shield = 0;
+              g.shots = []; g.tokens = []; g.bullets = []; g.air = [];
               s.born = false; s.armed = true; s.alive = true;
               s.y = g.scroll;                    // margin 0
               step(g);
               const born = { x: s.x, sy: Math.round(s.y - g.scroll),
                              hp: s.hp, st: s.st, parts: s.parts.length,
-                             coroutine: s.coroutine };
-              let guard = 0;
-              while (s.st === 0 && guard++ < 2000) step(g);
-              const fight = { st: s.st, hp: s.hp,
-                              sy: Math.round(s.y - g.scroll) };
+                             undocked: s.undocked, coroutine: s.coroutine };
+              // casti: po cekani 0..63 vstoupi shora a 75 snimku leti rovne dolu
+              let guard = 0, q0 = null;
+              while (!q0 && guard++ < 70) {
+                step(g);
+                q0 = s.parts.find(q => q.entered && q.phase === 'dive' && q.t === 75);
+              }
+              if (!q0) return { err: 'zadna cast nevstoupila do 70 snimku' };
+              const entry = { sy: Math.round(q0.y - g.scroll), phase: q0.phase,
+                              x: q0.x };
+              for (let i = 0; i < 74; i++) step(g);
+              const dive = { phase: q0.phase, dy: Math.round(q0.y - g.scroll) - entry.sy };
               guard = 0;
-              while (!s.parts.every(q => q.entered &&
-                                    q.ox === q.tx && q.oy === q.ty)
-                     && guard++ < 4000) step(g);
-              const assembled = s.parts.map(q => [q.ox, q.oy]);
+              while (s.st === 0 && guard++ < 2000) step(g);
+              const stopped = { st: s.st, hp: s.hp,
+                                sy: Math.round(s.y - g.scroll) };
+              // zasah behem cekani na dokovani: HP klesa uz ted
+              g.bullets = [{ x: s.x, y: s.y - g.scroll + 9 }];
+              step(g);
+              const hitWhileWaiting = { hp: s.hp, st: s.st };
+              guard = 0;
+              const podRight = s.parts.find(q => q.pod);
+              let podAtDock = null;
+              while (!s.parts.every(q => q.docked) && guard++ < 4000) {
+                step(g);
+                if (podRight.docked && !podAtDock)
+                  podAtDock = [podRight.ox, podRight.oy];   // 0xcaac: (0, +24)
+              }
+              const dockedTicks = guard;
+              const docked = s.parts.map(q => [q.tx, q.ty]);
+              step(g);
+              const fight = { st: s.st, undocked: s.undocked, vy: s.vy };
+              // zasah v boji: casti se odhodi na dvojnasobek a vraceji po 4
+              const top = s.parts.find(q => q.ty === -44);
+              g.bullets = [{ x: s.x, y: s.y - g.scroll + 9 }];
+              const before = s.hp; step(g);
+              const jolt = [top.oy];
+              for (let i = 0; i < 12; i++) { step(g); jolt.push(top.oy); }
+              const hit = { hpDrop: before - s.hp, jolt };
+              // pod se po 20 yieldech houpe na rameni 18 px
+              for (let i = 0; i < 40; i++) step(g);
+              const pod = { phase: podRight.phase, oy: Math.round(podRight.oy),
+                            frame: podRight.animFr };
               g.shots = []; s.fireT = 1;
               guard = 0;
               while (g.shots.length === 0 && guard++ < 400) step(g);
@@ -561,8 +596,14 @@ def main():
               g.tokens = [];
               dropBossTokens(g, s, 2);
               const ring = g.tokens.map(k => k.ang);
-              return { born, fight, assembled, salvo, ring,
-                       tokenTypes: g.tokens.map(k => k.typ) };
+              // smrt: 0 bodu, maly vybuch, casti zmizi, pod exploduje
+              g.score = 0; g.booms = []; g.tokens = []; s.hp = 1;
+              g.bullets = [{ x: s.x, y: s.y - g.scroll + 9 }];
+              step(g);
+              const death = { alive: s.alive, score: g.score,
+                              booms: g.booms.map(b => b.kind), tokens: g.tokens.length };
+              return { born, stopped, entry, dive, hitWhileWaiting, dockedTicks,
+                       docked, podAtDock, fight, hit, pod, salvo, ring, death };
             }""")
             expect("err" not in boss, boss.get("err", ""))
             expect(boss["born"]["coroutine"] == 0xC78A,
@@ -570,21 +611,49 @@ def main():
             expect(boss["born"]["x"] == 160 and boss["born"]["sy"] == 288,
                    "boss se po aktivaci nepresunul na stred a o 288 px dal: %s"
                    % boss["born"])
-            expect(boss["born"]["hp"] == 0 and boss["born"]["parts"] == 3,
-                   "boss ma byt behem naletu bez HP a mit tri casti: %s"
+            expect(boss["born"]["hp"] == 0 and boss["born"]["parts"] == 4 and
+                   boss["born"]["undocked"] == 4,
+                   "boss ma byt behem naletu bez HP a mit ctyri potomky: %s"
                    % boss["born"])
-            expect(boss["fight"]["st"] == 1 and boss["fight"]["hp"] == 25 and
-                   boss["fight"]["sy"] <= 72,
-                   "boss nezastavil na y 72 s 25 HP: %s" % boss["fight"])
-            expect(sorted(boss["assembled"]) == [[-16, -12], [0, -44], [16, -12]],
-                   "casti se nesbehly na ofsety z 0xc9e2/0xc9ec/0xc9f0: %s"
-                   % boss["assembled"])
+            expect(boss["stopped"]["st"] == 1 and boss["stopped"]["hp"] == 25 and
+                   boss["stopped"]["sy"] <= 72,
+                   "boss nezastavil na y 72 s 25 HP (0xc842): %s" % boss["stopped"])
+            expect(boss["entry"]["sy"] == -24 and boss["entry"]["phase"] == "dive"
+                   and 32 <= boss["entry"]["x"] < 288,
+                   "cast nevstoupila shora z 32+rand&255 (0xca3c): %s" % boss["entry"])
+            expect(boss["dive"] == {"phase": "dive", "dy": 148},
+                   "cast ma 75 snimku letet rovne dolu 2 px/t (0xcbc2): %s"
+                   % boss["dive"])
+            expect(boss["hitWhileWaiting"] == {"hp": 24, "st": 1},
+                   "boss ma jit trefit uz pred dokovanim: %s" % boss["hitWhileWaiting"])
+            expect(boss["dockedTicks"] < 4000 and
+                   sorted(boss["docked"]) == [[-16, -12], [0, -44], [0, 24], [16, -12]],
+                   "ctyri potomci nezadokovali na ofsety 0xc9e2/0xc9ec/0xc9f0/0xcaac: %s"
+                   % boss["docked"])
+            expect(boss["podAtDock"] == [0, 24] and
+                   boss["fight"] == {"st": 2, "undocked": 0, "vy": 1},
+                   "po dokovani ma zacit boj s vy = 1 (0xc878): %s / %s"
+                   % (boss["podAtDock"], boss["fight"]))
+            # 0xca5e zdvojnasobi (-88) a 0xca7a v temze tiku vrati o 4 -> -84,
+            # pak po 4 px az na -44
+            expect(boss["hit"]["hpDrop"] == 1 and boss["hit"]["jolt"][1] == -84 and
+                   boss["hit"]["jolt"][6] == -64 and boss["hit"]["jolt"][11] == -44,
+                   "zasah ma vrsek odhodit na -84 a vratit po 4 px (0xca5e/0xca7a): %s"
+                   % boss["hit"])
+            expect(boss["pod"]["phase"] == "swing" and 12 <= boss["pod"]["oy"] <= 31
+                   and 8 <= boss["pod"]["frame"] <= 11,
+                   "pod se nehoupe na rameni 18 px pod telem (0xcb14): %s" % boss["pod"])
             expect(boss["salvo"] == ["can", "hom", "hom"],
                    "salva bosse ma byt mireny granat + dve navadene: %s"
                    % boss["salvo"])
             expect(len(boss["ring"]) == 2 and
                    (boss["ring"][1] - boss["ring"][0]) % 256 == 128,
                    "kruh bonusu nema krok 256/pocet: %s" % boss["ring"])
+            expect(boss["death"]["alive"] is False and boss["death"]["score"] == 0 and
+                   boss["death"]["booms"] == ["small", "small"] and
+                   boss["death"]["tokens"] == 2,
+                   "smrt bosse: 0 bodu, maly EXPL1 + exploze podu, 2 kruhy: %s"
+                   % boss["death"])
 
             # Bonus TOKEN (0x96d8): strela prepina typ (0x9780), dotek
             # hrace sebere (0x97c6). Typ 3 je hlasena ochranna bublina.

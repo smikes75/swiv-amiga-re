@@ -321,26 +321,53 @@ uroven primo a hned ji zase smazou (`0xc12e` = 64 pri zasahu bosse)
 
 ### TOWN boss GOOSE (dispatch `0x0017` → `0xc78a`)
 
-- **rodic je nosic**: `a2c6(GOOSE#0, coll 0, margin 0, hp 0, body 0,
-  cost 100)` — dokud se sklada, nema HP a nejde zasahnout
+- **rodic je nosic**: pin TOKEN.LIN (`0xc78e`), `a2c6(GOOSE#0, coll 0,
+  margin 0, hp 0, body 0, cost 100)`, `st +534` (imunni vuci smart
+  bombe) — behem naletu nema kolizi vubec
 - flag bit 4 (`0xc7b6`) odpoji scroll; `0xc7bc` prenese objekt na
   `x = 160` a `mapY += 288`, takze naleti **zespodu** rychlosti
-  `+336 = −2.0` px/t
-- **tri casti** (`0x6144`): `0xc9e2` = GOOSE#7 na ofsetu `(0,−44)`,
-  `0xc9ec` a `0xc9f0` = GOOSE#6 na `(±16,−12)`. Kazda ceka nahodne
-  0–63 snimku, pak vstoupi shora (`screen y −24`) z nahodneho
-  `x = 32 + rand&255` a jeji ofset se **sbiha k cili po 4 jednotkach
-  za tik** (`0xca7a`). Je-li u rodice nastaven bit 1, ofsety se
-  zdvojnasobi (`0xca5e`).
-- `0xc826`: po dosazeni `screen y 72` zastavi a **teprve ted**
-  `+360 = 25` HP (`0xc842`)
+  `+336 = −2.0` px/t; behem naletu **blika** (anim `0xc7fc`: period 1,
+  `orflag 128` / `andflag 128` = kazdy druhy snimek skryty)
+- **ctyri potomci** (`0x6144`, `+276 = 4` = pocet nezadokovanych):
+  pod `0xcaac` (GOOSE#8..11, period 8) na ofsetu `(0,+24)`, `0xc9f0` a
+  `0xc9ec` = GOOSE#6 na `(±16,−12)`, `0xc9e2` = GOOSE#7 na `(0,−44)`.
+  Kazdy ceka nahodne 0–63 snimku a vstoupi shora (`screen y −24`)
+  z nahodneho `x = 32 + rand&255`.
+- **dokovani `0xcb78`** (spolecne): ulozi ofset do `+284/+286`, `z =
+  z rodice + 1`, odpoji se od rodice, `+356 = 512` (2 px/t), uhel 64 a
+  **75 snimku leti rovne dolu** (`0xcbc2`); pak kazdy tik: cil = rodic +
+  ofset, Manhattan `< 6` → hotovo, jinak otocka k cili max
+  `((63 − dist) clamp ≥ 2) / 2` jednotek (`0xcbf6`–`0xcc08`), 2 px/t;
+  dojezd jeden tik dvojnasobnou rychlosti (`0xcc16`), snap na ofset
+  s bitem 3 (sleduje rodice) a `rodic+276 −= 1` (`0xcc52`)
+- casti tela po zadokovani (`0xca5a`): kdyz ma rodic hit-flash bit 1,
+  ofset se na ten tik zdvojnasobi (`0xca5e`) a hned se vraci po
+  4 px/tik (`0xca7a`) — kazdy zasah je odhodi a ony se sjedou zpet;
+  HP 0 = nezranitelne, trida 34 = zabijeji vrtulnik; sirotci handler
+  `0x6db4` → po smrti tela zmizi
+- **pod `0xcaac`** neni doprovod: po dokovani ceka 20 yieldu, pak
+  `+356 = 0x1200` (rameno 18 px), uhel 64 a stridave sest kroku `−8`,
+  sest `+8`, nahodna pauza 10–41 yieldu, sest `+8`, sest `−8`, pauza
+  (`0xcb20`–`0xcb76`); po kazdem kroku `+336 += 12`, kazdy blok konci
+  cekanim 20 yieldu. Visi tedy ~30 px pod telem a kyve se; sirotci
+  handler `0xa36a` → pri smrti tela exploduje (0 bodu)
+- `0xc826`: po dosazeni `screen y 72` zastavi, anim `0xc82e` (`andflag
+  128`, period 10: `0,0,1,2,3,4,5`, end), **`+360 = 25` HP a `+504 = 34`
+  uz tady** (`0xc842`–`0xc854`) — boss jde trefit driv, nez casti
+  zadokuji; `0x93e2` rotor overlay JEEPHELI#5..8 (viditelny kazdy druhy
+  snimek); pak `0xc85e` ceka na `+276 == 0`
 - **pohyb v boji**: vodorovne zrychleni `1536/65536` px/t² k hraci,
   `vx` orezane na ⟨−2, 1⟩ (`0xc888`); svisle `screen y < 64` → `vy = 4`,
   `> 192` → `vy = −0.25`, mezi tim drzi (`0xc8b2`)
 - **palba** jen pri `screen y <= 128`, kadence `(12 − pocet hracu) × 4`
   (`0xc8da`): mireny kanonovy granat `0x95d2` + **dve navadene strely**
   `0x8530` s ofsety `+6` uhel 0 a `−6` uhel 128
-- zasah (`0xc974`): `−1 HP` a **obraceni `vx`** (`negl +332`)
+- zasah (`0xc974`, i pres dotek v `+514`): `−1 HP`, **obraceni `vx`**
+  (`negl +332`), zvuk `0x8834`, hit flash
+- smrt (`0xc986`): `0x60e0` odpoji deti, kruhy TOKENu, zvuk `0x8838`,
+  `0xa36a` s vychozim `+376 = 0x894a` (maly EXPL1), **0 bodu** (`d4 = 0`;
+  smycka `0xc950` je kontrolni soucet programu, ne skore); odlet po
+  vyprseni casu: `vy = −4`, `sf +538` → zemre culovanim na `sy ≤ −64`
 - **bonusy** (`0xc9a0`): za kazdeho zijiciho hrace jeden kruh — pocet
   urcuje volajici, krok uhlu `256/pocet`, pocatecni uhel nahodny, kazdy
   bonus je korutina TOKEN `0x96d8`. Znicen → **2** kruhy (3, kdyz uz

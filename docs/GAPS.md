@@ -30,10 +30,10 @@ je v [BEHAVIORS](BEHAVIORS.md), regrese v `tools/uitest.py`.
 
 Zbyva u nej dvoje:
 
-- **ctvrty potomek `0xcaac`** (GOOSE#8) neni cast tela — nesbiha se
-  k rodici, ale leti vlastni hadovitou drahou (`0xcb14`: `+356 = 0x1200`,
-  uhel 64, pak stridave `±8` po sesti krocich). Je to doprovod, ne kus
-  bosse; **neprepsany**.
+- ~~ctvrty potomek `0xcaac` = doprovod~~ — **uzavreno 2026-08-30**: je to
+  pod zadokovany na `(0,+24)`, ktery se pak houpe na rameni 18 px
+  (`0xcb14`–`0xcb76`); prepsano spolu s dokovanim `0xcb78`, odhozenim
+  casti pri zasahu a blikanim/animaci tela, viz [BEHAVIORS](BEHAVIORS.md).
 - ~~bodovy soucet po smrti~~ — **uzavreno 2026-08-30**: smycka `0xc950`
   neni skore, ale kontrolni soucet 27 329 slov programu pricteny k
   ukazateli na buffer mapy `fp@(3560)` (anti-tamper). Boss ma `d4 = 0`,
@@ -77,7 +77,9 @@ Hloubkovy audit je v [TOWN-AUDIT](TOWN-AUDIT.md). Prepsano tehoz dne:
   respawn 100 snimku, start 2 strely, stin `(+16,+32)`
 - HOMING sestrelitelna (1 HP, 7 bodu); hit flash u nepratel
 
-Zbyva z P0: GOOSE dokovani, pod a odhozeni casti (audit, sekce 4).
+GOOSE (dokovani `0xcb78`, pod `0xcaac`, odhozeni casti, HP od zastaveni,
+blikani a anim tela, rotor, smrt bez bodu) prepsan tehoz dne. P0 auditu
+je tim cely v `game.html`; otevrene zustavaji P1–P3.
 
 ## Co uz je vedomo jinde
 
