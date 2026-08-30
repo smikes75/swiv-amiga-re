@@ -34,10 +34,10 @@ Zbyva u nej dvoje:
   k rodici, ale leti vlastni hadovitou drahou (`0xcb14`: `+356 = 0x1200`,
   uhel 64, pak stridave `±8` po sesti krocich). Je to doprovod, ne kus
   bosse; **neprepsany**.
-- **bodovy soucet po smrti**: vetev `0xc934` prochazi smyckou `0xc950`
-  tabulku slov a pricita je do `fp@(3560)`. Tabulka neni prectena,
-  takze boss zatim **nedava zadne body** — radsi nula nez vymyslene
-  cislo.
+- ~~bodovy soucet po smrti~~ — **uzavreno 2026-08-30**: smycka `0xc950`
+  neni skore, ale kontrolni soucet 27 329 slov programu pricteny k
+  ukazateli na buffer mapy `fp@(3560)` (anti-tamper). Boss ma `d4 = 0`,
+  tedy **0 bodu** je spravne; viz [TOWN-AUDIT](TOWN-AUDIT.md) 2.7.
 
 ## 3. Bonusovy TOKEN — PREPSANY 2026-08-27
 
@@ -58,14 +58,26 @@ Pri tom se opravily dve veci jinde:
 
 Zbyva:
 
-- **zablesk u typu 4**: `0x8852` zalozi korutinu `0x885a`, ktera nastavi
-  `fp@(11166) = 256` (plna bila) a po 50 snimcich skonci — **krok
-  doznivani nikde nenastavuje**. Bez neho by obrazovka zustala bila,
-  takze to neni prepsane; chybi najit, kdo `fp@(11168)` v tuto chvili
-  drzi.
-- **souhra `+98` s tabulkou `0x70c0`**: bonusy 2 a 4 prepisuji prodlevu
-  palby primo, ale jestli ji zapis z tabulky pri zmene sily zase
-  prebije, neni prectene. V prepisu ma bonus prednost.
+- ~~zablesk u typu 4~~ — **uzavreno 2026-08-30**: je to smart bomba;
+  `fp@(11168)` se za hry nezapisuje a z uvodni sekvence zustava **−4**
+  (64 snimku doznivani). Smart bomba zabiji vse s aktivnim `+534`;
+  prepsano v `game.html` (`smartBomb`), viz [BEHAVIORS](BEHAVIORS.md).
+- ~~souhra `+98` s tabulkou `0x70c0`~~ — **uzavreno 2026-08-30**: tabulka
+  se aplikuje jen pri (re)spawnu (`0x70c8`), bonusy plati do dalsiho
+  spawnu. Prepsano (`applyWeaponTable`).
+
+## 4. Hlaseni z 2026-08-30 — kolize, stit, hrac (PREPSANO)
+
+Hloubkovy audit je v [TOWN-AUDIT](TOWN-AUDIT.md). Prepsano tehoz dne:
+
+- kolize vrtulniku jen s tridou bit 1 (letci, MILL, GOOSE, HOMING, strepy,
+  granaty); pozemni objekty ho uz nezabiji
+- jadro miny = stit (`0x98c4`, `0x92a0`, orb `0x98f2`) a smart bomba
+- hrac `0x9410`: 3 px/t, snimky 0..4, clamp, ochrana 200 s blikanim 8/8,
+  respawn 100 snimku, start 2 strely, stin `(+16,+32)`
+- HOMING sestrelitelna (1 HP, 7 bodu); hit flash u nepratel
+
+Zbyva z P0: GOOSE dokovani, pod a odhozeni casti (audit, sekce 4).
 
 ## Co uz je vedomo jinde
 

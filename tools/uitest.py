@@ -668,6 +668,199 @@ def main():
             expect(token["eff"]["harmless"] is True,
                    "bonus hrace zranil - nikdy nesmi")
 
+            # docs/TOWN-AUDIT.md P0 1-5: kolizni tridy +504, stit z jadra
+            # miny (0x98c4/0x92a0/0x98f2), smart bomba (0x885a), hrac 0x9410
+            # (0x9476 rychlost, 0x954c clamp, 0x714e respawn, 0x70c8 tabulka)
+            # a sestrelitelna HOMING (0x8578).
+            p0 = page.evaluate("""() => {
+              const g = state.g, p = g.player, out = {};
+              g.scrollMul = 0.000001;
+              const reset = () => {
+                g.air = []; g.hazards = []; g.shots = []; g.bullets = [];
+                g.tokens = []; g.booms = []; g.smartT = 0; g.fadeWhite = 0;
+                g.fadeWhiteStep = 0; g.activeCost = 0; g.over = false;
+                p.alive = true; p.inv = 0; p.shield = 0; p.orb = null;
+                p.respawnT = 0; p.x = 100; p.y = 100; p.cool = 0; g.keys = {};
+                g.spawns = g.spawns.filter(s => !s.fake);
+                for (const s of g.spawns) if (s.born) s.alive = false;
+              };
+              const mk = (beh, extra) => {
+                const s = Object.assign({ fake: true, file: 'MINE.LIN', idx: 0,
+                  beh, born: true, alive: true, armed: false, st: 0, t: 0,
+                  x: 100, y: g.scroll + 100, fr: 0, at: 0, hp: 10,
+                  scoreValue: 25, cost: 0, budgeted: false, age: 0,
+                  emitterSpawned: true }, extra);
+                g.spawns.push(s); return s;
+              };
+              const fod = (x, y) => ({ kind: 'fod', x, y: g.scroll + y, vx: 0,
+                vy: 0, ax: 0, ay: 0, alive: true, pending: false, dead: false,
+                cost: 0, budgeted: false, hp: 2, scoreValue: 12,
+                shooter: false, cool: -1, seq: [2, 3], per: 1, apos: 0,
+                at: 0, animFresh: true });
+              const core = () => {
+                spawnMineCore(g, { x: 100, y: g.scroll + 100 });
+                return g.hazards[g.hazards.length - 1];
+              };
+              // 1. pozemni objekty (trida 36) vrtulnik nezabiji
+              out.ground = {};
+              for (const [beh, file] of [['mine', 'MINE.LIN'],
+                  ['train', 'TRAIN.LIN'], ['flame', 'FLAME.LIN'],
+                  ['proxmine', 'PROXMINE.LIN']]) {
+                reset(); mk(beh, { file, vx: 0 });
+                for (let i = 0; i < 5; i++) step(g);
+                out.ground[beh] = p.alive;
+              }
+              // MILL (trida 34, 10 HP) zabiji a sam dostane -1 HP
+              reset();
+              const mill = mk('mill', { file: 'MILL.LIN', vy: 0,
+                                        scrollLocked: true, st: 1, t: 1000 });
+              step(g);
+              out.mill = { dead: !p.alive, hp: mill.hp, respawnT: p.respawnT };
+              // FODDERA dotek: hrac umre, letec -1 HP
+              reset(); g.air.push(fod(100, 100)); step(g);
+              out.fod = { dead: !p.alive, hp: g.air[0].hp };
+              // ochrana +108 blokuje smrt, letec presto dostane zasah
+              reset(); p.inv = 50; g.air.push(fod(100, 100)); step(g);
+              out.protectedAlive = p.alive && g.air[0].hp === 1;
+              // 2. jadro miny = stit: +106 = -1, jadro 10 snimku stoji, orb
+              reset(); g.score = 0;
+              const c1 = core(); step(g);
+              const afterTouch = { shield: p.shield, pickupT: c1.pickupT,
+                                   alive: c1.alive };
+              step(g);
+              const afterOrb = { shield: p.shield, orb: !!p.orb, inv: p.inv };
+              let n = 1; while (c1.alive && n++ < 30) step(g);
+              const coreGone = { ticks: n, alive: c1.alive };
+              while (p.shield > 1) step(g);
+              const lastTick = { shield: p.shield, orb: !!p.orb, inv: p.inv };
+              step(g);
+              const ended = { shield: p.shield, orb: !!p.orb, inv: p.inv };
+              out.shield = { afterTouch, afterOrb, coreGone, lastTick, ended,
+                             score: g.score };
+              // se stitem dalsi jadro = smart bomba: bila 256, krok -4,
+              // 50 snimku; letci a strely zemrou, TOKEN prezije
+              reset(); g.score = 0; p.shield = 300; p.orb = { t: 0 };
+              g.air.push(fod(200, 50));
+              g.tokens.push({ x: 150, y: g.scroll + 150, ang: 0, spd: 0,
+                typ: 1, cycles: 12, blink: false, hitLock: false, dead: false });
+              g.shots.push({ kind: 'hom', x: 250, y: 60, ang: 64, spd: 0,
+                             corr: 0, ct: 8 });
+              const c2 = core(); step(g);
+              out.smart = { white: g.fadeWhite, whiteStep: g.fadeWhiteStep,
+                smartT: g.smartT, core: c2.alive,
+                fodAlive: g.air.filter(a => a.alive).length,
+                tokens: g.tokens.length, shots: g.shots.length,
+                score: g.score, shield: p.shield };
+              for (let i = 0; i < 64; i++) step(g);
+              out.smartFaded = g.fadeWhite;
+              // sestreleni jadra = smart bomba + 30 bodu
+              reset(); g.score = 0;
+              const c3 = core(); c3.hp = 1;
+              g.bullets.push({ x: 100, y: 109 }); step(g);
+              out.shootCore = { smartT: g.smartT, score: g.score,
+                                alive: c3.alive };
+              // 3. hrac: 3 px/t, diagonala z tabulky 0x959e, clamp 4..316/4..248
+              reset(); g.keys = { r: true }; step(g);
+              const dx = p.x - 100;
+              const x0 = p.x, y0 = p.y; g.keys = { r: true, d: true }; step(g);
+              out.move = { dx, diag: [p.x - x0, p.y - y0] };
+              g.keys = { l: true }; for (let i = 0; i < 60; i++) step(g);
+              const clampL = p.x;
+              g.keys = { u: true }; for (let i = 0; i < 60; i++) step(g);
+              out.clamp = { l: clampL, u: p.y };
+              // smrt granatem -> 100 snimku -> respawn s ochranou 200 a
+              // tabulkou 0x70c0 (tokenCount 0 -> sila 2, kadence 11)
+              reset(); g.lives = 4; p.weapon = 0; p.reload = 5; p.tokenCount = 0;
+              g.shots.push({ kind: 'can', x: 100, y: 100, ang: 64, spd: 0,
+                             phase: 0, st: 0, accel: false });
+              step(g);
+              const died = { alive: p.alive, respawnT: p.respawnT,
+                             shots: g.shots.length };
+              g.shots = [];
+              for (let i = 0; i < 99; i++) step(g);
+              const before = p.alive;
+              step(g);
+              out.respawn = { died, before, after: { alive: p.alive,
+                inv: p.inv, x: p.x, y: p.y, lives: g.lives,
+                reload: p.reload, weapon: p.weapon } };
+              // ochrana blika bitem 3 (+108): 200..193 bile, 192..185 ne
+              const blink = [];
+              for (let i = 0; i < 17; i++) { blink.push(p.flash); step(g); }
+              out.blink = blink;
+              // start zbrane: sila 2 = dve strely
+              reset(); p.weapon = 2; p.reload = 11; g.keys = { f: true };
+              step(g);
+              out.bolts = g.bullets.length;
+              // 4. HOMING sestrelitelna (7 bodu), granat ne
+              reset(); g.score = 0;
+              g.shots.push({ kind: 'hom', x: 200, y: 50, ang: 64, spd: 0,
+                             corr: 0, ct: 8 });
+              g.shots.push({ kind: 'can', x: 250, y: 50, ang: 64, spd: 0,
+                             phase: 0, st: 0, accel: false });
+              g.bullets.push({ x: 200, y: 58 }, { x: 250, y: 58 });
+              step(g);
+              out.homing = { shots: g.shots.map(s => s.kind), score: g.score,
+                             bullets: g.bullets.length };
+              reset(); g.lives = 4;
+              return out;
+            }""")
+            expect(all(p0["ground"].values()),
+                   "pozemni objekt zabil vrtulnik: %s" % p0["ground"])
+            expect(p0["mill"] == {"dead": True, "hp": 9, "respawnT": 100},
+                   "MILL (trida 34) nezabil nebo nedostal zasah: %s" % p0["mill"])
+            expect(p0["fod"] == {"dead": True, "hp": 1},
+                   "FODDERA dotek: %s" % p0["fod"])
+            expect(p0["protectedAlive"] is True,
+                   "ochrana +108 neblokovala smrt nebo letec nedostal zasah")
+            sh = p0["shield"]
+            expect(sh["afterTouch"] == {"shield": -1, "pickupT": 10, "alive": True},
+                   "jadro miny nenastavilo +106 = -1 a nezmrazilo se: %s"
+                   % sh["afterTouch"])
+            expect(sh["afterOrb"] == {"shield": 500, "orb": True, "inv": 0},
+                   "orb 0x98f2 / +106 = 500 nesedi: %s" % sh["afterOrb"])
+            expect(sh["coreGone"]["alive"] is False and sh["coreGone"]["ticks"] == 10,
+                   "jadro ma zmizet po 10 snimcich: %s" % sh["coreGone"])
+            # 0x92ac nastavi +108 = 100 jeste v tiku, kdy +106 klesne na 0,
+            # a 0x92d8 hned odecte tik -> 99.
+            expect(sh["lastTick"] == {"shield": 1, "orb": True, "inv": 99} and
+                   sh["ended"] == {"shield": 0, "orb": False, "inv": 99},
+                   "konec stitu: orb ma zmizet a +108 dobihat od 100: %s / %s"
+                   % (sh["lastTick"], sh["ended"]))
+            expect(sh["score"] == 0, "sebrani jadra nema davat body")
+            sm = p0["smart"]
+            expect(sm["white"] == 256 and sm["whiteStep"] == -4 and
+                   sm["smartT"] == 49 and sm["core"] is False,
+                   "smart bomba po druhem jadru: %s" % sm)
+            expect(sm["fodAlive"] == 0 and sm["shots"] == 0 and
+                   sm["tokens"] == 1 and sm["score"] == 12,
+                   "smart bomba ma zabit letce a strely s body, TOKEN ne: %s" % sm)
+            expect(p0["smartFaded"] == 0, "bila po 64 snimcich nedoznela")
+            expect(p0["shootCore"] == {"smartT": 49, "score": 30, "alive": False},
+                   "sestreleni jadra: %s" % p0["shootCore"])
+            mv = p0["move"]
+            expect(abs(mv["dx"] - 3) < 1e-6 and
+                   abs(mv["diag"][0] - 2.1213) < 0.01 and
+                   abs(mv["diag"][1] - 2.1213) < 0.01,
+                   "hrac nejede 3 px/t podle 0x959e/0x65f2: %s" % mv)
+            expect(p0["clamp"] == {"l": 4, "u": 4},
+                   "clamp hrace neni 4..316 / 4..248: %s" % p0["clamp"])
+            rs = p0["respawn"]
+            expect(rs["died"] == {"alive": False, "respawnT": 100, "shots": 1} and
+                   rs["before"] is False and
+                   # 0x9424 da 200, prvni 0x92a0 tehoz tiku odecte -> 199
+                   rs["after"] == {"alive": True, "inv": 199, "x": 160, "y": 192,
+                                   "lives": 3, "reload": 11, "weapon": 2},
+                   "respawn po 100 snimcich s ochranou 200 a tabulkou 0x70c0: %s"
+                   % rs)
+            # +108 = 199..192 ma bit 3 nulovy, 191..184 nastaveny
+            expect(p0["blink"] == [False] * 8 + [True] * 8 + [False],
+                   "blikani ochrany neni 8/8 podle bitu 3: %s" % p0["blink"])
+            expect(p0["bolts"] == 2, "start ma byt 2 strely (+100 = 2): %s"
+                   % p0["bolts"])
+            expect(p0["homing"] == {"shots": ["can"], "score": 7, "bullets": 1},
+                   "HOMING ma byt sestrelitelna za 7 bodu, granat ne: %s"
+                   % p0["homing"])
+
             summary = page.evaluate("""() => ({
               dispatch: state.behaviorDispatch.size,
               mapObjects: state.mapMeta.objects,

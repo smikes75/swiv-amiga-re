@@ -45,14 +45,14 @@ defaults at `0x61f4+`). Known fields:
 | +362 | score value installed by `0xa2c6` from d4 |
 | +368 | loaded graphic/file handle from `0xa2c6` d0 |
 | +370 | active-budget cost installed by `0xa2c6` from d5 |
-| +364 | draw priority (−64 default) |
+| +364 | off-screen cull margin (−64 default): `0x6486` kills via `+538` when `sx <= m`, `sx >= 320−m`, `sy <= m` or `sy >= 256−m`; objects override it (`0x820c` −90, `clrw` = 0) |
 | +367 | flag bits (bit 3 = follow parent; bit 4 = compensate camera-scroll delta) |
-| +376 | handler (default `0x894a`) |
+| +376 | death-effect coroutine template spawned by `0xa36a` (default `0x894a` = small EXPL1 puff with panned sound) |
 | +397 | flags (bit 0 inherited on spawn) |
 | +486 | cleared on spawn |
 | +508 | saved/restored around waits (`0x9ae8`) |
 | +510..+530 | six collision/event callbacks (default no-op `0x6288`) |
-| +534/+538/+542 | routine slots / state markers (−1, `st`/`sf` toggles) |
+| +534/+538/+542 | routine pointers; `st` on the first byte makes them negative = disabled, `sf` re-enables. `+534` = smart-bomb handler (called each tick while `fp@(169)`, `a2c6` sets `0xa36a`), `+538` = off-screen cull handler (default `0x6db4` = kill self), `+542` = orphan handler (called each tick when `+308 == 0`; `0x6144` sets `0x6db4`, `0x617a` sets −1) — see `0x6458`–`0x64b4` |
 
 ## Key utilities (by call count, `tools/xref.py`)
 

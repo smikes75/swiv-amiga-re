@@ -890,6 +890,17 @@ function whiteOf(spr) {
   return spr._wh;
 }
 
+/* Letci maji +328 = 32 (FODDERA 0x80c8, GOOSE 0xc7c8, MILL 0x7bc4 ...):
+   stin z 0x6364 lezi na (x + z/2, y + z) = (+16, +32). Bit 1 v +367
+   (0xa35a) kresli objekt jeden snimek jako hit flash. */
+function drawAirBob(ctx, a, spr, ay) {
+  const sh = shadowOf(spr);
+  ctx.globalAlpha = 0.45;
+  ctx.drawImage(sh.cv, Math.round(a.x + sh.ox + 16), Math.round(ay + sh.oy + 32));
+  ctx.globalAlpha = 1;
+  const img = a.flashT > 0 ? whiteOf(spr) : spr;
+  ctx.drawImage(img.cv, Math.round(a.x + img.ox), Math.round(ay + img.oy));
+}
 /* stinova silueta spritu (cerna kopie) */
 function shadowOf(spr) {
   if (spr._sh) return spr._sh;
@@ -1020,6 +1031,10 @@ function turnToward(cur, want, max) {        // 0x65be: otocka omezena na max
   return (cur + d) & 255;
 }
 const dir16 = a => ((a + 8) >> 4) & 15;
+/* 0x959e: uhel podle joystickoveho nibblu (0x71ac: bit0 nahoru, bit1 dolu,
+   bit2 vlevo, bit3 vpravo); -1 (0xffff) = zadny pohyb. */
+const JOY_ANGLE = [-1, 192, 64, -1, 128, 160, 96, 64,
+                   0, 224, 32, 0, -1, 192, 64, -1];
 
 /* 0x85f0/0x861e: vychozi PLOP#0 vydrzi jeden tik, inline skript
    period(1) pak ukaze BULLET#2 a prikaz kill objekt dalsi tik zrusi. */
@@ -1130,6 +1145,35 @@ function stepBossParts(g, boss) {
     if (Math.abs(q.ox - q.tx) < 4) q.ox = q.tx;
     if (Math.abs(q.oy - q.ty) < 4) q.oy = q.ty;
   }
+}
+/* Dotek hrace s bossem: telo ma tridu 34 az od 0xc854 (po zastaveni) a
+   damage handler 0xc974 i v +514; casti a pod maji tridu 34 od a2c6
+   (0xca26/0xcabe), HP 0 -> bez handleru, jen zabijeji. */
+function bossTouch(g, s, touches) {
+  let lethal = false;
+  const sy = s.y - g.scroll;
+  if (s.st >= 1) {
+    const body = sprite(s.file, 0);
+    if (body && touches(body)(s.x, sy)) {
+      lethal = true;
+      if (--s.hp > 0) { s.vx = -s.vx; s.flashT = 1; }
+      else killBoss(g, s);
+    }
+  }
+  for (const q of s.parts) {
+    if (!q.entered) continue;
+    const pr = sprite(s.file, q.frame);
+    if (pr && touches(pr)(s.x + q.ox, sy + q.oy)) lethal = true;
+  }
+  return lethal;
+}
+function killBoss(g, s) {                     // 0xc986
+  s.alive = false;
+  releaseCost(g, s);
+  // 0xc98c: dva kruhy bonusu, tri kdyz uz ubehla vetsina casu
+  dropBossTokens(g, s, s.timer <= 500 ? 3 : 2);
+  spawnBoom(g, s.x, s.y, "big");
+  snd("BIGEXPL.SND", 8000);
 }
 function bossAssembled(boss) {
   return boss.parts.every(q => q.entered && q.ox === q.tx && q.oy === q.ty);
@@ -1333,6 +1377,82 @@ function releaseHazard(g, h) {
   releaseCost(g, h);
   h.alive = false; h.dead = true;
 }
+/* 0x70c8: pri (re)spawnu hrace se z tabulky 0x70c0 (bajty 02 0b / 03 0a /
+   04 0a / 05 08) vezme dvojice (sila, kadence) podle +102/5. Sila se jen
+   zvedne (0x70e6: max), kadence +98 se prepise (0x70f2). Behem zivota
+   tabulku uz nic nevola - bonusy 2/4 prepisuji +98 primo. */
+function applyWeaponTable(p) {
+  const tier = Math.min(3, ((p.tokenCount || 0) / 5) | 0);
+  const [pow, cad] = [[2, 11], [3, 10], [4, 10], [5, 8]][tier];
+  if ((p.weapon | 0) < pow) p.weapon = pow;
+  p.reload = cad;
+}
+/* 0xa36a: smrt s body. Body +362 pripise hraci, exploze je sablona +376
+   (vychozi 0x894a = maly EXPL1), dekal +374 (0x898c) zustane v mape. */
+function killSpawn(g, s) {
+  s.alive = false; releaseCost(g, s);
+  awardScore(g, s.scoreValue ?? 0);
+  spawnBoom(g, s.x, s.y);
+  if (["tank", "popup", "flame", "proxmine"].includes(s.beh))
+    addDecal(g, "EXPL1.LIN", 0, s.x, s.y);      // +374 = 5 (0x9e28, 0xa6d6, ...)
+  else if (s.beh === "mine")
+    addDecal(g, "MINE.LIN", 8, s.x, s.y);       // +374 = 0x1011 (0x9b28)
+  snd("BIGEXPL.SND", 8000);
+}
+function killAir(g, a) {
+  releaseAirMember(g, a); awardScore(g, a.scoreValue);
+  spawnBoom(g, a.x, a.y);
+  snd("BIGEXPL.SND", 8000);
+}
+function killHazard(g, h) {
+  releaseHazard(g, h); awardScore(g, h.scoreValue);
+  spawnBoom(g, h.x, h.y);
+  snd("BIGEXPL.SND", 8000);
+}
+/* 0xa362: damage handler z a2c6 (slot +510 pro strelu, +514 pro dotek
+   vrtulniku): -1 HP, pri nule smrt 0xa36a, jinak zvuk 0x5070(x) a jeden
+   snimek hit flashe (0xa35a: bit 1 v +367, housekeeping 0x6452 maze). */
+function damageAir(g, a) {
+  if (--a.hp > 0) { a.flashT = 1; return false; }
+  killAir(g, a); return true;
+}
+function damageHazard(g, h) {
+  if (--h.hp > 0) { h.flashT = 1; return false; }
+  killHazard(g, h); return true;
+}
+
+/* 0x8852/0x885a: smart bomba. Zvuk 0x4cb2, st fp@(169) na 50 snimku a
+   fp@(11166) = 256 (plna bila). Doznivani je fp@(11168) = -4 za snimek:
+   posledni zapisy jsou v uvodni sekvenci (0xc9a, 0x1028), za hry se
+   nemeni. Po dobu fp@(169) housekeeping 0x6468 vola +534 kazdeho objektu;
+   a2c6 tam na 0xa326 dava 0xa36a, takze vse aktivni na obrazovce zemre
+   s body. Spousti ji TOKEN typ 4 (0x985a), sestreleni jadra miny (0x98ba)
+   a sebrani jadra s uz aktivnim stitem (0x98ec). */
+function smartBomb(g) {
+  g.fadeWhite = 256; g.fadeWhiteStep = -4;
+  g.smartT = 50;
+  snd("SMART.SND", 8000);     // 0x4cb2; prirazeni samplu neni z kodu overene
+}
+function stepSmartBomb(g) {
+  if (!(g.smartT > 0)) return;
+  g.smartT--;
+  // Imunni jsou objekty, ktere udelaly st +534: GOOSE telo (0xc7b2), jeho
+  // casti (0xca2a) a pod (0xcac2), TOKEN (0x96f0), orb stitu (0x9916).
+  for (const a of g.air) if (a.alive) killAir(g, a);
+  for (const s of g.spawns) {
+    if (!s.born || !s.alive) continue;
+    if (s.beh === "boss" || s.beh === "unimplemented" ||
+        s.beh === "missing-dispatch") continue;
+    // +534 dostane objekt az po navratu z a2c6, tj. az je na obrazovce;
+    // POPUP tam ceka s marginem 63 (0xa6c6).
+    if (s.beh === "popup" && (s.y - g.scroll) < 63) continue;
+    killSpawn(g, s);
+  }
+  for (const h of g.hazards) if (h.alive) killHazard(g, h);
+  // Granaty (0x960e) i HOMING (0x8578) prosly a2c6, takze zmizi take.
+  g.shots = [];
+}
+
 function spawnMineCore(g, s) {                 // 0x9860: MINE#9/#10
   const h = { kind: "minecore", file: "MINE.LIN", x: s.x, y: s.y,
               vx: 0, vy: 0.5, alive: true, dead: false,
@@ -1461,10 +1581,14 @@ function startGame(lv) {
     lv, big, mapIndex: m.mapIndex, spawns, mapH: m.h,
     scroll: m.h - MARGIN - 256,    // start = spodek obsahu urovne (bez okraje)
     frac: 0,
-    player: { x: 160, y: 200, ang: 192, alive: true, inv: 100, bank: 0, cool: 0,
-              weapon: 0 /* +100: sila 0-5, bonus typu 4 dava 6 */,
+    // Hracsky struct fp@(11176): +98 prodleva, +100 sila (0x6fde: start 2),
+    // +102 citac pickupu, +104 rezim, +106 stit, +108 ochrana (0x9424: 200).
+    player: { x: 160, y: 192, ang: 192, alive: true, inv: 200, cool: 0,
+              weapon: 2 /* +100: sila, bonus typu 4 dava 6 */,
               tokenCount: 0 /* +102: vsechny pickupy, strop 19; HUD /5 + 2 */,
-              mode: 0 /* +104 */, reload: null /* +98, null = dle 0x70c0 */ },
+              mode: 0 /* +104 */, reload: 12 /* +98 */,
+              shield: 0 /* +106: 0 nic, -1 prave sebrano, >0 odpocet */,
+              orb: null /* potomek 0x98f2 */, flash: false, respawnT: 0 },
     nextLife: 10000,   // extra zivot: prvni na 10k, pak po 30k (0x7116)
     bullets: [], shots: [], booms: [], plops: [], effects: [],
     air: [], hazards: [], tokens: [],
@@ -1482,6 +1606,7 @@ function startGame(lv) {
     fadeBlack: 256, fadeWhite: 0, fadeDir: 1, fadeWhiteStep: 0,
   };
   for (const s of g.spawns) s.armed = (s.y - g.scroll) < -32;
+  applyWeaponTable(g.player);                       // 0x70c8 pri spawnu
   if (state.titleMod) { state.titleMod.stop(); state.titleMod = null; }
   $("#levelpick").style.display = "none";
   $("#gamewrap").style.display = "";
@@ -1495,8 +1620,8 @@ document.getElementById("livesbox").onchange = e => {
   const g = state.g; if (!g) return;
   g.lives = Math.max(1, +e.target.value || 4);
   if (g.over && !g.won) {           // oziveni po game over pro dalsi testovani
-    g.over = false; g.player.alive = true; g.player.inv = 120;
-    g.player.x = 160; g.player.y = 200; g.shots = [];
+    g.over = false; g.player.alive = true; g.player.inv = 200;
+    g.player.x = 160; g.player.y = 192; g.player.respawnT = 0;
   }
 };
 document.getElementById("scrollpct").oninput = e => {
@@ -1526,30 +1651,43 @@ function step(g) {
   if (g.scroll <= 0) { g.won = true; g.over = true; }
   const p = g.player;
 
+  // 0x714e: po smrti ceka hracsky task 100 snimku a znovu zalozi 0x9410.
+  if (!p.alive && p.respawnT > 0 && --p.respawnT === 0) {
+    if (--g.lives <= 0) g.over = true;
+    else {
+      p.alive = true; p.inv = 200;                  // 0x9424: +108 = 200
+      p.x = 160; p.y = 192;                         // 0x9046
+      applyWeaponTable(p);                          // 0x70c8
+    }
+  }
   if (p.alive) {
-    const sp = 2.2;
-    p.bank = 0;
-    if (g.keys.l) { p.x -= sp; p.bank = -1; }
-    if (g.keys.r) { p.x += sp; p.bank = 1; }
-    if (g.keys.u) p.y -= sp;
-    if (g.keys.d) p.y += sp;
-    p.x = Math.max(12, Math.min(308, p.x));
-    p.y = Math.max(16, Math.min(240, p.y));
+    // 0x958a: joystick nibble (bit0 nahoru, bit1 dolu, bit2 vlevo,
+    // bit3 vpravo) -> uhel z tabulky 0x959e, -1 = stoji; pak 0x65f2
+    // rychlosti +356 = 768 = 3 px/t (0x9476).
+    const nib = (g.keys.u ? 1 : 0) | (g.keys.d ? 2 : 0) |
+                (g.keys.l ? 4 : 0) | (g.keys.r ? 8 : 0);
+    const ja = JOY_ANGLE[nib];
+    if (ja >= 0) { const v = angVel(ja, 3); p.x += v.vx; p.y += v.vy; }
+    p.x = Math.max(4, Math.min(316, p.x));          // 0x954c
+    p.y = Math.max(4, Math.min(248, p.y));
+    // 0x92a0: stit +106 drzi ochranu +108 na 100 a odpocitava; -1 znamena
+    // prave sebrane jadro miny -> zalozit orb 0x98f2 a nastavit 500.
+    if (p.shield > 0) {
+      p.inv = 100;                                  // 0x92ac
+      if (--p.shield === 0) p.orb = null;           // 0x9940: orb konci
+    } else if (p.shield < 0) {
+      p.orb = { t: 0 };                             // 0x92c0: potomek 0x98f2
+      p.shield = 500;                               // 0x92cc
+    }
     if (p.inv > 0) p.inv--;
-    // Zbran (0x70c0 + rozptylova tabulka 0x8b86, heli = smer nahoru):
-    // (sila,kadence) = (2,11),(3,10),(4,10),(5,8); sila = pocet strel.
+    p.flash = p.inv > 0 && (p.inv & 8) !== 0;       // 0x92e4: btst #3 -> flash
+    // Zbran: sila +100 = pocet strel (0x8ad0: subq #1 + dbf), kadence +98.
     // Sude sily: pary (-2,-4)(2,-4)(-6,4)(6,4); liche: stred (0,-8) +
     // pary (-4,0)(4,0)(-8,8)(8,8). Vse 9 px/t vzhuru, sprite BULLET#14.
-    // start = 1 strela (zmereno: video 22.35 st06, rozestup salv 97 px
-    // = 9 px/t x kadence 11); tabulka 0x70c0 (2,11)(3,10)(4,10)(5,8)
-    // nastupuje az s powerupy
-    // Tabulka 0x70c0 je bajtova: 02 0b / 03 0a / 04 0a / 05 08, tedy
-    // (sila, kadence) indexovane primo hodnotou +100 (0 = vychozi stav).
-    const tier = Math.min(4, p.weapon | 0);
-    const [pow, tableCad] = [[1, 11], [2, 11], [3, 10], [4, 10], [5, 8]][tier];
-    // Bonusy 2 a 4 prepisuji +98 primo; jak presne se to snasi se zapisem
-    // z tabulky pri zmene sily, neni prectene (docs/GAPS.md).
-    const cad = p.reload ?? tableCad;
+    // Sila 6 (nad 5, 0x8b52) je osmismerovy rezim z tabulky 0x8dd6 - ten
+    // neni prepsany, zatim strili jako 5.
+    const pow = Math.max(1, Math.min(5, p.weapon | 0));
+    const cad = p.reload ?? 11;
     if (p.cool > 0) p.cool--;
     if (g.keys.f && p.cool <= 0) {
       p.cool = cad;
@@ -1629,6 +1767,10 @@ function step(g) {
   for (const h of g.hazards.slice()) {
     if (!h.alive) continue;
     if (h.scrollLocked) h.y += scrollDelta;
+    if (h.pickupT !== undefined) {              // 0x98e2: 10 snimku stoji, pak konec
+      if (--h.pickupT <= 0) releaseHazard(g, h);
+      continue;
+    }
     if (h.kind === "flameEmitter") {
       if (!h.parent.alive) { releaseHazard(g, h); continue; }
       h.x = h.parent.x + 12; h.y = h.parent.y;
@@ -1725,12 +1867,12 @@ function step(g) {
         initMill(g, s);
       } else if (s.beh === "popup") {
         s.st = 0; s.t = 64 + (Math.random() * 64 | 0);  // 0xa6ae
-        s.hp = 3; s.fr = 0; s.alt = Math.random() < 0.5;
+        s.hp = 3; s.scoreValue = 70; s.fr = 0; s.alt = Math.random() < 0.5;
         s.popupAnim = null;
       } else if (s.beh === "tank") {
         // 0x9eca: typ -> najezd; rychlost 0.5 px/t, 300 jed / 100 stuj, 3x
         const t = s.typ & 7;
-        s.hp = 2; s.drives = 3; s.st = 1; s.t = 300;
+        s.hp = 2; s.scoreValue = 50; s.drives = 3; s.st = 1; s.t = 300;
         if (t === 1) { s.x = 352; s.ang = 128; }
         else if (t === 2) { s.x = -32; s.ang = 0; }
         else if (t === 3) { s.ang = 64; }
@@ -1758,7 +1900,8 @@ function step(g) {
         // 0x9960: NOT.W fp@(138) strida skripty podle poradi aktivace,
         // nikoli podle polohy objektu. Z nuly zacina reverzni 0x9986.
         g.rotoDirectionWord = (~g.rotoDirectionWord) & 0xffff;
-        s.hp = 4; s.sd = (g.rotoDirectionWord & 0x8000) ? -1 : 1;
+        s.hp = 4; s.scoreValue = 35;
+        s.sd = (g.rotoDirectionWord & 0x8000) ? -1 : 1;
         s.spin = 4;
         // Dopredny skript 0x996a zacina znovu ROTOBASE#4, ktery uz
         // nainstaloval a2c6. Reverzni 0x9986 zacina rovnou #11.
@@ -1993,25 +2136,14 @@ function step(g) {
           break;
         }
         if (s.beh === "boss") {
-          if (--s.hp > 0) { s.vx = -s.vx; continue; }   // 0xc97a: negl +332
-          s.alive = false;
-          releaseCost(g, s);
-          // 0xc98c: dva kruhy bonusu, tri kdyz uz ubehla vetsina casu
-          dropBossTokens(g, s, s.timer <= 500 ? 3 : 2);
-          spawnBoom(g, s.x, s.y, "big");
-          snd("BIGEXPL.SND", 8000);
-          // Bodovy soucet ma boss vlastni (smycka 0xc950 nad tabulkou);
-          // ta zatim neni prectena, takze zadne body nepripisujeme.
+          // 0xc974: -1 HP, negl +332, hit flash; body zadne (a2c6 d4 = 0;
+          // smycka 0xc950 je kontrolni soucet programu, ne skore).
+          if (--s.hp > 0) { s.vx = -s.vx; s.flashT = 1; continue; }
+          killBoss(g, s);
           break;
         }
-        if (--s.hp > 0) continue;
-        s.alive = false;
-        releaseCost(g, s);
-        awardScore(g, s.scoreValue ?? 100);
-        spawnBoom(g, s.x, s.y);
-        if (["tank", "popup", "flame", "proxmine"].includes(s.beh))
-          addDecal(g, "EXPL1.LIN", 0, s.x, s.y);
-        snd("BIGEXPL.SND", 8000);
+        if (--s.hp > 0) { s.flashT = 1; continue; }   // 0xa35a
+        killSpawn(g, s);
         break;
       }
     }
@@ -2024,16 +2156,13 @@ function step(g) {
       if (b.dead) continue;
       if (Math.abs(b.x - a.x) < 12 && Math.abs(b.y - ay) < 12) {
         b.dead = true;
-        if (--a.hp > 0) {
+        if (!damageAir(g, a)) {
           if (a.kind === "bird") {              // 0x8696: hit recoil + rana
             a.y -= 6;
             fireCannon(g, a.x, ay - 6, 56 + (random32() & 15), true, false);
           }
           continue;
         }
-        releaseAirMember(g, a); awardScore(g, a.scoreValue);
-        spawnBoom(g, a.x, a.y);
-        snd("BIGEXPL.SND", 8000);
         break;
       }
     }
@@ -2041,7 +2170,7 @@ function step(g) {
 
   // kolize s pohyblivymi castmi min/vlaku; plamen neni znicitelny bolt-em.
   for (const h of g.hazards) {
-    if (!h.alive || h.hp <= 0) continue;
+    if (!h.alive || h.hp <= 0 || h.pickupT !== undefined) continue;
     const hy = h.y - g.scroll, fr = h.seq[h.apos];
     const spr = sprite(h.file, fr);
     if (!spr || hy < -50 || hy > 306) continue;
@@ -2050,67 +2179,98 @@ function step(g) {
       if (b.x > h.x + spr.ox && b.x < h.x + spr.ox + spr.w &&
           b.y > hy + spr.oy && b.y < hy + spr.oy + spr.h) {
         b.dead = true;
-        if (--h.hp > 0) break;
-        releaseHazard(g, h); awardScore(g, h.scoreValue);
-        spawnBoom(g, h.x, h.y);
-        if (h.kind === "minecore") g.flash = 50;
-        snd("BIGEXPL.SND", 8000);
+        // 0x98b4: jadro miny ma vlastni handler - pri nule smart bomba
+        // a teprve pak 0xa36a (30 bodu).
+        if (h.kind === "minecore") {
+          if (--h.hp > 0) { h.flashT = 1; break; }
+          smartBomb(g); killHazard(g, h); break;
+        }
+        damageHazard(g, h);
         break;
       }
     }
   }
+  // HOMING (0x8578: a2c6 s tridou 38, 1 HP, 7 bodu) jde sestrelit;
+  // kanonovy granat (trida 6) ne.
+  for (const s of g.shots) {
+    if (s.kind !== "hom" || s.dead) continue;
+    for (const b of g.bullets) {
+      if (b.dead) continue;
+      if (Math.abs(b.x - s.x) < 8 && Math.abs(b.y - s.y) < 8) {
+        b.dead = true; s.dead = true;
+        awardScore(g, 7); spawnBoom(g, s.x, s.y + g.scroll);
+        break;
+      }
+    }
+  }
+  g.shots = g.shots.filter(s => !s.dead);
   g.bullets = g.bullets.filter(b => !b.dead);
 
-  // kolize hrace
-  if (p.alive && p.inv === 0) {
-    let hit = false;
+  // Kolize hrace (docs/TOWN-AUDIT.md 2.1). Vrtulnik 0x9410 instaluje svou
+  // smrt 0x9306 jen do udalosti 1/2; ty vyvolavaji objekty s bitem 1 v
+  // kolizni tride (a2c6 d1 = 34/38/6): letci, MILL, GOOSE s castmi,
+  // strepy PROXMINE, granaty a HOMING. Pozemni objekty (trida 36: mina,
+  // PROXMINE, vlak, plamen, POPUP, veze; trida 32: tank, jadro, TOKEN)
+  // vrtulnik nezabiji. Dotek zaroven spusti damage handler objektu
+  // (0xa362 v +514), nezavisle na ochrane hrace.
+  if (p.alive) {
+    const touches = spr => (sx, sy) =>
+      p.x + 6 > sx + spr.ox && p.x - 6 < sx + spr.ox + spr.w &&
+      p.y + 6 > sy + spr.oy && p.y - 6 < sy + spr.oy + spr.h;
+    let lethal = false;
     for (const s of g.shots)
-      if (Math.abs(s.x - p.x) < 8 && Math.abs(s.y - p.y) < 8) hit = true;
+      if (Math.abs(s.x - p.x) < 8 && Math.abs(s.y - p.y) < 8) lethal = true;
     for (const a of g.air) {
       if (!a.alive) continue;
       const ay = a.y - g.scroll;
-      if (Math.abs(a.x - p.x) < 14 && Math.abs(ay - p.y) < 14) hit = true;
+      if (Math.abs(a.x - p.x) < 14 && Math.abs(ay - p.y) < 14) {
+        lethal = true; damageAir(g, a);           // +514 = 0xa362
+      }
     }
     for (const s of g.spawns) {
       if (!s.born || !s.alive) continue;
-      if (!["mine", "proxmine", "train", "flame", "mill"].includes(s.beh)) continue;
-      const sy = s.y - g.scroll, fr = s.fr >= 0 ? s.fr : s.idx;
-      const spr = sprite(s.file, fr);
-      if (!spr) continue;
-      if (p.x + 6 > s.x + spr.ox && p.x - 6 < s.x + spr.ox + spr.w &&
-          p.y + 6 > sy + spr.oy && p.y - 6 < sy + spr.oy + spr.h) {
-        hit = true;
-        if (s.beh === "mine") detonateMine(g, s, false);
+      const sy = s.y - g.scroll;
+      if (s.beh === "mill") {
+        const spr = sprite(s.file, s.fr >= 0 ? s.fr : s.idx);
+        if (spr && touches(spr)(s.x, sy)) {
+          lethal = true;
+          if (--s.hp > 0) s.flashT = 1; else killSpawn(g, s);
+        }
+      } else if (s.beh === "boss") {
+        if (bossTouch(g, s, touches)) lethal = true;
       }
     }
     for (const h of g.hazards) {
-      if (!h.alive) continue;
+      if (!h.alive || h.pickupT !== undefined) continue;
       const hy = h.y - g.scroll, spr = sprite(h.file, h.seq[h.apos]);
-      if (!spr) continue;
-      if (p.x + 6 > h.x + spr.ox && p.x - 6 < h.x + spr.ox + spr.w &&
-          p.y + 6 > hy + spr.oy && p.y - 6 < hy + spr.oy + spr.h) {
-        hit = true;
-        if (h.kind === "minecore" || h.kind === "proxfrag")
-          releaseHazard(g, h);
+      if (!spr || !touches(spr)(h.x, hy)) continue;
+      if (h.kind === "proxfrag") { lethal = true; damageHazard(g, h); }
+      else if (h.kind === "minecore") {
+        // 0x98c4 (+514 i +522): bez stitu +106 = -1 a jadro po 10
+        // snimcich zmizi; se stitem misto toho smart bomba (0x98ec).
+        if (p.shield === 0) { p.shield = -1; h.pickupT = 10; }
+        else { smartBomb(g); releaseHazard(g, h); }
       }
     }
-    if (hit) {
-      p.alive = false;
+    // 0x9306: ochrana +108 nebo stit +106 smrt blokuje.
+    if (lethal && p.inv === 0 && p.shield === 0) {
+      p.alive = false; p.orb = null;                // orb umira s rodicem (+542)
+      p.respawnT = 100;                             // 0x714e
       spawnPlayerBurst(g, p.x, p.y + g.scroll, p.ang);
       snd("BIGEXPL.SND", 8000);
-      setTimeout(() => {
-        if (--g.lives <= 0) { g.over = true; return; }
-        p.alive = true; p.inv = 120; p.x = 160; p.y = 200;
-        g.shots = [];
-      }, 1200);
     }
   }
+
+  stepSmartBomb(g);
 
   for (const bm of g.booms) bm.t++;
   g.booms = g.booms.filter(bm => bm.t < boomLife(bm));
   for (const ef of g.effects) ef.t++;
   g.effects = g.effects.filter(ef => ef.t < ef.life);
-  if (g.flash > 0) g.flash--;
+  // 0x6452: hit flash plati jeden snimek
+  for (const a of g.air) if (a.flashT > 0) a.flashT--;
+  for (const h of g.hazards) if (h.flashT > 0) h.flashT--;
+  for (const s of g.spawns) if (s.flashT > 0) s.flashT--;
 }
 
 /* ---- kresleni ---- */
@@ -2181,7 +2341,8 @@ function frame(now) {
       }
     }
     // 0x79d4: MILL base je nad rotorovou vrstvou, ne pod ni.
-    ctx.drawImage(spr.cv, Math.round(s.x + spr.ox), Math.round(sy + spr.oy));
+    const simg = s.flashT > 0 ? whiteOf(spr) : spr;   // 0x63a4: hit flash
+    ctx.drawImage(simg.cv, Math.round(s.x + spr.ox), Math.round(sy + spr.oy));
   }
   // Jednoduche death/debris snimky (MINE#8 po otevreni plaste).
   for (const ef of g.effects) {
@@ -2197,13 +2358,15 @@ function frame(now) {
     const spr = sprite(h.file, h.seq[h.apos], wpc.pal, wpc.ci);
     if (!spr) continue;
     if (h.kind === "minecore" || h.kind === "proxfrag") {
-      const sh = shadowOf(spr);
+      // jadro ma z = 32 (0x9872) -> stin (+16,+32); strepy zatim +22
+      const sh = shadowOf(spr), dz = h.kind === "minecore" ? 32 : 22;
       ctx.globalAlpha = 0.45;
       ctx.drawImage(sh.cv, Math.round(h.x + sh.ox + 16),
-                    Math.round(hy + sh.oy + 22));
+                    Math.round(hy + sh.oy + dz));
       ctx.globalAlpha = 1;
     }
-    ctx.drawImage(spr.cv, Math.round(h.x + spr.ox), Math.round(hy + spr.oy));
+    const himg = h.flashT > 0 ? whiteOf(spr) : spr;
+    ctx.drawImage(himg.cv, Math.round(h.x + spr.ox), Math.round(hy + spr.oy));
   }
   // YELLOW letci — pod FODDERA, oba typy maji hloubku +328=32
   for (const a of g.air) {
@@ -2213,11 +2376,7 @@ function frame(now) {
     const pc = wpc;
     const spr = sprite("YELLOW.LIN", a.seq[a.apos], pc.pal, pc.ci);
     if (!spr) continue;
-    const sh = shadowOf(spr);
-    ctx.globalAlpha = 0.45;
-    ctx.drawImage(sh.cv, Math.round(a.x + sh.ox + 16), Math.round(ay + sh.oy + 22));
-    ctx.globalAlpha = 1;
-    ctx.drawImage(spr.cv, Math.round(a.x + spr.ox), Math.round(ay + spr.oy));
+    drawAirBob(ctx, a, spr, ay);
   }
   // Default 0x894a/0x8960; player death 0x9306 sklada 16 stejnych
   // EXPL1 chvostu s dvoutikovym odstupem.
@@ -2244,11 +2403,7 @@ function frame(now) {
     const ay = a.y - top;
     const spr = sprite("FODDERA.LIN", a.seq[a.apos], wpc.pal, wpc.ci);
     if (!spr) continue;
-    const sh = shadowOf(spr);
-    ctx.globalAlpha = 0.45;
-    ctx.drawImage(sh.cv, Math.round(a.x + sh.ox + 16), Math.round(ay + sh.oy + 22));
-    ctx.globalAlpha = 1;
-    ctx.drawImage(spr.cv, Math.round(a.x + spr.ox), Math.round(ay + spr.oy));
+    drawAirBob(ctx, a, spr, ay);
   }
   // BIRD formace ma stejnou vzdusnou hloubku +32 a vlastni flap sekvenci.
   for (const a of g.air) {
@@ -2256,11 +2411,7 @@ function frame(now) {
     const ay = a.y - top;
     const spr = sprite("BIRD.LIN", a.seq[a.apos], wpc.pal, wpc.ci);
     if (!spr) continue;
-    const sh = shadowOf(spr);
-    ctx.globalAlpha = 0.45;
-    ctx.drawImage(sh.cv, Math.round(a.x + sh.ox + 16), Math.round(ay + sh.oy + 22));
-    ctx.globalAlpha = 1;
-    ctx.drawImage(spr.cv, Math.round(a.x + spr.ox), Math.round(ay + spr.oy));
+    drawAirBob(ctx, a, spr, ay);
   }
   // bonusy: strida se ikona typu (tabulka 0x97bc) a TOKEN#0, tedy blika
   for (const k of g.tokens) {
@@ -2288,26 +2439,24 @@ function frame(now) {
     if (eb) ctx.drawImage(eb.cv, Math.round(s.x + eb.ox), Math.round(s.y + eb.oy));
     else { ctx.fillStyle = "#ffd080"; ctx.fillRect(s.x - 2, s.y - 2, 4, 4); }
   }
-  // hrac: telo 0 + rotor 5-8
+  // hrac 0x9410: JEEPHELI#0..4 period 1 (0x945a), z = 32 -> stin (+16,+32)
   const p = g.player;
   if (p.alive) {
-    const body = sprite("JEEPHELI.LIN", 1 + ((g.tick >> 1) & 3), wpc.pal, wpc.ci);
+    const body = sprite("JEEPHELI.LIN", g.tick % 5, wpc.pal, wpc.ci);
     if (body) {
       const sh = shadowOf(body);
       ctx.globalAlpha = 0.45;
-      ctx.drawImage(sh.cv, Math.round(p.x + sh.ox + 16), Math.round(p.y + sh.oy + 22));
+      ctx.drawImage(sh.cv, Math.round(p.x + sh.ox + 16), Math.round(p.y + sh.oy + 32));
       ctx.globalAlpha = 1;
-      if (p.inv > 0) {
-        // spawn: bila silueta jako v originale (h10), ke konci blika
-        if (p.inv > 40 || (g.tick & 4)) {
-          const wh = whiteOf(body);
-          ctx.drawImage(wh.cv, Math.round(p.x + wh.ox), Math.round(p.y + wh.oy));
-        } else {
-          ctx.drawImage(body.cv, Math.round(p.x + body.ox), Math.round(p.y + body.oy));
-        }
-      } else {
-        ctx.drawImage(body.cv, Math.round(p.x + body.ox), Math.round(p.y + body.oy));
-      }
+      // 0x92e4: pri ochrane blika hit-flash stylem 8 tiku / 8 tiku
+      const img = p.flash ? whiteOf(body) : body;
+      ctx.drawImage(img.cv, Math.round(p.x + img.ox), Math.round(p.y + img.oy));
+    }
+    // orb stitu 0x98f2: MINE#9/#10 stridave kazdy tik, na pozici rodice,
+    // bez stinu (bit 0), z se jen pohupuje (vz +-2)
+    if (p.orb) {
+      const ob = sprite("MINE.LIN", 9 + (g.tick & 1), wpc.pal, wpc.ci);
+      if (ob) ctx.drawImage(ob.cv, Math.round(p.x + ob.ox), Math.round(p.y + ob.oy));
     }
   }
   // Fade (0x4a48 k cerne / 0x4a40 k bile) meni copper registry COLOR00-15,

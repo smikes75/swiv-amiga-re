@@ -100,7 +100,21 @@
   "0x96d8": "TOKEN bonus: blika ikonu typu s TOKEN#0, x orez 8..312",
   "0x9780": "TOKEN zasah: vyhodi o 8 px, typ = (typ+1)&3, po 12 obehu typ 4",
   "0x97c6": "TOKEN sebrani: +100 sila, +104 rezim, +98 palba, +108 ochrana, +76 body",
-  "0x8852": "zablesk do bila (fp@(11166) = 256) pres korutinu 0x885a",
+  "0x8852": "smart bomba: zalozi 0x885a (fp@(169) 50 snimku, fp@(11166) = 256, doznivani fp@(11168) = -4); housekeeping 0x6468 pak vola +534 = smrt vseho aktivniho",
+  "0x885a": "korutina smart bomby (zvuk 0x4cb2, st fp@(169), bila 256, wait 50, sf fp@(169))",
+  "0x88fc": "exploze hrace: 16 EXPL1 pufu ve spirale, uhel +100/kus, po 2 ticich",
+  "0x898c": "dekal do mapy: jeden snimek grafiky +374 s flagy bit 0 a 6 (kresli do fp@(264))",
+  "0x8e26": "hrac jeep, druha sada snimku (JEEPHELI#25+), spawnovany z 0x94c2",
+  "0x9090": "hrac JEEP (0x7156: +56 = 0); rychlost 2.5, skok po dvojitem tapu (0x91e8)",
+  "0x9306": "smrt hrace (udalost 1/2): bez +108/+106 exploze 0x88fc a konec objektu",
+  "0x92a0": "hracsky tik: stit +106 (orb 0x98f2, 500), ochrana +108 (-tiky, bit 3 = flash), zapis x/y/z do structu",
+  "0x939c": "zbranovy potomek hrace: uhel 192, pali na bit 5 vstupu pres 0x8aa0, sleduje rodice z+1",
+  "0x9410": "hrac VRTULNIK (0x7156: +56 = 1): z 32, +108 = 200, JEEPHELI#0..4 period 1, 3 px/t (0x9476), clamp 0x954c",
+  "0x954c": "clamp hrace: x 4..316, y scroll+4..scroll+248",
+  "0x958a": "joystick nibble -> uhel z tabulky 0x959e (0xffff = stoji)",
+  "0x98b4": "jadro miny, zasah strelou (+510): -1 HP, pri nule smart bomba 0x8852 a 0xa36a (30 bodu)",
+  "0x98c4": "jadro miny, dotek hrace (+514/+522): bez stitu +106 = -1, wait 10, konec; se stitem smart bomba",
+  "0x98f2": "orb stitu: potomek hrace, MINE#9/#10 stridave, vz +-2, bez stinu, imunni +534; konci pri +106 = 0",
   "0xc78a": "TOWN boss GOOSE: nalet zdola, 3 casti, 25 HP na y72, kruh bonusu",
   "0xc974": "boss damage cb: -1 HP a obraceni vx (negl +332)",
   "0xc9a0": "boss: rozhodi kruh bonusu, krok uhlu 256/pocet",
@@ -135,7 +149,9 @@
   "+76": "skore (long)",
   "+98": "prodleva palby",
   "+100": "sila zbrane 0-5 (bonus typu 4 dava 6)",
+  "+102": "citac sebranych bonusu (strop 19); HUD stupen = 2 + /5; tabulka 0x70c0 pri spawnu",
   "+104": "rezim zbrane (0 / -1)",
-  "+108": "doba ochrany v ticich"
+  "+106": "stit z jadra miny: -1 prave sebrano (0x98c4), 500 po zalozeni orbu 0x98f2 (0x92cc), odpocet",
+  "+108": "doba ochrany v ticich (200 po spawnu 0x9424, 100 drzene stitem 0x92ac, bit 3 = blikani)"
  }
 }

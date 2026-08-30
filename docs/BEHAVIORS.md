@@ -33,9 +33,11 @@ this:
   — one behaviour serves both FODDERA variants
 - third position/depth coordinate `+328 = 32`; hit points are the
   `a2c6` d3 value (1 here), stored in `+360`
-- **powerup carrier selection**: `random & 3 + player count ≥ 5` →
-  the member's `+276` becomes a token counter (32..95) — with two
-  players, carriers are more frequent
+- **shooter selection** (`0x80c8`–`0x80f0`): `random & 3 + player count
+  ≥ 5` → the member's `+276` becomes a one-shot fire timer (32..95);
+  otherwise `+276 = −1` and the member never fires (in 1P it is
+  impossible). Earlier notes called this a "powerup carrier" — wrong,
+  members never drop tokens
 - edge handling: `x < 32` → x-velocity `+0x800` (fixed), `x > 288` →
   `−0x800`; when `+336 ≥ 3` the y-velocity accumulator `+348` is
   cleared
@@ -51,7 +53,10 @@ therefore `+348 = 0x800` means `1/32 px/t²`, not a constant speed.
 ## Player systems (read earlier, summarized)
 
 - weapon tiers `0x70c0`: (power 2, cadence 11), (3,10), (4,10),
-  (5,8); tier = weapon counter / 5
+  (5,8); tier = **pickup counter `+102` / 5**, applied **only at
+  (re)spawn** by `0x70c8`: `+100 = max(+100, table)`, `+98 = table`.
+  Game start (`0x6fde`) sets `+100 = 2`, `+98 = 12`; bolts fired =
+  `+100` (`0x8ad0`–`0x8b1e`), so the first volley already has 2 bolts
 - extra life at 10,000 then every 30,000 (`0x7116`)
 - lives stored as −4×count in the player struct `+68`; score `+76`,
   hi-score `+80`
@@ -141,9 +146,18 @@ screen-space nezavisly na dalsim scrollu mapy.
 - zasah nebo kontakt pouziva custom callback `0x9b62`: parent se
   jednorazove otevre na `MINE#8` a vytvori prave jedno jadro; callback
   neodecita parent HP jako bezny damage handler
-- jadro: `MINE#9,#10` period1, 10 HP, 30 bodu, cost5, `vy=0.5`; ma
-  airborne bit4, proto se na obrazovce posouva o 0.5 px/t bez pricteni
-  scrollu terenu
+- jadro (`0x9860`): `MINE#9,#10` period1, 10 HP, 30 bodu, cost5,
+  `vy=0.5`, `z=32`; ma airborne bit4, proto se na obrazovce posouva
+  o 0.5 px/t bez pricteni scrollu terenu
+- jadro ma kolizni tridu **32** (jen sestrelitelne) — vrtulnik do nej
+  nenarazi smrtelne. Je to **sebratelny stit**: handler `0x98c4` (sloty
+  `+514`/`+522`) bez stitu nastavi hraci `+106 = −1`, jadro 10 snimku
+  stoji a zmizi; hracova smycka `0x92a0` pak zalozi orb `0x98f2`
+  (potomek hrace, `MINE#9/#10` stridave kazdy tik, `vz ±2`, bez stinu,
+  imunni vuci smart bombe) a `+106 = 500`. Po dobu stitu se `+108` drzi
+  na 100 (`0x92ac`), po vyprseni dobiha 100 tiku — celkem ~600 tiku.
+  Se stitem uz aktivnim dalsi jadro spusti **smart bombu** (`0x98ec`);
+  sestreleni jadra (`0x98b4`) take spusti smart bombu a da 30 bodu
 
 ### PROXMINE (0x000f → 0xa9e0)
 
@@ -225,8 +239,10 @@ smycka: nahodny uhel, cekej 200+rand&127, **4× granat po 90°**
 - vrtulnik i jeep = stejny dart system; vrtulnik ma smer zamceny
   nahoru (dir 6), jeep otaci vezi (`0x93b2`, vychozi uhel 192)
 - **9 px/t** (zmereno: rozestup salv 97 px = 9 px/t × kadence 11 ✓)
-- pocet strel = sila; start **1**; tabulka 0x70c0 (2,11)(3,10)(4,10)
-  (5,8) plati pro powerupy; kadence floor 10 (`0x728a`)
+- pocet strel = sila `+100` (`0x8ad0`: `subq #1` + `dbf`); start **2**
+  (`0x6fde`; drivejsi „1 z videa" byl omyl — sude sily jsou pary 4 px od
+  sebe); tabulka 0x70c0 (2,11)(3,10)(4,10)(5,8) se aplikuje jen pri
+  spawnu (`0x70c8`) podle `+102/5`; kadence floor 10 (`0x728a`)
 - ofsety (dir 6): liche sily stred (0,−8) + pary (−4,0)(4,0)(−8,8)
   (8,8); sude pary (−2,−4)(2,−4)(−6,4)(6,4); fan varianta (priznak
   +104) misto ofsetu rozklada vektory (0,−9)(±1,−8)(±2,−7)
@@ -358,8 +374,62 @@ neni totozny se silou zbrane `+100`.
 | 3 | **ochrana +500 tiku** (~10 s pri 50 Hz) a **+500 bodu** | `+108`, `+76` |
 | 4 | **plna sila**: sila 6 (nad bezny strop), prodleva 8, k tomu zablesk `0x8852` | `+100`, `+98` |
 
-Typ 3 je tedy hlasena „ochranna bublina" — nechrani predmet na mape,
-ale hrace po sebrani.
+Typ 3 dava ochranu, ale hlasena „ochranna bublina" z hrani je **jadro
+miny** (viz MINE) — ruzovy vir, ktery po sebrani obiha hrace.
+
+**Smart bomba** (`0x8852` → korutina `0x885a`): zvuk `0x4cb2`,
+`st fp@(169)`, `fp@(11166) = 256` (plna bila), 50 snimku, `sf fp@(169)`.
+Doznivani bile ridi `fp@(11168)`, ktere se za hry nikde nezapisuje —
+posledni zapisy z uvodni sekvence (`0xc9a`, `0x1028`) nechaji **−4**,
+tedy 64 snimku. Po dobu `fp@(169)` vola housekeeping `0x6468` slot
+`+534` kazdeho objektu; `a2c6` tam na `0xa326` dava `0xa36a`, takze vse
+aktivni na obrazovce (vcetne granatu a HOMING) zemre s body. Imunni jsou
+objekty, ktere udelaly `st +534`: GOOSE telo, casti i pod, TOKEN, orb
+stitu, hracova exploze. Spousti ji TOKEN typ 4 (`0x985a`), sestreleni
+jadra miny (`0x98ba`) a sebrani jadra s uz aktivnim stitem (`0x98ec`).
+
+### Hrac — vrtulnik (`0x9410`; `0x9090` je jeep)
+
+`0x7156`: P1 ma `+56 = 1` → `0x9410`; `+56 = 0` → jeep `0x9090`.
+
+- pin JEEPHELI, `z = 32` (`0x941a`) → stin `(x+16, y+32)` (`0x6364`)
+- `+108 = 200` tiku ochrany po spawnu (`0x9424`); kolizni zaznam `0x0048`
+  (P1) / `0x0088` (P2); bit 4 v `+367`; smrt `0x9306` v udalostech 1 i 2
+  (`0x654c`)
+- zbran je potomek `0x939c`: uhel 192, pali na bit 5 vstupu pres `0x8aa0`
+- anim `JEEPHELI#0..4` period 1 (`0x945a`), nezavisle na smeru
+- rychlost `+356 = 768` = **3 px/t** (`0x9476`); smer z tabulky `0x959e`
+  podle joystickoveho nibblu (`0x71ac`: bit0 nahoru, bit1 dolu, bit2
+  vlevo, bit3 vpravo; `0xffff` = stoji): `[-, 192, 64, -, 128, 160, 96,
+  64, 0, 224, 32, 0, -, 192, 64, -]`
+- clamp `x 4..316`, `y scroll+4..scroll+248` (`0x954c`)
+- `0x92a0` kazdy tik: stit `+106` (viz MINE), pak `+108 -= tiky` a pri
+  bitu 3 nastavi hit-flash bit 1 (`0x92e4`) — ochrana blika 8/8 tiku
+- smrt `0x9306`: `+108` nebo `+106` nenulove → nic; jinak exploze
+  `0x88fc` (16 EXPL1 ve spirale po 2 ticich) a konec objektu
+- respawn: hracsky task `0x7090` ceka **100 snimku** (`0x714e`), zivoty
+  `+68` (−4/zivot, start −16 = 4), pak `0x70c8` (tabulka zbrane) a novy
+  `0x9410` na `x 160, y scroll+192` (`0x9046`)
+- dvojity tap smeru (`0x7246`) / druhe tlacitko je **skok jeepu**
+  (`0x91e8`), vrtulniku se netyka
+
+### Kolizni tridy (`+504`) — kdo zabije vrtulnik
+
+`a2c6` d1 → `+504`; bit 5 = sestrelitelne (`+510` = `0xa362`), bit 1 =
+vzdusny objekt: dotek s vrtulnikem (`+514` = `0xa362`), bit 2 = pozemni:
+dotek s jeepem (`+522`). Handlery se instaluji jen pri `HP ≠ 0`. Vrtulnik
+zabiji jen trida s bitem 1: letci (34), MILL (34), GOOSE telo od `0xc854`
+(34), jeho casti a pod (34, HP 0 = nezranitelne), HOMING (38, 1 HP,
+7 bodu — **sestrelitelna**), strepy PROXMINE (38), kanonovy granat (6).
+Trida 36 (mina, PROXMINE, vlak, plamen, POPUP, ROTOBASE, CAMOGUN), 32
+(MEDTANK, jadro miny, TOKEN) a 4 (puff plamene) vrtulnik neohrozi. Tabulka
+vsech TOWN objektu a hranice „odvozeno" jsou v [TOWN-AUDIT](TOWN-AUDIT.md).
+Dotek vzdy spusti damage handler objektu (`−1 HP`, hit flash), nezavisle
+na ochrane hrace.
+
+**Hit flash**: `0xa35a` nastavi bit 1 v `+367`, drawer `0x63a4` z nej
+udela bit 4 kresliciho zaznamu a housekeeping `0x6452` ho kazdy tik maze
+— objekt je jeden snimek po zasahu kresleny jinym mintermem.
 
 Odtud plynou vyznamy hracskych poli: `+76` skore (long), `+98` prodleva
 palby, `+100` sila zbrane, `+102` HUD citac vsech pickupu, `+104` rezim,
