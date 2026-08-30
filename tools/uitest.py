@@ -2,7 +2,8 @@
 """End-to-end a behavior regrese hry v realnem Chromiu.
 
 Projde tok vlozeni ADF -> intro -> vyber TOWN, overi puvodni dispatch
-tabulku, palety, formace, miny, vlak, plamenomet a cyklus CAMOGUN.
+tabulku, palety, formace, miny, vlak, plamenomet, animace ROTOBASE/POPUP
+a cyklus CAMOGUN.
 Pri chybe nebo nesplnene podmince skonci nenulovym navratovym kodem.
 
     python3 tools/uitest.py
@@ -45,6 +46,306 @@ def main():
             page.wait_for_selector("#gamewrap", state="visible")
             expect(page.is_visible("#gamewrap"), "po vyberu TOWN chybi herni canvas")
 
+            # Indexovy renderer je viditelnou cestou statickeho pozadi;
+            # zaroven overujeme jeho ciste bloky nad skutecnymi TOWN/.LIN daty.
+            renderer_core = page.evaluate("""() => {
+              const { fid, dico } = levelInfo(state.prog, 0);
+              const pamName = state.order[fid];
+              const file = state.files.find(f => f.name === pamName);
+              const parsed = parsePam(unpackFile(state.adf, file), dico);
+              const margin = 160, top = parsed.height + margin - 256;
+              const lines = compileCopperPaletteLines(
+                parsed.checks, parsed.height, margin, top, 256, 0, 0);
+              const faded = compileCopperPaletteLines(
+                parsed.checks, parsed.height, margin, top, 1, 64, 128);
+
+              const levels = [0, 16, 64, 128, 240, 256];
+              const sample = 0xF84;
+              const fnv1a = bytes => {
+                let h = 0x811C9DC5;
+                for (const value of bytes)
+                  h = Math.imul((h ^ value) >>> 0, 0x01000193) >>> 0;
+                return h.toString(16).padStart(8, '0');
+              };
+
+              // JEEPHELI#1 je realny dvoudilny chain. Druhy dil ma cx=-16,
+              // takze fixture zaroven hlida signed anchor i spolecnou kotvu.
+              const logical = frames('JEEPHELI.LIN')[1];
+              const indexed = decodeIndexedFrame(logical);
+              const dst = new Uint8Array(64 * 64);
+              dst.fill(0xFE);
+              blitIndexed(dst, 64, 64, indexed, 24, 20);
+
+              // D1: skutecne TOWN assety pres presnou unsigned frontu
+              // 0x481a. Runtime se na tuto cestu zatim neprepina.
+              const fodder = indexedFrameFor(state, "FODDERA.LIN", 2);
+              const mill = indexedFrameFor(state, "MILL.LIN", 0);
+              const rotorMask = indexedFrameFor(state, "JEEPHELI.LIN", 5);
+              const popup = indexedFrameFor(state, "POPUP.LIN", 0);
+              let bobSerial = 0, bobRecords = [];
+              for (const spec of [
+                { id: "fod", primary: fodder, x: 40, y: 20, z: 32 },
+                { id: "mill", primary: mill, secondary: rotorMask,
+                  x: 100, y: 60, z: 32 },
+                { id: "popup", primary: popup, x: 80, y: 50, z: 0 }
+              ]) {
+                const batch = standardBobRecords(spec, bobSerial);
+                bobRecords.push(...batch.records);
+                bobSerial = batch.nextSerial;
+              }
+              const bobOrdered = sortBobRecords(bobRecords);
+              const bobDst = new Uint8Array(160 * 128);
+              for (let y = 0; y < 128; y++)
+                for (let x = 0; x < 160; x++)
+                  bobDst[y * 160 + x] = (3 * x + 5 * y) & 15;
+              for (const record of bobOrdered) {
+                if (record.op === BOB_CLEAR_INDEX0)
+                  clearIndexedMask(bobDst, 160, 128, record.spr,
+                                   record.x, record.y);
+                else
+                  blitIndexedCookie(bobDst, 160, 128, record.spr,
+                                    record.x, record.y);
+              }
+              const suppressedShadow = standardBobRecords({
+                id: "no-shadow", primary: fodder,
+                x: 100, y: 70, z: 32, objectFlags: 1
+              }, 0);
+              const groundShadow = standardBobRecords({
+                id: "ground", primary: popup, x: 100, y: 70, z: 0
+              }, 0);
+
+              const mapIndex = state.g.mapIndex, width = 320;
+              const colorRows = (top, rows) => {
+                const rgba = colorizeIndexedRows(
+                  mapIndex, width, state.mapMeta.height, margin,
+                  top, rows, state.copperChecks);
+                const rgb = new Uint8Array(width * rows * 3);
+                for (let i = 0; i < width * rows; i++) {
+                  rgb[i * 3] = rgba[i * 4];
+                  rgb[i * 3 + 1] = rgba[i * 4 + 1];
+                  rgb[i * 3 + 2] = rgba[i * 4 + 2];
+                }
+                return rgb;
+              };
+              const initialTop = state.g.mapH - margin - 256;
+              const initialIndex = mapIndex.subarray(
+                initialTop * width, (initialTop + 256) * width);
+              const initialRgb = colorRows(initialTop, 256);
+
+              // Toto okno skutecne protina tile pres checkpoint y=2127.
+              // Stary RGBA vystup musi v kroku B zustat jiny; indexova cesta
+              // uz ale musi dat spravnou scanline paletu pro dalsi krok.
+              const diffTop = 1454, diffRows = 21;
+              const correctRgb = colorRows(diffTop, diffRows);
+              const legacyRgba = state.g.big.getContext('2d').getImageData(
+                0, 0, width, state.g.mapH).data;
+              const legacyRgb = new Uint8Array(width * diffRows * 3);
+              let paletteMismatches = 0;
+              for (let i = 0; i < width * diffRows; i++) {
+                const d = i * 3, s = (diffTop * width + i) * 4;
+                legacyRgb[d] = legacyRgba[s];
+                legacyRgb[d + 1] = legacyRgba[s + 1];
+                legacyRgb[d + 2] = legacyRgba[s + 2];
+                if (legacyRgb[d] !== correctRgb[d] ||
+                    legacyRgb[d + 1] !== correctRgb[d + 1] ||
+                    legacyRgb[d + 2] !== correctRgb[d + 2])
+                  paletteMismatches++;
+              }
+
+              const edgeFirst = colorizeIndexedRows(
+                mapIndex, width, state.mapMeta.height, margin, 0, 1,
+                state.copperChecks);
+              const edgeLast = colorizeIndexedRows(
+                mapIndex, width, state.mapMeta.height, margin,
+                state.g.mapH - 1, 1, state.copperChecks);
+              let rejectedEdges = 0;
+              for (const [edgeTop, edgeRows] of
+                   [[-1, 1], [state.g.mapH, 1], [state.g.mapH - 1, 2]]) {
+                try {
+                  colorizeIndexedRows(
+                    mapIndex, width, state.mapMeta.height, margin,
+                    edgeTop, edgeRows, state.copperChecks);
+                } catch (e) {
+                  if (e instanceof RangeError) rejectedEdges++;
+                }
+              }
+
+              // Runtime dukaz: posuneme rozdilne mapove radky na obrazovku
+              // y=50..70, kde je neprekryva HUD, a docasne skryjeme BOB vrstvy.
+              const g = state.g, runtimeScreenY = 50;
+              const saved = {
+                scroll: g.scroll, frac: g.frac, last: g.last,
+                fadeBlack: g.fadeBlack, fadeWhite: g.fadeWhite,
+                fadeDir: g.fadeDir, over: g.over, won: g.won,
+                spawns: g.spawns, effects: g.effects, hazards: g.hazards,
+                air: g.air, booms: g.booms, plops: g.plops,
+                bullets: g.bullets, shots: g.shots, tokens: g.tokens,
+                playerAlive: g.player.alive
+              };
+              let runtimeRgb;
+              try {
+                g.scroll = diffTop - runtimeScreenY;
+                g.frac = 0; g.fadeBlack = 0; g.fadeWhite = 0;
+                g.fadeDir = 0; g.over = false; g.won = false;
+                g.spawns = []; g.effects = []; g.hazards = []; g.air = [];
+                g.booms = []; g.plops = []; g.bullets = []; g.shots = [];
+                g.tokens = []; g.player.alive = false;
+                const now = performance.now(); g.last = now; frame(now);
+                const runtimeRgba = document.querySelector('#game')
+                  .getContext('2d').getImageData(
+                    0, runtimeScreenY, width, diffRows).data;
+                runtimeRgb = new Uint8Array(width * diffRows * 3);
+                for (let i = 0; i < width * diffRows; i++) {
+                  runtimeRgb[i * 3] = runtimeRgba[i * 4];
+                  runtimeRgb[i * 3 + 1] = runtimeRgba[i * 4 + 1];
+                  runtimeRgb[i * 3 + 2] = runtimeRgba[i * 4 + 2];
+                }
+              } finally {
+                g.scroll = saved.scroll; g.frac = saved.frac; g.last = saved.last;
+                g.fadeBlack = saved.fadeBlack; g.fadeWhite = saved.fadeWhite;
+                g.fadeDir = saved.fadeDir; g.over = saved.over; g.won = saved.won;
+                g.spawns = saved.spawns; g.effects = saved.effects;
+                g.hazards = saved.hazards; g.air = saved.air;
+                g.booms = saved.booms; g.plops = saved.plops;
+                g.bullets = saved.bullets; g.shots = saved.shots;
+                g.tokens = saved.tokens; g.player.alive = saved.playerAlive;
+              }
+              let runtimeMismatches = 0;
+              for (let i = 0; i < correctRgb.length; i++)
+                if (runtimeRgb[i] !== correctRgb[i]) runtimeMismatches++;
+
+              return {
+                town: {
+                  name: pamName, height: parsed.height,
+                  checks: parsed.checks.map(c => c.y),
+                  boundaries: [
+                    [65, parsed.height + margin - (top + 65),
+                     lines[65 * 16 + 13]],
+                    [66, parsed.height + margin - (top + 66),
+                     lines[66 * 16 + 13]],
+                    [152, parsed.height + margin - (top + 152),
+                     lines[152 * 16 + 1]],
+                    [153, parsed.height + margin - (top + 153),
+                     lines[153 * 16 + 1]]
+                  ],
+                  fadedTop13: faded[13]
+                },
+                fade: {
+                  black: levels.map(level => fadeRgb12Black(sample, level)),
+                  white: levels.map(level => fadeRgb12White(sample, level)),
+                  blackThenWhite: fadeRgb12(sample, 64, 128),
+                  whiteThenBlack: fadeRgb12Black(
+                    fadeRgb12White(sample, 128), 64)
+                },
+                indexed: {
+                  parts: logical.parts.length,
+                  anchors: logical.parts.map(p => [p.cx, p.cy, p.flags]),
+                  box: [indexed.ox, indexed.oy, indexed.w, indexed.h],
+                  opaque: indexed.pix.reduce(
+                    (n, color) => n + (color !== 0xFF), 0),
+                  hash: fnv1a(indexed.pix),
+                  changed: dst.reduce((n, color) => n + (color !== 0xFE), 0),
+                  blitHash: fnv1a(dst)
+                },
+                bob: {
+                  depthZ: [0, 1, 2, 12, 24, 32, 33].map(bobDepthKey),
+                  shadow32: Object.values(bobShadowAnchor(100, 70, 32)),
+                  shadow33: Object.values(bobShadowAnchor(100, 70, 33)),
+                  suppressedKinds: suppressedShadow.records.map(r => r.kind),
+                  groundKinds: groundShadow.records.map(r => r.kind),
+                  opaque: [fodder, mill, rotorMask, popup].map(spr =>
+                    spr.pix.reduce((n, color) => n + (color !== 0xFF), 0)),
+                  order: bobOrdered.map(record => record.id),
+                  hash: fnv1a(bobDst),
+                  zeros: bobDst.reduce((n, color) => n + (color === 0), 0),
+                  sum: bobDst.reduce((n, color) => n + color, 0)
+                },
+                mapIndex: {
+                  size: [width, state.g.mapH], full: fnv1a(mapIndex),
+                  initial: fnv1a(initialIndex), initialRgb: fnv1a(initialRgb),
+                  legacyRgba: fnv1a(legacyRgba),
+                  differing: {
+                    top: diffTop, rows: diffRows,
+                    correct: fnv1a(correctRgb), legacy: fnv1a(legacyRgb),
+                    pixels: paletteMismatches
+                  }
+                },
+                colorizer: {
+                  edges: [edgeFirst.length, edgeLast.length],
+                  alpha: [edgeFirst[3], edgeLast[3]],
+                  rejected: rejectedEdges,
+                  runtime: fnv1a(runtimeRgb),
+                  runtimeMismatches
+                }
+              };
+            }""")
+            expect(renderer_core["town"]["name"] == "TOWN.PAM" and
+                   renderer_core["town"]["height"] == 3441,
+                   "Copper fixture nenacetla skutecnou mapu TOWN")
+            expect(renderer_core["town"]["checks"] ==
+                   [96, 104, 191, 383, 578, 734, 929, 1272, 1352,
+                    1621, 2127, 2601, 2769],
+                   "TOWN ma jiny seznam Copper checkpointu: %s" %
+                   renderer_core["town"]["checks"])
+            expect(renderer_core["town"]["boundaries"] ==
+                   [[65, 191, 0xBBB], [66, 190, 0x353],
+                    [152, 104, 0x555], [153, 103, 0x000]],
+                   "Copper paleta se neprepina na presne scanline: %s" %
+                   renderer_core["town"]["boundaries"])
+            expect(renderer_core["fade"]["black"] ==
+                   [0xF84, 0xE73, 0xB63, 0x742, 0, 0] and
+                   renderer_core["fade"]["white"] ==
+                   [0xF84, 0xF95, 0xFA7, 0xFCA, 0xFFF, 0xFFF],
+                   "RGB12 fade neorezava jednotlive nibble jako 0x4a48/0x4a40")
+            expect(renderer_core["fade"]["blackThenWhite"] == 0xDB9 and
+                   renderer_core["fade"]["whiteThenBlack"] == 0xB97 and
+                   renderer_core["town"]["fadedTop13"] == 0xCCC,
+                   "fade nema poradi cerna -> bila z 0x5da8/0x5e58")
+            expect(renderer_core["indexed"] == {
+                     "parts": 2,
+                     "anchors": [[16, 12, 1], [-16, -1, 0]],
+                     "box": [-16, -12, 34, 32],
+                     "opaque": 448, "hash": "e4a68453",
+                     "changed": 448, "blitHash": "6cfe4537"
+                   },
+                   "indexovy chain JEEPHELI#1 nema presny decode/blit: %s" %
+                   renderer_core["indexed"])
+            expect(renderer_core["bob"] == {
+                     "depthZ": [0x7FFF, 0x7FFE, 0x7FFD, 0x7FF3,
+                                0x7FE7, 0x7FDF, 0x7FDE],
+                     "shadow32": [116, 102], "shadow33": [116, 103],
+                     "suppressedKinds": ["main"],
+                     "groundKinds": ["main"],
+                     "opaque": [283, 248, 196, 1024],
+                     "order": ["mill-shadow", "fod-shadow", "popup-main",
+                               "mill-main", "fod-main", "mill-secondary"],
+                     "hash": "94e10005", "zeros": 2189, "sum": 141978
+                   },
+                   "BOB depth/shadow/clear fixture nesedi s 0x481a/0x6364: %s" %
+                   renderer_core["bob"])
+            expect(renderer_core["mapIndex"] == {
+                     "size": [320, 3761],
+                     "full": "3d426f35", "initial": "5870b220",
+                     "initialRgb": "89a47b97",
+                     "legacyRgba": "b6e13bf7",
+                     "differing": {
+                       "top": 1454, "rows": 21,
+                       "correct": "7f08f24f", "legacy": "2813671f",
+                       "pixels": 21
+                     }
+                   },
+                   "TOWN mapIndex/Copper RGB nema presny obsah: %s" %
+                   renderer_core["mapIndex"])
+            colorizer = renderer_core["colorizer"]
+            expect(colorizer["edges"] == [1280, 1280] and
+                   colorizer["alpha"] == [255, 255] and
+                   colorizer["rejected"] == 3,
+                   "indexovy colorizer nema bezpecne horni/dolni hranice: %s" %
+                   colorizer)
+            expect(colorizer["runtime"] == "7f08f24f" and
+                   colorizer["runtimeMismatches"] == 0,
+                   "viditelny runtime nepouziva presnou scanline paletu: %s" %
+                   colorizer)
             # Fade z cerne: 0x3092 vola 0x2868, driver 0x28b0 pak odcernuje
             # krokem 16 za snimek, tedy presne 16 tiku z 256 na 0.
             fade = page.evaluate("""() => {
@@ -307,7 +608,7 @@ def main():
               const locked = k2.typ;
               // ucinky
               const eff = {};
-              p.alive = true; p.inv = 0; p.weapon = 0; p.mode = 0;
+              p.alive = true; p.inv = 0; p.weapon = 0; p.tokenCount = 0; p.mode = 0;
               p.reload = null; g.score = 0;
               pickupToken(g, mk(3));
               eff.guard = { inv: p.inv, score: g.score };
@@ -321,6 +622,17 @@ def main():
               const afterSame = p.weapon;
               pickupToken(g, mk(1));            // jiny rezim -> jen prepnuti
               eff.power = { afterSame, afterSwitch: p.weapon, mode: p.mode };
+              // +102 je samostatny HUD citac vsech pickupu, nikoli sila +100.
+              const cp = { alive: true, inv: 0, weapon: 0, tokenCount: 0,
+                           mode: 0, reload: null };
+              const gc = { player: cp, score: 0, nextLife: 10000, lives: 4 };
+              for (const typ of [2, 3, 2, 3, 2])
+                pickupToken(gc, { typ, dead: false });
+              const afterFive = { count: cp.tokenCount, weapon: cp.weapon,
+                text: hudStatusText({ lives: 4, player: cp, score: 0 }) };
+              for (let i = 0; i < 20; i++)
+                pickupToken(gc, { typ: 2, dead: false });
+              eff.counter = { afterFive, capped: cp.tokenCount };
               // bonus hrace nezrani: 300 tiku dotyku a hrac zije
               p.inv = 0; p.alive = true; p.x = 100; p.y = 100;
               const kk = mk(1); kk.x = 100; kk.y = g.scroll + 100;
@@ -347,6 +659,12 @@ def main():
                    token["eff"]["power"]["mode"] == 1,
                    "sila se ma pridat jen pri shodnem rezimu: %s"
                    % token["eff"]["power"])
+            expect(token["eff"]["counter"] == {
+                     "afterFive": {"count": 5, "weapon": 0,
+                                   "text": "HELI 4[ 3* 0000000"},
+                     "capped": 19
+                   }, "HUD token counter +102 nesedi nebo neni oddelen od "
+                      "sily +100: %s" % token["eff"]["counter"])
             expect(token["eff"]["harmless"] is True,
                    "bonus hrace zranil - nikdy nesmi")
 
@@ -354,6 +672,13 @@ def main():
               dispatch: state.behaviorDispatch.size,
               mapObjects: state.mapMeta.objects,
               spawns: state.g.spawns.length,
+              lives: state.g.lives,
+              hudTexts: [
+                hudStatusText({ lives: 4, player: { tokenCount: 0 }, score: 0 }),
+                hudStatusText({ lives: 12, player: { tokenCount: 5 }, score: 9 }),
+                hudStatusText({ lives: 4, player: { tokenCount: 0 }, score: 10000 }),
+                hudStatusText({ lives: 4, player: { tokenCount: 0 }, score: 99999 })
+              ],
               behaviors: state.g.spawns.reduce((counts, s) => {
                 counts[s.beh] = (counts[s.beh] || 0) + 1;
                 return counts;
@@ -365,10 +690,19 @@ def main():
               camType2: state.g.spawns.filter(s => s.beh === 'camogun' &&
                                                s.typ === 2).length,
               wrongCam: state.g.spawns.filter(s => s.beh === 'camogun' &&
-                                                s.coroutine !== 0xac12).length
+                                                s.coroutine !== 0xac12).length,
+              animActual: [0xA6E8, 0xA72A, 0xC7FC, 0xC82E, 0xCAE2]
+                .filter(o => state.anims.some(a => a.offset === o)).length,
+              animFalse: [0xA6E6, 0xA728, 0xC7FA, 0xC82C, 0xCAE0]
+                .filter(o => state.anims.some(a => a.offset === o)).length
             })""")
             expect(summary["dispatch"] == 73, "dispatch nema 73 zaznamu")
             expect(summary["mapObjects"] == 155, "TOWN nema 155 mapovych objektu")
+            expect(summary["lives"] == 4 and summary["hudTexts"] == [
+                     "HELI 4[ 2* 0000000", "HELI 12[ 3* 0000090",
+                     "HELI 4[ 2* 0100000", "HELI 4[ 2* 0999990"
+                   ], "HUD nema nativni lives/weapon/score x10 format: %s" %
+                   summary["hudTexts"])
             expected_behaviors = {"wave": 60, "yellow": 12, "bird": 9,
                                   "popup": 6, "mine": 6, "proxmine": 13,
                                   "train": 3, "mill": 2, "tank": 18, "roto": 9,
@@ -382,6 +716,173 @@ def main():
             expect(summary["camType1"] == 5 and summary["camType2"] == 5,
                    "CAMOGUN nema pet dvojic TYP 1/2")
             expect(summary["wrongCam"] == 0, "CAMOGUN nema korutinu 0xac12")
+            expect(summary["animActual"] == 5 and summary["animFalse"] == 0,
+                   "JS animscan zacina v BSR.W displacementu: %s" % summary)
+
+            exact_anim = page.evaluate("""() => {
+              const savedRandom = Math.random;
+              Math.random = () => 0;
+              try {
+                const game = spawns => ({
+                  tick: 0, scroll: 100, scrollMul: 1e-9,
+                  over: false, won: false,
+                  player: { x: 0, y: 0, alive: false }, keys: {},
+                  bullets: [], shots: [], plops: [], spawns,
+                  booms: [], effects: [], air: [], hazards: [], tokens: [],
+                  players: 1, activeCost: 0, score: 0,
+                  nextLife: 10000, lives: 3, flash: 0,
+                  fadeBlack: 0, fadeWhite: 0, fadeDir: 0,
+                  fadeWhiteStep: 0
+                });
+
+                // Stejna x (tedy i parita) dokazuje, ze smer neurcuje poloha.
+                // Oba objekty se aktivuji ve stejnem tiku v poradi mapoveho pole.
+                const rotos = [0, 1].map(() => ({
+                  born: false, armed: true, alive: true, beh: 'roto',
+                  file: 'ROTOBASE.LIN', idx: 4, x: 101, y: 100,
+                  typ: 0, anim: null, at: 0, fr: -1
+                }));
+                const gr = game(rotos);
+                gr.rotoDirectionWord = 0;
+                const rotoFrames = [[], []];
+                for (let i = 0; i < 7; i++) {
+                  step(gr);
+                  rotoFrames[0].push(rotos[0].fr);
+                  rotoFrames[1].push(rotos[1].fr);
+                }
+
+                const popup = {
+                  born: true, armed: true, alive: true, beh: 'popup',
+                  file: 'POPUP.LIN', idx: 0, x: 160, y: 100,
+                  typ: 0, anim: null, st: 0, t: 1, fr: 0,
+                  hp: 3, alt: false
+                };
+                const gp = game([popup]);
+                // t0 je tik, kdy se opening animator pripoji. Sledujeme
+                // celou 1P sekvenci az po KILL zaviraciho skriptu na t162.
+                const popupTimeline = [];
+                for (let i = 0; i <= 162; i++) {
+                  step(gp);
+                  popupTimeline.push({ frame: popup.fr, wait: popup.t,
+                                       state: popup.st, alive: popup.alive });
+                }
+
+                const gplop = game([]);
+                fireHoming(gplop, 80, 90, 64);
+                const plopState = () => {
+                  const pl = gplop.plops[0];
+                  if (!pl) return null;
+                  const graphic = PLOP_SEQUENCE[pl.t];
+                  return { t: pl.t, file: graphic && graphic[0],
+                           frame: graphic && graphic[1] };
+                };
+                const plop = [plopState()];
+                step(gplop); plop.push(plopState());
+                step(gplop); plop.push(plopState());
+
+                // Lichy globalni tick by stary renderer donutil novou strelu
+                // zacit druhou fazi. Original vzdy zacina vlastni fazi 0.
+                const gcannon = game([]);
+                gcannon.tick = 41;
+                fireCannon(gcannon, 80, 80, 0, true, false);
+                const cannonState = () => gcannon.shots.map(s =>
+                  [cannonFrameFor(s), s.phase, s.accel]);
+                const cannon = [cannonState()];
+                step(gcannon); cannon.push(cannonState());
+                fireCannonStraight(gcannon, 80, 100, 0);
+                cannon.push(cannonState());
+                step(gcannon); cannon.push(cannonState());
+                step(gcannon); cannon.push(cannonState());
+
+                // Pet pohybu jeste pouzije 0.5 px/t; zvysena rychlost 1.0
+                // se projevi az sestym pohybem po okamzitem 16px kroku.
+                const gaccel = game([]);
+                fireCannon(gaccel, 80, 80, 0, true, false);
+                const accel = [[gaccel.shots[0].x, gaccel.shots[0].spd]];
+                for (let i = 0; i < 6; i++) {
+                  step(gaccel);
+                  accel.push([gaccel.shots[0].x, gaccel.shots[0].spd]);
+                }
+
+                // fp@(206) zacina na 4 a kazdy spawn jej snizi. Hodnoty
+                // 4..0 dovoli pet kusu; pri -1 0x95d2 preskoci i PLOP.
+                const gbudget = game([]);
+                gbudget.player = { x: 160, y: 200, alive: true };
+                const accepted = [];
+                for (let i = 0; i < 5; i++)
+                  accepted.push(fireCannon(gbudget, 80, 80, 0));
+                const rejected = fireCannon(gbudget, 80, 80, 0);
+                fireCannonAimed(gbudget, 80, 80);
+                const budget = { accepted, rejected,
+                                 shots: gbudget.shots.length,
+                                 plops: gbudget.plops.length };
+
+                return {
+                  roto: {
+                    xs: rotos.map(s => s.x), dirs: rotos.map(s => s.sd),
+                    frames: rotoFrames, word: gr.rotoDirectionWord
+                  },
+                  popup: popupTimeline,
+                  plop, cannon, accel, budget
+                };
+              } finally { Math.random = savedRandom; }
+            }""")
+            expect(exact_anim["roto"]["xs"] == [101, 101] and
+                   exact_anim["roto"]["dirs"] == [-1, 1] and
+                   exact_anim["roto"]["word"] == 0,
+                   "ROTOBASE nestrida smer globalne podle poradi aktivace: %s"
+                   % exact_anim["roto"])
+            expect(exact_anim["roto"]["frames"] ==
+                   [[4, 11, 11, 10, 10, 9, 9],
+                    [4, 4, 4, 5, 5, 6, 6]],
+                   "ROTOBASE nema oba smerove skripty s periodou 2: %s"
+                   % exact_anim["roto"]["frames"])
+
+            popup = exact_anim["popup"]
+            expect(popup[0] == {"frame": 0, "wait": 50,
+                                "state": 2, "alive": True},
+                   "POPUP t0 nepripojil opening soubezne s wait(50): %s"
+                   % popup[0])
+            expect([row["frame"] for row in popup[1:43]] ==
+                   sum(([frame] * 6 for frame in range(1, 8)), []),
+                   "POPUP otevreni 1..7 nema periodu 6")
+            expect([row["frame"] for row in popup[43:50]] == [7] * 7 and
+                   popup[42]["wait"] == 8 and popup[49]["wait"] == 1,
+                   "POPUP nema opening soubezny s puvodnim 50tikovym waitem")
+            expect([row["frame"] for row in popup[50:55]] == [8] * 5 and
+                   [row["frame"] for row in popup[55:126]] == [7] * 71,
+                   "POPUP nema presnou palebnou/povystrelovou casovou osu")
+            expect([row["frame"] for row in popup[126:162]] ==
+                   sum(([frame] * 6 for frame in range(6, 0, -1)), []),
+                   "POPUP zavreni 6..1 nema periodu 6")
+            expect(popup[125]["state"] == 5 and popup[125]["alive"] is True and
+                   popup[161]["alive"] is True and
+                   popup[162]["alive"] is False,
+                   "POPUP closing 0xa72a neskoncil KILL na t162")
+            expect(exact_anim["plop"] ==
+                   [{"t": 0, "file": "PLOP.LIN", "frame": 0},
+                    {"t": 1, "file": "BULLET.LIN", "frame": 2},
+                    None],
+                   "PLOP nema presnou dvoutikovou cross-file sekvenci: %s"
+                   % exact_anim["plop"])
+            expect(exact_anim["cannon"] ==
+                   [[[24, 0, True]],
+                    [[40, 1, True]],
+                    [[40, 1, True], [24, 0, False]],
+                    [[24, 0, True], [40, 1, False]],
+                    [[40, 1, True], [24, 0, False]]],
+                   "granaty nemaji vlastni fazi 24/40 pro accel i straight: %s"
+                   % exact_anim["cannon"])
+            expect(exact_anim["accel"] ==
+                   [[96, 0.5], [96.5, 0.5], [97, 0.5], [97.5, 0.5],
+                    [98, 0.5], [98.5, 1], [99.5, 1]],
+                   "granat nepouziva novou rychlost az po patem pohybu: %s"
+                   % exact_anim["accel"])
+            expect(exact_anim["budget"] ==
+                   {"accepted": [True] * 5, "rejected": False,
+                    "shots": 5, "plops": 0},
+                   "plny cannon budget nevypnul strelu i PLOP: %s"
+                   % exact_anim["budget"])
 
             dynamics = page.evaluate("""() => {
               const savedRandom = Math.random;

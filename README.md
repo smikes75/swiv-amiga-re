@@ -76,13 +76,15 @@ Disassembly needs `m68k-elf-binutils` (`brew install m68k-elf-binutils`).
 | `.RAW` screens | ✅ 4 bitplanes + palette |
 | `.LIN` sprites | ✅ logical frames, chained multi-part composites, signed anchors |
 | `.PAM` level maps | ✅ tiles, object spawns, in-map palette script, layers, display window |
-| verification | ✅ 37-check contract + frame-by-frame match against gameplay video |
-| `AMPROG.OBJ` (55,668 B game code) | 🟨 partially mapped (73-route dispatch + 154/155 TOWN objects, map interpreter, sound, animations, bob drawer) |
+| verification | ✅ 43-check data contract + sparse map/footage comparisons |
+| `AMPROG.OBJ` (55,668 B game code) | 🟨 partially mapped (73-route dispatch + 155/155 TOWN objects, map interpreter, sound, animations, bob drawer) |
 
 Detailed write-ups live in [`docs/`](docs/):
 [FORMAT](docs/FORMAT.md) · [LOADER](docs/LOADER.md) ·
 [CATALOG](docs/CATALOG.md) · [GRAPHICS](docs/GRAPHICS.md) ·
-[MAPS](docs/MAPS.md). Annotated disassembly of both boot-time
+[MAPS](docs/MAPS.md) · [HUD](docs/HUD.md) ·
+[TOWN parity](docs/TOWN-PARITY.md) ·
+[Codex handoff](docs/CODEX-HANDOFF.md). Annotated disassembly of both boot-time
 decrunchers is in [`src-asm/`](src-asm/).
 
 ## Layout

@@ -47,6 +47,13 @@ def scan(disk):
     found = []
     o = 0
     while o < len(prog) - 6:
+        # Word bezprostredne za Bcc.W/BSR.W je displacement strojove
+        # instrukce, ne prvni prikaz animace. Nahodou casto vypada jako
+        # platny flag opcode (napr. POPUP 0xa6e6, GOOSE 0xc7fa) a posune
+        # jinak spravny kandidat o dva bajty zpet.
+        if o >= 2 and 0x60 <= prog[o - 2] <= 0x6F and prog[o - 1] == 0:
+            o += 2
+            continue
         # kandidat zacina grafickym slovem nebo prikazem "period"
         seq = []
         p = o

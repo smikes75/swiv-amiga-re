@@ -72,15 +72,21 @@ therefore `+348 = 0x800` means `1/32 px/t²`, not a constant speed.
 
 ### Nepratelske strely — dva typy
 1. **Kanonovy granat** (`0x95fe/0x9602`, sprite BULLET#24+smer,
-   spin anim): okamzity krok 16 px z hlavne, start 0.5 px/t,
-   **+0.5 px/t kazdych 5 tiku, strop 10.5 px/t**; globalni budget
-   poctu granatu `fp@(206)`. Vstupy: `0x95ca` = v aktualnim uhlu
+   spin anim — v prepisu uzavreno): okamzity krok 16 px z hlavne,
+   potom start 0.5 px/t a **+0.5 px/t kazdych 5 tiku, strop 10.5 px/t**;
+   globalni citac
+   `fp@(206)` se inicializuje na 4 a kontroluje zapor pred snizenim, tedy
+   dovoli nejvyse **5** soucasnych granatu. Vstupy: `0x95ca` = v aktualnim uhlu
    `+358`; `0x95d2` = snap na hrace + PLOP zablesk; `0x95ec` =
-   nemireny, konstantnich 5 px/t.
+   nemireny, konstantnich 5 px/t. Kazda strela ma vlastni fazi:
+   `0x96b4` strida BULLET#(24+smer) / #(40+smer) kazdy tik. Zvyseni
+   rychlosti se provede az **po** patem pohybu a plny petikusovy budget
+   u mirene varianty preskoci granat i jeho PLOP.
 2. **Navadena strela** (`0x8530/0x8566`, sprite HOMING#smer — soubor
    HOMING.LIN ma presne 16 snimku): 3 px/t (+356=768), kazdych
    8 tiku otocka k hraci max 14 jednotek (~20°), **2×(5+hraci)
-   korekci** (1P: 12), pak rovne. Muzzle flash PLOP#0 (`0x85f0`).
+   korekci** (1P: 12), pak rovne. Muzzle flash je uzavrena presna
+   dvoutikova sekvence `PLOP#0`, `BULLET#2`, kill (`0x85f0/0x861e`).
 
 ### FODDERA vlna (dispatch 0x0404 → 0x8048)
 - leader `0x813a`: **x = 32+rand&255** (mapove x se ignoruje),
@@ -97,10 +103,13 @@ therefore `+348 = 0x800` means `1/32 px/t²`, not a constant speed.
   screen-y roste jen o vlastni `vy`, nikoli jeste o rychlost mapy
 
 ### POPUP (0xa6ae)
-cekej 64+rand&63 → otevirej snimky 1–7 → (hittable, +504=32) →
-pauza 50 → salva ×(hraci/2+1): snimek 8, `0x8530(±6 stridave, 20,
-64)` = homing **dolu**, 5 tiku, snimek 7, 20 tiku → pauza 50 →
-zavri 6..1 → konec (inertni)
+cekej 64+rand&63 → na `0xa6e4` pripoj opening 1–7 s **periodou 6**
+(`0xa6e8`) a **soubezne** zacni wait 50 → (hittable, +504=32) →
+salva ×(hraci/2+1): snimek 8, `0x8530(±6 stridave, 20, 64)` = homing
+**dolu**, 5 tiku, snimek 7, 20 tiku → pauza 50 → pripoj closing
+6..1 s **periodou 6** (`0xa72a`) → `KILL` objekt. Pro 1P je casova osa
+od pripojeni openingu: t0 frame 0, t1–42 opening, t50–54 frame 8,
+t55–125 frame 7, t126–161 closing, t162 objekt zrusi.
 
 ### YELLOW vojak (0x86bc)
 kolona **6** (world-y offsety `0,-8,…,-40`), kazdy clen ceka na
@@ -187,7 +196,11 @@ pak parkuje. Korba = snimek (uhel>>6): 0=E,1=S,2=W,3=N.
 `0x95ca` vystrel, krok zpet ke korbe.
 
 ### ROTOBASE (0x994e)
-anim spin 4..11 (smer stridave per instance, `notw fp@(138)`);
+anim spin 4..11 s **periodou 2**; `notw fp@(138)` na `0x9960` voli
+reverzni `0x9986` a dopredny `0x996a` skript stridave podle **globalniho
+poradi aktivace** (z pocatecni nuly je prvni reverzni), nikoli podle x;
+smer vpred zacina znovu snimkem 4, ktery uz nastavil `a2c6`, proto ma
+pocatek `4,4,4,5,5,…`; reverzni zacina `4,11,11,10,10,…`;
 smycka: nahodny uhel, cekej 200+rand&127, **4× granat po 90°**
 (`0x99b2`: fire, +64, fire, +64, fire, +64, fire).
 
@@ -334,6 +347,10 @@ TOKEN neni v dispatchi — zaklada ho kod, v TOWN jedine boss.
 
 **Sebrani** (callback `+514`, `0x97c6`) podle typu:
 
+Pred vetvenim podle typu se vzdy zvysi samostatny HUD citac `+102`; hodnota
+20 se vrati na 19, takze saturuje. Zobrazeny stupen je `2 + (+102 / 5)` a
+neni totozny se silou zbrane `+100`.
+
 | typ | ucinek | zapis |
 |---|---|---|
 | 0 / 1 | prepne **rezim zbrane** na 0 / −1; kdyz uz hrac tento rezim mel, prida **+1 silu** (strop 5) | `+104`, `+100` |
@@ -345,7 +362,8 @@ Typ 3 je tedy hlasena „ochranna bublina" — nechrani predmet na mape,
 ale hrace po sebrani.
 
 Odtud plynou vyznamy hracskych poli: `+76` skore (long), `+98` prodleva
-palby, `+100` sila zbrane, `+104` rezim, `+108` doba ochrany.
+palby, `+100` sila zbrane, `+102` HUD citac vsech pickupu, `+104` rezim,
+`+108` doba ochrany.
 Tabulka zbrane `0x70c0` je **bajtova** — `02 0b / 03 0a / 04 0a / 05 08`,
 tedy (sila, kadence) indexovane primo hodnotou `+100`.
 
@@ -355,7 +373,8 @@ pred obrazem a jejich `a2c6` je pusti podle vlastniho marginu. FODDERA
 a YELLOW pouzivaji −48, nikoli genericky wrapper −32.
 
 ### Dodatky (2. iterace M1)
-- **Granat rotuje**: telo strely (`0x96b4`) kazdy tik prohazuje
+- **Granat rotuje — v prepisu uzavreno**: telo strely (`0x96b4`)
+  kazdy tik prohazuje
   graficke slovo mezi 24+smer a 40+smer (+0x2000 = +16 snimku);
   BULLET 24–39 a 40–55 jsou dve faze rotace.
 - **Kazda 4. vlna FODDERA se rozptyluje**: `0x806c` — kdyz

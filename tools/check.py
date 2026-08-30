@@ -177,6 +177,19 @@ def main():
     check("geometrie dilu sedi na ceil(w/16)*2*4*h",
           trans_all > 900, "%d dilu" % trans_all)
 
+    print("nativni HUD (docs/HUD.md):")
+    import hudscan
+    font_blob, glyphs = hudscan.extract_font(prog)
+    hud_mask, left_width, right_width, right_x = \
+        hudscan.render_initial_mask(glyphs)
+    check("font ASCII 32..94 ma auditovany SHA-256",
+          hudscan.sha256(font_blob) == hudscan.EXPECTED_FONT_SHA256)
+    check("pocatecni 352x8 maska ma 638 bitu a auditovany SHA-256",
+          hudscan.sha256(hud_mask) == hudscan.EXPECTED_MASK_SHA256 and
+          sum(bin(byte).count("1") for byte in hud_mask) ==
+          hudscan.EXPECTED_SET_BITS and
+          (left_width, right_width, right_x) == (133, 76, 236))
+
     print("mapy urovni (docs/MAPS.md):")
     import map as swivmap
     disk = swivmap.Disk(src)
@@ -200,6 +213,13 @@ def main():
           len(first_pal) == 16 and any(p[1] == 0x366 for p in [(0, first_pal[10])]))
     check("dispatch pokryva vsech 1497 mapovych objektu",
           len(object_gfx) == 1497 and all(gfx in routes for gfx in object_gfx))
+    import animscan
+    anim_offsets = {off for off, _seq in animscan.scan(disk)}
+    actual_anim_starts = {0xA6E8, 0xA72A, 0xC7FC, 0xC82E, 0xCAE2}
+    branch_displacements = {0xA6E6, 0xA728, 0xC7FA, 0xC82C, 0xCAE0}
+    check("animscan: payload zacina za BSR.W displacementem",
+          actual_anim_starts <= anim_offsets and
+          anim_offsets.isdisjoint(branch_displacements))
 
     print("negativni nalezy (drzi docs/LOADER.md poctive):")
     from scan import plausible
