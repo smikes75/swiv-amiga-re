@@ -146,8 +146,10 @@ write persists into the next frame; the steady-state sequence is therefore
 `0x5E4C..0x5E68` accepts only registers `COLOR00..COLOR15`
 (`0x180 <= register < 0x1A0`), so neither HUD nor sprite colours fade.
 
-The per-frame writer at `0x2AFC..0x2B60` supplies the sprite-bank colours
-which are also the possible five-plane palette entries:
+The per-frame writer at `0x2AFC..0x2B60` supplies the hardware-sprite banks.
+On a conventional five-bitplane decode these registers would also become
+palette indices 17..31; seeing them in the score text is the known AGA failure,
+not the intended OCS result:
 
 | registers | value |
 |---|---|
@@ -169,26 +171,59 @@ C00 FF0 FC0
 
 The writer is skipped during a non-zero black fade, so COLOR17..31 retain
 their preceding values for that interval. `COLOR20/24/28` are not set by the
-game object, its relevant loader path or the Copper list. Treating them as
-`0x000` is a plausible explicit cold-boot policy, not a value proven by
-`AMPROG.OBJ`; a running-hardware/emulator capture must close this last state
-dependency.
+game object, its relevant loader path or the Copper list. Their inherited
+value remains relevant to transparent sprite-bank entries, but no longer
+blocks the colour of a set HUD-mask pixel.
 
-COLOR16 is not a flat overlay colour. At every HUD pixel, the actual palette
-index is:
+## Effective OCS mask result
+
+The previous browser model used the conventional five-bitplane equation:
 
 ```
 index = lower_four_playfield_bits | (hud_mask_bit << 4)
 ```
 
-Consequently an indexed renderer must preserve the four underlying planes
-and select COLOR16 through COLOR31. Painting all glyph pixels directly with
-COLOR16, or using browser font text, cannot reproduce the native output.
-The 1bpp mask itself is fully deterministic from `AMPROG.OBJ`; exact RGB
-composition additionally requires the lower-plane pixels, current phase and
-the inherited values retained by COLOR20/24/28. Hardware sprites are drawn
-above the HUD (`BPLCON2 = 0x003F`); the fifth-plane composition therefore
-happens after software BOBs but before hardware sprites.
+That is precisely what produced the yellow/red flicker in `HELI` and
+`PRESS FIRE`: moving lower-plane pixels selected COLOR17..31. It is not the
+effective output of the original OCS game. For every set bit in the HUD mask,
+the measured result is an opaque row-coloured override:
+
+```
+mask = 0  -> preserve the four-plane playfield pixel
+mask = 1  -> display COLOR16, independent of the lower nibble
+```
+
+This conclusion is stronger than a visual guess:
+
+- `0x259C..0x25E4` keeps the specialized `0x5AA4` path selected and writes
+  only the separate 352-byte BPL5 mask; it does not erase the lower planes.
+- `0x5B4E..0x5B7A` changes only COLOR16, while the native raw frame shows the
+  stable `88D/AAE/CCF` gradient over different underlying terrain pixels.
+- The game's author describes a non-scrolling fifth plane plus a trick that
+  masks the other four, and explicitly notes the red/yellow COLOR16..31
+  artifacts when that trick fails on AGA in the
+  [Ronald Pieket Weeserik interview](https://codetapper.com/amiga/interviews/ronald-pieket-weeserik/).
+- The WHDLoad AGA repair replaces the trick with a sixth-plane mask and a
+  uniform replacement colour bank, confirming the intended opaque result.
+
+The exact physical OCS Denise mechanism is still undocumented; the project
+therefore records this as a verified effective result, not as a claimed new
+general bitplane rule. Hardware sprites remain above the HUD
+(`BPLCON2 = 0x003F`), so composition order is software BOBs, effective HUD
+mask, then hardware sprites.
+
+## Runtime status (2026-08-30)
+
+`game.html` now reads this embedded font directly from `AMPROG.OBJ`, rebuilds
+the 352-byte mask and applies it on canvas rows 8..14 as the measured opaque
+COLOR16 override. This removes both the former browser-font approximation and
+the incorrect `16|lower4` flicker. The first/steady COLOR16 bands and shifted
+COLOR17–31 sprite banks have browser fixtures; high sprite registers are
+retained while black fade suppresses their writer. `COLOR20/24/28` still use
+an explicit cold-boot zero policy for sprite-bank modelling only.
+The shared TOWN hardware-sprite pass is composed afterwards and has separate
+fixtures for all four banks, white-fade invariance and channel 0-over-7 pixel
+priority, so a sprite/HUD overlap no longer depends on Canvas call-site order.
 
 ## Minimal parity tests
 
@@ -201,5 +236,7 @@ happens after software BOBs but before hardware sprites.
 7. Test both the first-pass and steady-state COLOR16 row sequences.
 8. Test phases 0/15/16/65535, the four shifted accent entries and flash
    changes only to COLOR18/22/26/30.
-9. Composite bit 4 over known lower-plane indices, including that a playfield
-   fade leaves COLOR16..31 unchanged and a hardware sprite remains above HUD.
+9. For lower nibbles `0,1,2,7,15`, verify mask 0 preserves the playfield and
+   mask 1 always returns the row's COLOR16; moving terrain must not alter it.
+10. Verify a playfield fade leaves COLOR16 unchanged and a hardware sprite
+    remains above the HUD.

@@ -16,20 +16,21 @@ o sobe nestaci.
   [BEHAVIORS](BEHAVIORS.md).
 
 `155/155` neznamena pixelove hotovy level. Pocita hlavni mapove routy, ne
-globalni renderer, pomocne potomky, vsechny animacni prikazy ani audio engine.
+globalni renderer, pomocne potomky, vsechny animacni prikazy ani vsechny
+specialni audio call-sites.
 
 ## Poradi prace
 
 | priorita | oblast | dnesni stav | dukaz / otevrena prace | podminka uzavreni |
 |---|---|---|---|---|
-| P0 | deterministicky baseline | logiku umi `tools/uitest.py` tikat rucne; runtime stale pouziva `Math.random()` | headless capture je deterministicky, ale VAHeadless 5.0b1 kanonicky ADF nenabootuje; chybi vstupni zaznam a manifest checkpointu | stejny vstup vyrobi opakovane shodne snimky originalu i prepisu |
-| P1 | rasterova paleta | staticke pozadi uz pouziva indexy a presnou paletu kazdeho scanline; dynamicke BOB objekty zatim paletu stredu okna | `.PAM` prikazy meni barvy na presnem rasterovem radku | kazdy vystupni radek vcetne dynamickych objektu pouzije paletu platnou na tomto radku |
-| P1 | HUD | Canvas runtime uz ma presny obsah, x-anchory, 4 zivoty a skore x10; glyphy/barvy jeste ne | font, maska, format a raster jsou exaktne vytezeny; original pouziva patou bitovou rovinu a COLOR16–31, viz [HUD](HUD.md) | nativni glyphy, ikony, skore a barvy sedi s raw snimkem |
-| P1 | poradi kresleni | samostatne pruchody mapa / hazards / air / exploze / strely | originalni fronta `0x481a` radi draw zaznamy podle klice | krizeni objektu ma stejnou okluzi jako original |
-| P1 | stiny | cerna RGBA silueta, vetsinou posun `(+16,+22)` | `0x6364..0x638c`: projekce ze z-hloubky je `(x+z/2,y+z)`; TOWN letci maji `z=32` | geometrie i bitplanova operace jsou odvozene z kodu, bez alpha odhadu |
-| P2 | animace TOWN | vetsina hlavnich sekvenci sedi, nekolik period a stavovych prechodu ne | tabulka nize | kazda sekvence ma overeny vstup, periodu, flagy a ukonceni |
-| P3 | zbyvajici chovani | hlavni routy 155/155 | `GAPS.md`: GOOSE doprovod, body bosse, TOKEN flash/reload | zadny vedomy gameplay placeholder v TOWN |
-| P4 | hudba a zvuk | prehrava se jen `BIGEXPL.SND` | chybi procedurarni engine, mapovani udalosti a arbitraz 4 kanalu | cely TOWN od startu po bosse ma hudbu i vsechny efekty z originalu |
+| P0 | deterministicky baseline | runtime pouziva port PRNG `0x883c`, CIAB-IRQ high-word perturbaci a rucni 50Hz tiky; nulovy VHPOS vstup je opakovatelny | VAHeadless 5.0b1 kanonicky ADF nenabootuje; chybi zachyceny VHPOS/input trace a manifest checkpointu | stejny vstup a HW trace vyrobi opakovane shodne snimky originalu i prepisu |
+| P1 | rasterova paleta | produkcni viewport sklada mapu i dynamicke BOBy v indexech a RGB12 aplikuje az po slozeni pro kazdy scanline | `.PAM` prikazy meni barvy na presnem rasterovem radku | proti originalu zbyva kanonicky runtime capture, nikoli dalsi paletovy prepis |
+| P1 | HUD | runtime sklada embedded 7-row font do 352x8 masky; set bit dela zmereny opaque COLOR16 override nezavisly na lower4 | maska/anchory/Copper radky i nepruhlednost maji fixture; fyzicky OCS Denise trik zustava undocumented | raw checkpoint potvrdi gradient a sprite-over-HUD ve slozite scene |
+| P1 | poradi kresleni | jedna unsigned depth fronta podle `0x481a`, vcetne child ordinalu, equal-z stability a specialnich BOB operaci | regrese sklada prekryvajici se realne `.LIN` snimky a hlida poradi/hash | proti originalu zbyva checkpoint capture slozitych krizeni |
+| P1 | stiny | indexovy subtractive shadow s projekci `(x+z/2,y+z)` a skutecnym per-object z | `0x6364..0x638c`; zadna RGBA alpha aproximace v produkcni ceste | proti originalu zbyva checkpoint capture |
+| P2 | animace TOWN | podporovane TOWN tasky maji adresove overene sekvence, periody i resume hranice | tabulka nize a `tools/uitest.py` | rozsirit pouze pri nalezu nove odchylky z originalniho capture |
+| P3 | zbyvajici chovani | 155/155 hlavnich rout; GOOSE/TOKEN/core/HOMING/POPUP, terrain-mask respawn, dynamic difficulty, cost accounting a N+1 collision hranice jsou prepsane | map reader nema per-record yield; zbyva obecne prokladani priority100 continuation bodu, last-field cull beznych nodu a GOOSE per-child orphan resume | pending event masky, callbacky a spawn/RNG interleaving sedi s nativnim schedulerem |
+| P4 | hudba a zvuk | bezi 4voice Paula/CIAB model; hlavni TOWN bojove efekty, `SMART.SND`, bound MINE shield, TOKEN pickup i GOOSE hit/death jsou napojene a collision zvuky respektuji N+1 | chybi zbyvajici special/player-transition call-sites a taskove FIFO poradi TOKEN/GOOSE explosion child efektu; viz [SOUND](SOUND.md) | cely TOWN od startu po bosse ma vsechny efekty, priority a RNG poradi z originalu; gameplay hudba je zdrojove ticho |
 
 ### Stav zakladu rendereru (2026-08-29)
 
@@ -43,33 +44,60 @@ Indexova cesta uz neni jen pomocny experiment. Testovane stavebni bloky jsou:
 
 Regrese hlida skutecnych 13 TOWN checkpointu, obe hranice palety v uvodnim
 okne a dvoudilny `JEEPHELI.LIN#1`. `renderMap` dual-writeuje indexovou mapu
-i historicky RGBA oracle a viditelne staticke pozadi se uz kazdy frame
-barvi z `mapIndex` podle presne Copper palety radku. Zname okno pres hranici
-checkpointu ma proti spravnemu oracle 0 rozdilnych bajtu; legacy cesta se v
-nem lisila. Dalsi krok je stejne indexove slozeni dynamickych BOBu, aby
-paleta stredu okna mohla zmizet uplne.
+i historicky RGBA oracle. Produkcni `composeTownBobs` kazdy frame zkopiruje
+indexovy viewport, provede decal prepass a celou dynamickou frontu, teprve
+pak `colorizeIndexedField` aplikuje paletu a oba fade levely po radcich.
+Zname okno pres hranici checkpointu ma proti spravnemu oracle 0 rozdilnych
+bajtu; paleta stredu okna zustala jen v diagnosticke Canvas vetvi.
 
-**D1 je pripraven bez prepnuti runtime:** ciste helpery uz reprodukuji
+**D1 je zapnut v produkcnim runtime:** ciste helpery reprodukuji
 unsigned depth klic a poradi fronty `0x481a`, projekci stinu z
 `0x6364..0x638c`, cookie-copy `0x0FCA` i nepruhledny clear vsech bitplanu na
 index 0 pres `0x0B0A`. Regrese sklada skutecne snimky FODDERA, MILL,
-JEEPHELI a POPUP do indexoveho bufferu a hlida poradi i hash. Viditelna cesta
-stale pouziva puvodni Canvas pruchody; stiny a specialni BOB mintermy se
-prepnou spolecne az po jejich uplnem auditu.
+JEEPHELI a POPUP do indexoveho bufferu a hlida poradi i hash. Puvodni Canvas
+pruchody jsou dostupne jen pres diagnosticky `legacyCanvasOverlay`.
 
-HUD font, format a 352x8 maska jsou bitove uzavrene. Plna RGB kompozice ma
-jeden externi stavovy blocker: `AMPROG.OBJ` nikdy nezapisuje COLOR20/24/28,
-takze jejich resetovou/zdedenou hodnotu je nutne jednou zmerit v bezicim
-originalu. Do te doby se `0x000` smi pouzit jen jako explicitni cold-boot
-politika, ne vydavat za hodnotu odvozenou z programu.
+HUD font, format a 352x8 maska jsou bitove uzavrene. Produkcni runtime ji
+sklada na y8..14 jako zmereny nepruhledny COLOR16 override: set bit nesmi
+zdedit lower4 ani blikajici COLOR17..31. Tim se odstranilo zlute/cervene
+problikavani `HELI` a `PRESS FIRE`. Presny fyzicky OCS mechanismus zustava
+undocumented, ale efekt potvrzuje raw frame, autoruv popis AGA selhani i
+WHDLoad oprava. Nezname COLOR20/24/28 zustavaji jen cold-boot politikou
+sprite-bank modelu, nikoli blockerem HUD textu.
 
 Audit specialnich vrstev pred runtime switchem navic uzavrel, ze hracovy
-BULLET#14, cannon a druhy tik PLOP jsou HW sprity, kdezto HOMING je bezny
+BULLET#14, cannon a jediny publikovany PLOP frame BULLET#2 jsou HW sprity,
+kdezto HOMING je bezny
 BOB v COLOR00–15. Black fade HW sprite zaznamy vubec nezaradi; white fade je
-nemeni. Zbyva implementovat globalni sprite-bank allocator, mapovou mutaci
-decalu, zachovani `z`/flag provenance explozi, kompletni ctyrdilny GOOSE a
-overit pomocny `0xA0` prepass pro objektovy flag b0. Dokud tyto polozky
-nemaji fixture, plny viditelny BOB switch zustava zamerne vypnuty.
+nemeni. Produkcni TOWN pass uz sdili presne 64 zaznamu, radi actor tasky pred
+30slotovy player pool, prideluje kanaly `0,7,6..1`, respektuje off-top skip,
+linearni DMA reuse i prioritu nizsiho cisla kanalu a vybira COLOR17–31 banku
+podle dvojice kanalu. Cannon pouziva depth snapshot z `0x96aa` pred vlastnim
+pohybem. Spolu s efektivni HUD maskou jsou tak obe drive otevrene
+rendererove vrstvy zapojene; raw porovnani s originalnim runtime zustava
+prijimacim testem a neznamy zdedeny high-color stav se tyka jen nepopsanych
+sprite-bank slotu.
+Stateless decal prepass je pro vysledny viewport ekvivalent mapove mutaci,
+`z` explozi i ctyrdilny GOOSE uz fronta nese. Pomocny `0xA0` save-under
+prepass nema ve stateless indexovem framebufferu samostatny viditelny efekt.
+
+### Stav zvuku (2026-08-31)
+
+Produkcni runtime uz nema jednorazovy `snd(...,8000)` fallback. Modeluje
+ctyri persistentni Paula hlasy, CIAB tempo, strict priority guard, stereo-pair
+preferenci s fallbackem, persistentni noise scratch i IRQ perturbaci gameplay
+PRNG. Napojene jsou zvuky salvy hrace, defaultniho neletalniho zasahu,
+kanonu, HOMINGu, POPUP/PROXMINE/FLAME openingu, kazdeho FLAME puffu,
+dvouvrstve standardni exploze, ctyrvrstve exploze hrace a custom smrti
+GOOSE i jeho neletalniho hitu s deferred IRQ seedem. White flash navic hraje
+ctyrvrstvy `SMART.SND`, bound MINE bublina vlastni priority60 ton a kazdy
+TOKEN pickup ctyri priority120 noty v rozestupu peti VBL. Presne adresy,
+casy a exkluze jsou v [SOUND](SOUND.md).
+
+TOWN jeste neni zvukove uzavren: zbyvajici special/player-transition
+call-sites (zejmena extra-life `0x5600`) zustavaji otevrene. Collision-driven
+zvuky uz zacinaji az s prislusnym callbackem v N+1. Samostatna gameplay hudba se
+nedoplnuje, protoze original po titulku modul uvolnil a ve hre pouziva efekty.
 
 ## Audit animaci TOWN
 
@@ -91,16 +119,22 @@ nemaji fixture, plny viditelny BOB switch zustava zamerne vypnuty.
 - **POPUP — uzavreno**: otevreni `0xa6e8` a zavreni `0xa72a` maji
   periodu 6; regrese hlida soubeh openingu s wait(50), celou osu t0–t162
   i skutecny `KILL` na konci closing skriptu.
-- **PLOP — uzavreno**: `0x85f0` / `0x861e` ukaze jeden tik `PLOP#0`,
-  druhy tik `BULLET#2` a pak objekt ukonci; prepis i regrese sedi.
+- **PLOP — uzavreno**: same-priority FIFO child jeste ve spawn VBL projde
+  prvnim `0x62d2`; animator countdown1 proto setup `PLOP#0` prepise pred
+  enqueue a prvni a jediny publikovany field je HW `BULLET#2`. Dalsi resume
+  provede `KILL`. Prvni pohyb navic zdedi parentovu rychlost.
 - **kanonovy granat — uzavreno**: faze je stav kazdeho objektu prepinany
   na `0x96b4`, ne globalni parita herniho tiku; accel i straight cesta
-  maji regresi vcetne poradi pohyb -> akcelerace a budgetu strela+PLOP.
-- **GOOSE — uzavreno 2026-08-30**: blikani `0xc7fc`, prechod
-  `0,0,1,2,3,4,5` s periodou 10 z `0xc82e`, rotor `0x93e2`, cekani na
-  `+276 == 0` (`0xc85e`), dokovani `0xcb78`, pod `0xcaac` s animaci
-  `GOOSE#8..11` (`0xcae2`) a odhozeni casti `0xca5e` jsou v prepisu;
-  regrese v `tools/uitest.py`.
+  maji regresi vcetne same-VBL prvniho pohybu, pre-move depth, poradi
+  pohyb -> akcelerace a budgetu strela+PLOP.
+- **GOOSE — stavovy automat uzavren 2026-08-30**: blikani `0xc7fc`,
+  prechod `0,0,1,2,3,4,5` period10 z `0xc82e`, rotor `0x93e2`, cekani na
+  `+276 == 0` (`0xc85e`), dokovani `0xcb78`, pod/escort `0xcaac` s animaci
+  `GOOSE#8..11` (`0xcae2`) a odhozeni casti `0xca5e` jsou v prepisu.
+  Stavove fixture pokryvaji vsechny ctyri deti vcetne
+  ingress/overshoot/snap; N+1 fixture navic hlidaji oddeleny producing
+  field, hit-spread, smrt, zvuky a prvni field TOKEN child tasku. Timeout
+  uz ve stejnem resume publikuje prvni `-4 px` escape field
 
 Obecny `scanAnims` je zatim inventarni pomucka, ne uplny runtime interpreter:
 zahazuje `END/KILL`, flagy a offsety a sekvence bezpodminecne cykli. Pro TOWN
@@ -129,8 +163,8 @@ Plan jednoho checkpointu:
    vizualni checkpoint.
 
 Nejprve staci checkpointy pro start/fade, prvni FODDERA vlnu, prvni POPUP,
-ROTOBASE, FLAME/CAMOGUN, TOKEN a GOOSE. Teprve po stabilizaci RNG ma smysl
-porovnavat cely level jednim dlouhym zaznamem.
+ROTOBASE, FLAME/CAMOGUN, TOKEN a GOOSE. PRNG algoritmus je stabilni; cely
+level ma smysl porovnat dlouhym zaznamem az po zachyceni VHPOS a input trace.
 
 ## Definition of done pro TOWN
 

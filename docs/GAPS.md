@@ -6,29 +6,58 @@ ve zbytku `docs/`: zadny odhad, jen misto v kodu.
 
 Zdroj hlaseni: hrani prepisu proti originalu (2026-08-27).
 
-## 1. Zvuky — chybi cely zvukovy engine
+## 1. Zvuky — TOWN ENGINE A GOOSE HIT PREPSANY, CALL-SITES ZBYVAJI
 
-`game.html` prehrava **jediny** efekt: `BIGEXPL.SND` na ctyrech mistech.
+`game.html` uz modeluje ctyri persistentni Paula hlasy a CIAB scheduler
+`0x4a66..0x4bf2`: `priority*4` guard, strict `>`, stereo-pair preferenci
+s fallbackem, persistentni `0x56e6` noise scratch i VHPOS perturbaci PRNG.
+Browser nema hostitelske "prehraj tento wav" aproximace pro procedurarni
+efekty; z presnych waveformu a period sklada player fire, default HIT,
+opening, FLAME puff, HOMING a cannon.
 
-Na disku jsou ale jen **dva** samply (`BIGEXPL.SND`, `SMART.SND`), takze
-zbytek zvuku hra **negeneruje ze samplu** — dela je zvukovy engine
-z dat v `AMPROG.OBJ`. Proto nesedi rozlet PROXMINE, plamenomet FLAME
-a vetsina zasahu: nejde o spatne prirazeny sampl, ale o chybejici
-kus enginu.
+`BIGEXPL.SND` ma zdrojove spravne Paula periody. Standardni `0x4c58` jej
+spousti dvakrat a spotrebuje dva RNG longy i pri rejectu, player death child
+`0x4c1c` zkusi ctyri fixed vrstvy. Custom dvouhlas smrti GOOSE `0x553a` je
+take prepsany. Neletalni GOOSE hit `0x4e46` zaklada dva priority40 hlasy;
+kazdy prijaty hlas se seeduje globalnim RNG az pri druhem CIAB resume a pak
+64 stavu pokracuje lokalnim `0x56e6`. Reject nebo preempce pred seedem RNG
+nespotrebuje. Event hooky a exkluze popisuje [SOUND](SOUND.md).
 
-- **Rozsah:** neprepsany zvukovy engine (README ho vede jako castecne
-  zmapovany).
-- **Dusledek:** dokud engine nebude precteny, nelze zvuky doplnit
-  "priblizne" bez porusení pravidla o nehadani.
+White flash uz pousti kanonicky 8,280B `SMART.SND` ctyrikrat pres
+`0x885a -> 0x4cb2`, priority127 a periody 1040/1025/1010/996. Napojeny je i
+jednorazovy activation tone bound MINE bubliny `0x98f2 -> 0x4ffe` a obecny
+ctyrnotovy TOKEN pickup `0x97ce -> 0x5614`; jeho noty se zkouseji v odstupech
+0/5/10/15 VBL a zachovavaji pan podle x konkretniho TOKENu.
 
-## 2. TOWN boss (GOOSE) — PREPSANY 2026-08-27
+Otevrene zustava:
 
-`GOOSE.LIN` snimek 0 → `0xc78a`. Prepsano vcetne naletu, skladani ze
-tri casti, palby (mireny granat + dve navadene) a kruhu bonusu; popis
-je v [BEHAVIORS](BEHAVIORS.md), regrese v `tools/uitest.py`.
+- zbyvajici specialni/player-transition call-sites. Extra life potrebuje
+  presunout threshold kontrolu z okamziteho `awardScore()` na dalsi player
+  resume a napojit sestinotovy efekt `0x5600` (424/336/266/212/168/133,
+  priority120, rozestup 5 VBL);
+- efekty specificke pro pozdejsi levely.
+
+Gameplay hudba v TOWN neni mezera: original drzi tracker modul na titulku a
+pri startu hry jej uvolni; samotny level je postaveny na zvukovych efektech.
+
+## 2. TOWN boss (GOOSE) — STAVOVY AUTOMAT UZAVREN 2026-08-30
+
+`GOOSE.LIN` snimek 0 → `0xc78a`. Prepsan je blikajici nalet, unfold
+`0,0,1,2,3,4,5`, rotor, tri casti tela i ctvrty escort, jejich samostatny
+ingress/overshoot/snap, cekani na vsechny ctyri deti, boj, kontakt, timeout,
+smrt a kruhy TOKENu. Popis je v [BEHAVIORS](BEHAVIORS.md), presna regrese
+v `tools/uitest.py`.
 **TOWN tim ma 155/155 objektu na prepsanych korutinach.**
 
-Zbyva u nej dvoje:
+`0xc950` neni bodovy soucet, ale integritni/anti-tamper smycka. GOOSE tedy
+spravne nedava body. Resident sweep pouziva dvoufazovy snapshot: kladne
+uzly maji symetrickych ±8 a bit15 projektil ma vuci kladnemu cili na obou
+osach inkluzivne `−8..+8`; eventy se pred callbacky koaleskuji po bitech.
+Od 2026-08-31 se zasah, kontakt i smrt provedou az pri resume parent tasku
+v N+1; regrese zvlaste hlida neletalni hit-spread i lethalni death synth,
+BIGEXPL, unlink a prvni radialni pohyb novych TOKEN child tasku.
+
+Drive otevrene otazky jsou tim uzavrene:
 
 - ~~ctvrty potomek `0xcaac` = doprovod~~ — **uzavreno 2026-08-30**: je to
   pod zadokovany na `(0,+24)`, ktery se pak houpe na rameni 18 px
@@ -39,24 +68,38 @@ Zbyva u nej dvoje:
   ukazateli na buffer mapy `fp@(3560)` (anti-tamper). Boss ma `d4 = 0`,
   tedy **0 bodu** je spravne; viz [TOWN-AUDIT](TOWN-AUDIT.md) 2.7.
 
-## 3. Bonusovy TOKEN — PREPSANY 2026-08-27
+## 3. TOKEN, MINE core a ochrany — STAVOVE CHOVANI UZAVRENO 2026-08-30
 
-`TOKEN.LIN` → `0x96d8`. Prepsano vcetne blikani, prepinani typu strelou
-(`0x9780`) a vsech ctyr ucinku pri sebrani (`0x97c6`); tabulka viz
-[BEHAVIORS](BEHAVIORS.md), regrese v `tools/uitest.py`.
+`TOKEN.LIN` → `0x96d8` ma 32tikovy radialni burst, start typu 3, presny
+dvoutikovy icon/blank cyklus, hit cooldown, docasny typ 4 a cost5 bez
+160-guardu. Typ 3 pouze pricte 500 do player `+108` a 500 bodu; sam zadny
+oblouk nevytvari.
 
-**Hlasena ochranna bublina je bonus typu 3**: da hraci `+500` tiku
-ochrany (`+108`, ~10 s) a 500 bodu. V prepisu uz funguje a bonus hrace
-za zadnych okolnosti nezrani.
+Viditelna bublina je vystreleny `MINE#9/#10` core `0x9860`. Pickup nastavi
+`+106=-1`, zalozi samostatny cost5 child a 500 snimku jej strida pred/za
+hracem pres `z=+2/-2`; po celou dobu prepisuje `+108` na 100. Duplicate
+ochranu neprodlouzi a spusti white flash. Core je harmless pickup, ale ma
+10 HP, 30 bodu a po prvnim sebrani drzi neviditelny wait10 do cleanupu.
+Prvni start childa hraje jediny priority60 ton `0x4ffe`; duplicate ani
+zastreleny core tento activation tone nemaji. Kazdy sebrany TOKEN vsech typu
+naopak spousti vlastni priority120 ctyrnotovy efekt `0x5614`.
 
 Pri tom se opravily dve veci jinde:
 
 - `syms.json` vedl `0x653e` jako `anim_install`. Je to **instalator
   callbacku** (`+510`, bit 0 v `+508`); `0x6564` dela totez pro `+514`.
-- `game.html` pocital stupen zbrane jako `weapon/5`. Tabulka `0x70c0`
-  je bajtova a **indexuje se primo** hodnotou `+100`.
+- starsi popis pocital stupen zbrane jako `weapon/5`. Tabulka `0x70c0`
+  se indexuje `floor(+102/5)` a pri (re)spawnu dela
+  `power=min(power,cap)`, kadenci vzdy prepise
 
-Zbyva:
+White flash `0x8852/0x885a` je prepsany vcetne `256,-4` (64 snimku),
+50tikoveho `fp@(169)` smart pulse a prekryvajicich se tasku: kazdy trigger
+ma vlastni deadline a ktery-koli z nich muze globalni pulse shodit. Pulse
+bez bodu odstrani bezne objekty; score dostane jen cil, kteremu uz sweep v
+tomtez VBL frontoval player event. Player, TOKEN, bound bubble, PLOP a cela
+GOOSE skupina jsou imunni.
+
+Drive otevrene detaily jsou tim take uzavrene:
 
 - ~~zablesk u typu 4~~ — **uzavreno 2026-08-30**: je to smart bomba;
   `fp@(11168)` se za hry nezapisuje a z uvodni sekvence zustava **−4**
@@ -66,7 +109,7 @@ Zbyva:
   se aplikuje jen pri (re)spawnu (`0x70c8`), bonusy plati do dalsiho
   spawnu. Prepsano (`applyWeaponTable`).
 
-## 4. Hlaseni z 2026-08-30 — kolize, stit, hrac (PREPSANO)
+### Hlaseni z 2026-08-30 — kolize, stit, hrac (prepsano)
 
 Hloubkovy audit je v [TOWN-AUDIT](TOWN-AUDIT.md). Prepsano tehoz dne:
 
@@ -79,7 +122,87 @@ Hloubkovy audit je v [TOWN-AUDIT](TOWN-AUDIT.md). Prepsano tehoz dne:
 
 GOOSE (dokovani `0xcb78`, pod `0xcaac`, odhozeni casti, HP od zastaveni,
 blikani a anim tela, rotor, smrt bez bodu) prepsan tehoz dne. P0 auditu
-je tim cely v `game.html`; otevrene zustavaji P1–P3.
+je tim cely v `game.html`; zbyle mechanicke parity jsou vypsane dale.
+
+Lokalni stavy TOKEN/core, GOOSE i hrace a jejich N+1 callback hranice jsou
+timto zdrojove popsane.
+
+## 4. Scheduler kolizi — N+1 HRANICE UZAVRENA 2026-08-31
+
+Original radi bezne objektove tasky na prioritu 100, updater hracskych
+HW projektilu na `0xfffe` a resident collision sweep `0x6ec2` na `0xffff`.
+Sweep na konci VBL N pouze ORne event word; objekt jej zpracuje po svem
+dalsim resume ve VBL N+1 (`0x62d2`/`0x64b6`) v poradi bitu
+`0,3,4,1,2,5`.
+
+Browser sweep ted stejne pouze ORuje pending masku do kazdeho zasazeneho
+nodu a oznaci player bolty ke spotrebovani. Na zacatku N+1 existujici tasky
+resumeuji v creation poradi: nejprve se smaze stary hit flag, pak se cte
+**aktualni** SMART pulse a nakonec se dispatchuji bity 0 a 3. Player task
+zpracuje svou lethal masku pred vstupem, pohybem a palbou; player projectile
+updater je presunut na prioritu `0xfffe`, kde spotrebovane bolty odstrani
+pred jejich dalsim pohybem. Child zalozeny callbackem neni ve vstupnim
+snapshotu, ale jeste v N+1 projde svou prvni publikaci.
+
+Regrese pokryva dva bolty/jeden cil, jeden bolt/dva cile, aktivni i burst
+TOKEN, MINE core, player kontakt, SMART attribution, prefire MEDTANK,
+jeden viditelny cannon field pri kontaktu s HELI, TOKEN pickup a oba GOOSE
+hit/death prechody. Zvlastni fixture hlida i to, ze BIRD cannon zalozeny
+callbackem dostane jen jeden prvni pohyb, a ze GOOSE timeout propadne do
+prvniho `-4 px` escape fieldu bez mezery. Tim je uzavrena pozorovatelna
+N/N+1 hranice pro prepsane TOWN nody i jejich collision-driven audio.
+
+Stale nejde o obecny emulator 68k coroutine scheduleru: po housekeeping
+passu browser pokracuje kategoriemi `shots/air/hazards/spawns/tokens`, ne
+jednim prokladanym FIFO seznamem vsech continuation bodu. Geometrie,
+callback order a fresh-child fieldy jsou testovane, ale vzacna kombinace,
+kde callback jednoho tasku a nasledna continuation jineho tasku soutezi o
+RNG nebo audio hlas uvnitr stejneho VBL, zustava k porovnani s raw trace.
+
+Konkretni dusledky, ktere zustavaji dalsim mechanickym blokem:
+
+- cannon/HOMING uz drzi nativni posledni cull field, ale bezne
+  air/hazard/spawn/TOKEN nody se pri cullu stale filtruji pred renderem a
+  sweepem; potrebuji stejny `retireAfterField`/cleanup-on-resume kontrakt;
+- GOOSE death parent vznika v N+1 spravne, ale unlink child skupiny,
+  escort orphan callback a dva BIGEXPL child tasky se zatim provedou inline
+  misto na jejich vlastnich FIFO resume bodech;
+- TOKEN pickup zvuk ma spravne noty i rozestupy 0/5/10/15 VBL, prvni note a
+  dalsi resume se ale jeste neradi jako samostatny priority100 child mezi
+  ostatni tasky stejneho VBL.
+
+## 5. Map-reader a hardwarovy RNG — PORADI JE JEN HRUBE PRESNE
+
+`0x365e` zaklada object tasky zhruba 256 px pred hornim okrajem. Prepis uz
+oddeluje tento task-start od pozdejsiho `a2c6` marginu a spotrebuje
+pre-`a2c6` RNG ve spravne fazi. V jednom JS kroku vsak zalozi vsechny prave
+zpusobile zaznamy; nativni reader mezi zaznamy yielduje, takze pri shode vice
+triggeru muze byt presne mezitaskove RNG poradi jeste jine.
+
+PRNG `0x883c` i CIAB-IRQ `ADD.W VHPOSR` (`0x4ac8`) jsou bitove prepsane.
+Vychozi browserova hodnota VHPOSR je ale zamerne nula. Bez zachyceneho
+VHPOSR/input trace a funkcniho raw checkpointu originalu nelze tvrdit, ze
+dlouhy beh pouziva stejny seed a stejne snimky jako Amiga.
+
+## 6. Renderer — TOWN HW SPRITY A HUD UZAVRENY, ZBYVA RAW CHECKPOINT
+
+Player bolt, kanonovy granat a publikovany PLOP frame BULLET#2 patri do osmi hardwarovych
+sprite slotu (`0x5d86`), ne do globalni BOB fronty. TOWN runtime uz ma jeden
+`0x3d00/0x3d4e` allocator pro vsechny tri zdroje: 64 zaznamu, presne poradi
+kanalu, off-top skip pred spotrebou, linearni DMA reuse, kanalovou prioritu,
+ctyri posunute COLOR17–31 banky a 30slotovy P1 pool. Black fade frontu
+potlaci, white fade high registry nemeni. Nativni HUD font, 352x8 pata
+bitplane a row COLOR16 jsou pod touto vrstvou.
+
+Set HUD bit je podle originalniho raw frame nepruhledny COLOR16 override,
+nezavisly na lower4; naivni `16|lower4` byla AGA chyba zpusobujici blikani
+`HELI/PRESS FIRE`. Presny fyzicky OCS Denise trik zustava undocumented, ale
+vysledna kompozice ma regresi. COLOR20/24/28 `AMPROG.OBJ` stale nezapisuje,
+jejich cold-boot `0x000` je vsak otevrena politika jen pro nepopsane
+sprite-bank sloty, ne blocker HUD barvy. Finalni RGB/DMA checkpoint porad
+potrebuje raw mereni beziciho originalu. Allocator je zatim tvrzeni o TOWN
+podporovanych tridach, ne automaticky o objektech dalsich levelu. Podrobnosti
+jsou v `TOWN-PARITY.md` a `HUD.md`.
 
 ## Co uz je vedomo jinde
 

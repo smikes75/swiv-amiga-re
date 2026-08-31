@@ -55,11 +55,26 @@ ring". Behaviour scripts also carry **inline animation scripts**
 sequencer `0x6c88`) — which is why the standalone scanner found only
 part of them.
 
-## Still to transcribe in phase 2
+## Stav transkripce pro TOWN
 
-- the player weapon coroutine incl. upgrade levels and fire cadence
-- the second/third direction tables (16-dir sets) word-for-word
-- the separate 4-bit palette path used by HOMING.LIN
+- HELI weapon child, startovni dvojice, power1–5 offsety, power6 radialni
+  tabulka, stejnoveblovy prvni pohyb i 1P/2P cadence maji presne fixture
+  v `tools/uitest.py`
+- smerove tabulky player boltu a obou kanonovych fazi jsou prepsane
+- limit peti kanonovych granatu plati jen pro aimed wrapper `0x95d2`;
+  prime vstupy MEDTANK/ROTO/MILL/BIRD mohou vytvorit dalsi kusy
+- kanonovy granat zustava ve world-space a kamera mu kazdy VBL meni
+  screen-y; depth pro HW frontu ale bere z world-y pred aktualnim pohybem
+  (`0x96aa`). Novy cannon i HOMING child se pres FIFO scheduler jeste ve
+  spawn VBL jednou pohne; HOMING je po startu screen-locked
+- HOMING.LIN je potvrzeny 4bitovy BOB v COLOR00–15; samostatnou paletu
+  nepotrebuje. Player/cannon/PLOP#2 uz sdileji produkcni TOWN HW allocator:
+  64 zaznamu, osm DMA kanalu, ctyri COLOR17–31 banky a player pool 30 slotu
+
+Geometrie resident sweepu je na obou osach inkluzivne `−8..+8`. Browser ji
+ma prepsanou vcetne nativni N+1 hranice: sweep ve fieldu N pouze ORne event
+a oznaci bolt, zasah/kontakt se provede pri resume objektu v N+1 a bolt pak
+pred dalsim pohybem odstrani updater priority `0xfffe`; viz `GAPS.md`.
 
 
 ## Oprava (M1, 2026-08-18)

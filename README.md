@@ -45,7 +45,11 @@ including the level boss, which flies in from below, assembles from three
 parts, and fires an aimed grenade plus two homing missiles.
 The level fades in from black over 16 frames, as the engine's own fade
 driver does — and the HUD stays lit through it, because the fade only
-touches COLOR00-15.
+touches COLOR00-15. The local TOWN runtime also has the four-voice
+Paula/CIAB effect model for player fire, hits, launchers, flames and the
+principal explosions, including four-layer `SMART.SND`, shield/TOKEN pickup
+effects and the IRQ-seeded custom GOOSE hit/death; the original uses title
+music rather than a gameplay module.
 Other levels are still research previews, not complete ports.
 
 **Command line:**
@@ -83,6 +87,7 @@ Detailed write-ups live in [`docs/`](docs/):
 [FORMAT](docs/FORMAT.md) · [LOADER](docs/LOADER.md) ·
 [CATALOG](docs/CATALOG.md) · [GRAPHICS](docs/GRAPHICS.md) ·
 [MAPS](docs/MAPS.md) · [HUD](docs/HUD.md) ·
+[SOUND](docs/SOUND.md) ·
 [TOWN parity](docs/TOWN-PARITY.md) ·
 [Codex handoff](docs/CODEX-HANDOFF.md). Annotated disassembly of both boot-time
 decrunchers is in [`src-asm/`](src-asm/).

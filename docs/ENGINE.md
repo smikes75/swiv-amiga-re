@@ -7,13 +7,14 @@ comes from `tools/xref.py`.
 ## Behaviours are coroutines (green threads)
 
 The single most important architectural fact: **enemy behaviours are
-written as linear programs** that yield. `jsr fp@(-1418)` (resident
-loader) = *wait one frame* — it stores the coroutine context and
-returns to the scheduler. On top of it:
+written as linear programs** that yield. Drivejsi popis zaměnil dva
+loader entry pointy: `jsr fp@(-1418)` je kontrola generace/abortu, nikoli
+yield. Skutecny cooperative yield vede pres `0x5f0a` na
+`fp@(-1438)` a uklada kontext do scheduleru. On top of it:
 
 | routine | meaning |
 |---|---|
-| `0x62d2` | yield one frame + housekeeping (inherits position from a parent object via `+308` when flag bit 3 of `+367` is set) |
+| `0x62d2` | movement, cull a publikace BOB/collision node, pak `0x5f0a` yield; po resume scroll/flash/orphan/smart/event housekeeping (inherits parent via `+308`, flag bit 3 of `+367`) |
 | `0x62cc` | yield until "alive" tick |
 | `0x629c` | wait `d0` frames (against the global tick `fp@(-66)`) |
 | `0x62b8` | wait `d0` yields |
@@ -25,6 +26,12 @@ screen → loop: aim, wait 4, fire, wait 60 → die.* This is why the
 code region `0x7600–0xCC00` (~24 KB) looks like hundreds of tiny
 routines — they are scripts, and they are exactly what we must
 transcribe to make behaviours identical.
+
+Cull callback behem `0x62d2` nefunguje jako okamzity `return`: default
+`0x6db4` zneplatni generaci tasku, ale bezici aktivace jeste projde
+animatorem, enqueue `0x640c` a yieldem. Posledni hranični field tedy zustava
+viditelny a kolizni; objekt i jeho cost zmizi az pri pokusu o resume v
+nasledujicim VBL.
 
 ## The object
 
@@ -45,7 +52,7 @@ defaults at `0x61f4+`). Known fields:
 | +362 | score value installed by `0xa2c6` from d4 |
 | +368 | loaded graphic/file handle from `0xa2c6` d0 |
 | +370 | active-budget cost installed by `0xa2c6` from d5 |
-| +364 | off-screen cull margin (−64 default): `0x6486` kills via `+538` when `sx <= m`, `sx >= 320−m`, `sy <= m` or `sy >= 256−m`; objects override it (`0x820c` −90, `clrw` = 0) |
+| +364 | off-screen cull margin (−64 default): `0x6486` uses inclusive high-word comparisons and invokes `+538` when `sx <= m`, `sx >= 320−m`, `sy <= m` or `sy >= 256−m`; objects override it (`0x820c` −90, `clrw` = 0) |
 | +367 | flag bits (bit 3 = follow parent; bit 4 = compensate camera-scroll delta) |
 | +376 | death-effect coroutine template spawned by `0xa36a` (default `0x894a` = small EXPL1 puff with panned sound) |
 | +397 | flags (bit 0 inherited on spawn) |
@@ -58,7 +65,7 @@ defaults at `0x61f4+`). Known fields:
 
 | addr | calls | role |
 |---|---|---|
-| `0xa2c6` | 122 | object visual init: d0 graphic, d1 timer, d2 anim offset, d4/d5 params; **blocks until on screen** |
+| `0xa2c6` | 122 | visual/collision init: d0 graphic, d1 class flags, d2 vstupni margin, d3 HP, d4 score, d5 cost; **blocks until threshold** |
 | `0x629c` | 112 | wait N frames |
 | `0x6c88` | 89 | attach animation sequencer |
 | `0x883c` | 73 | random |
@@ -74,6 +81,89 @@ Airborne flag bit 4 is applied in housekeeping at `0x6434–0x644e`.
 The camera y is saved before a yield and its delta is added back to object
 y afterwards. Once active, these objects therefore change **screen y only
 by their own velocity**; terrain scroll must not be added a second time.
+
+## Global difficulty, random state and active cost
+
+`fp@(182)` is **dynamic difficulty D=0..10**, not player count. Routine
+`0x1cd4..0x1d02` recomputes it after each scheduler pass:
+
+```
+D = min(10,
+  (((P1.rank>>8) + (P2.rank>>8) + ((P1.power+P2.power)>>2)) >> 3)
+  + max(levelPhase-1, 0))
+```
+
+Player rank (`+110`) grows once per live player task with signed saturation,
+resets on death and gains 6000 on an extra life. Enemy tasks in the current
+VBL therefore read the D produced at the end of the previous VBL. This value
+controls FODDER count/shooters, YELLOW and MEDTANK HP, HOMING corrections,
+GOOSE cadence, POPUP/PROXMINE activation and other scaling; actual
+multiplayer count remains a separate variable.
+
+`0x883c` is a 32-bit state machine, not a host-language random call. It
+doubles the state, XORs `$1d872b41` when the add carried or produced zero,
+SWAPs its 16-bit halves, then stores and returns that result. The sound CIAB IRQ
+`0x4ac8..0x4acc` first adds `VHPOSR` with `ADD.W` to the **high** half of
+the big-endian long, without carry into the low half. `game.html` ports both
+operations and accepts a captured VHPOS trace; its default zero contribution
+is deterministic but cannot claim the hardware's exact beam phase.
+
+The total at `fp@(156)` is accounting, not a universal hard allocation
+limit. Only call sites that explicitly invoke `0x8822` reject a task above
+160 (TOWN FODDERA/YELLOW). Direct `a2c6` users such as MINE, PROXMINE,
+TRAIN, FLAME, ROTO, MEDTANK/CAMOGUN, BIRD, MILL, POPUP, TOKEN and GOOSE
+must be charged even when the total temporarily exceeds 160.
+
+## Paula voices and the CIAB sound scheduler
+
+`0x4a66` installs a roughly 204.8 Hz CIAB interrupt which resumes four
+persistent sound coroutines in Paula order AUD3/AUD2/AUD1/AUD0. Requests use
+`priority*4` guards, strict unsigned replacement and an x-selected stereo
+pair with fallback to the opposite pair. Procedural waveforms, per-voice
+noise scratch, exact event hooks and remaining TOWN effects are documented in
+[SOUND](SOUND.md).
+
+The two disk samples use that same allocator rather than a separate mixer:
+`BIGEXPL.SND` supplies explosions and `SMART.SND` is submitted four times by
+the white-flash task. TOKEN pickup is a two-level scheduler case: a 50 Hz
+priority-100 task attempts notes at VBL 0/5/10/15, while each accepted note is
+then advanced by its own 204.8 Hz sound coroutine.
+
+The `0x56e6` noise polynomial is taken when the preceding `ADD.L` carries or
+produces zero (`BHI` skips it only for clear carry and non-zero result). GOOSE
+hit `0x4e46` also demonstrates why sound tasks remain live when muted: each
+accepted voice seeds that scratch from gameplay RNG only after its initial
+CIAB yield, while rejected or earlier-preempted requests consume no seed.
+
+Procedural rendering preserves signed 16-bit period arithmetic internally and
+converts the final Paula register word to unsigned only when producing audio.
+Waveform address advance is capped at PAL's minimum DMA period 123 as a
+WebAudio approximation of the hardware's previous-sample reuse. Exact
+below-minimum cadence additionally depends on scanline DMA-slot phase and is
+kept as an explicit measurement gap.
+
+The scheduler is also why PRNG perturbation is not a once-per-VBL operation:
+`0x4abc` reads `VHPOSR` on every sound interrupt. The browser accumulates the
+exact rational CIAB rate inside each 50 Hz game step, leaving the default beam
+word at zero until a hardware trace is available.
+
+## Collision scheduling
+
+Ordinary object tasks run at priority 100, the player projectile updater at
+`0xfffe` and the collision sweep at `0xffff`. Consequently a collision found
+at the end of VBL N is consumed by object callbacks on their resume in VBL
+N+1; `0x62d2` has already published the normal N frame. Events coalesce as a
+16-bit OR mask and callbacks dispatch in bit order `0,3,4,1,2,5`.
+The browser now keeps that boundary: the producing step only records pending
+bits and projectile consumption, while the next step clears the old hit flag,
+checks the current SMART pulse and dispatches the saved event before the
+object's next movement. The player resumes before input; consumed player
+bolts are removed by the relocated `0xfffe` updater immediately before the
+next sweep. Creation-order snapshots keep children spawned by an N+1 callback
+out of housekeeping until their own following resume, while still allowing
+their first field in the current scheduler pass. The remaining limitation is
+full callback/continuation interleaving across every priority-100 task, as
+tracked in `GAPS.md`.
 
 ## Aiming: angle → sprite frame
 
@@ -109,12 +199,25 @@ struct — **two player structs at `fp@(11176)` and `fp@(11356)`**
 state).
 
 **Fire cadence** (`0x7266`): press-edge detection against the
-previous frame, cooldown reloaded from player-struct `+98`, floored
-at 10 ticks under a powerup condition, decremented by the global
-frame delta.
+previous frame, cooldown reloaded from player-struct `+98`; pri aktivnim
+druhem hraci se pouzije `max(+98,10)`, jinak ulozena hodnota. Cooldown
+se zmensuje o globalni frame delta.
 
 **Hardware sprites confirmed**: the copper builder `0x5d86` writes
 SPR0PTH.. (reg `0x120+`) for **8 sprite slots of 548 B each**.
+
+The TOWN browser runtime now models the producer at `0x3d00/0x3d4e` as one
+shared 64-record queue for the player projectile pool, cannon and the second
+PLOP frame. Allocation uses the native remaining-count channel sequence,
+skips negative VSTART before consuming a record, preserves linear per-channel
+DMA blocking, maps channel pairs to the four COLOR17–31 banks and composites
+channel 0 last. Player bolts retain the native 30-slot pool and receive both
+their own velocity and camera delta in the spawn VBL; cannon depth is sampled
+before its current `0x62d2` movement. Equal-priority FIFO insertion also lets
+new cannon/HOMING/PLOP children run once in the spawning scheduler sweep:
+cannon and HOMING already move, while the PLOP animator publishes BULLET#2
+and kills it on the next resume. This implementation is scoped to the
+transcribed TOWN producers; later-level producers still need their own audit.
 
 **The copper event compiler** (`0x5dd4`): two sorted event queues
 (`fp@(11106)`/`fp@(11120)`) are merged per frame into copper
@@ -137,8 +240,9 @@ Also read along the way:
 
 - HUD copper events (`0x5b34`): BPLCON0 switches 5↔4 bitplanes around
   the HUD strip, and **COLOR16 changes per band: 0xAAE / 0xCCF /
-  0x88D** — light steel-blues of the fifth HUD bitplane. Projectile
-  sprite colours come separately from `0x2afc` (COLOR17–19).
+  0x88D**. A set mask bit has the measured effective OCS result COLOR16,
+  independent of lower4; conventional `16|lower4` is the AGA failure.
+  Projectile sprite colours come separately from `0x2afc` (COLOR17–19).
 - A level-select cheat handler reads raw keys at `0x20e4`.
 - The title sequence (`0xf42+`) loads COVER.RAW with palette `0x2abc`
   and preloads REACTOR frames for the logo animation.

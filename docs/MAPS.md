@@ -24,6 +24,13 @@ A stream of 4-byte records read as a big-endian long `D`; the game
 consumes only records that fall within 256 px ahead of the screen
 edge (`0x365e`).
 
+`game.html` proto oddeluje **task-start pri prefetchi** od viditelne
+aktivace v `a2c6`: formace a nahodne aktivacni prahy vzniknou uz v prvni
+fazi. Soucasny JS reader ale v jednom kroku projde vsechny prave zpusobile
+zaznamy, zatimco nativni reader mezi zaznamy yielduje. Geometrie a faze
+prefetche tedy sedi, presne mezitaskove RNG poradi pri soubehu vice zaznamu
+zustava otevrene v `GAPS.md`.
+
 | condition | meaning |
 |---|---|
 | `D == 0` | end of map |
@@ -111,6 +118,21 @@ modulo-4 skips 4 bytes at the **end** of each row, so the hidden
 renders draw exactly the visible window; clipping at the edges matches
 what the player sees.
 
+## Terrain control planes and HELI respawn
+
+Pruh mapy se na `0x34f2` maze do dvou ridicich rovin plnych jednicek.
+Kazda fyzicka cast mapoveho `.LIN` s raw flagem `0x04` pak mintermem
+`$0A = ~A & C` vyreze svou opaque masku z plane1; flag `0x02` dela
+totez s plane0. Vizualni flag `0x10` tento zapis nepotlaci, proto jsou
+napriklad `_STOP.LIN#3` casti s flagem `0x14` neviditelne prekazky.
+
+HELI sonda `0x3dd4` pouziva minterm `$50 = A & ~C` mezi opaque maskou
+`JEEPHELI#0` a plane1. `0x9046` pri startu/respawnu synchronne zkousi
+16 sloupcu x 12 radku: x 160..280 po8, v kazdem y 192..104 po−8.
+Prvni volne misto vyhraje; po 192 kolizich zustane nekontrolovany
+fallback `(288,192)`. Runtime si proto predpocitava terrain plane oddelene
+od viditelnych paletovych indexu.
+
 ## Measured level numbers
 
 | # | map | tiles | objects | palette changes | map height px |
@@ -135,6 +157,10 @@ found positions descend **monotonically at a constant scroll rate**
 structure for structure (hedges, compounds, boulder fields,
 platforms). Remaining differences are dynamic entities (explosions,
 moved enemies) which a static map by definition does not carry.
+
+The footage value above is a coarse correlation measurement. Runtime code
+at `0x1da6` writes `$4000` in 16.16 units, i.e. exactly **0.25 px/VBL =
+12.5 px/s at 50 Hz**; the browser now uses this exact value.
 
 ## Deliberately not rendered / known deviations
 

@@ -351,10 +351,10 @@ function compileCopperPaletteLines(checks, mapHeight, margin, top, rows,
 }
 
 /* Prevede platny vyrez indexove mapy na RGBA pres Copper paletu kazdeho
-   scanline. Fade sem zamerne nepatri: runtime jej zatim aplikuje jednou
-   spolecnym overlayem az nad pozadim a BOB vrstvou. */
+   scanline; volitelny black/white fade se aplikuje na RGB12 jeste pred
+   expanzi nibblu stejne jako v Copper compileru originalu. */
 function colorizeIndexedRows(mapIndex, width, mapHeight, margin, top, rows,
-                             checks, out) {
+                             checks, out, blackLevel, whiteLevel) {
   const mapRows = width > 0 ? mapIndex.length / width : 0;
   if (!Number.isInteger(width) || width <= 0 ||
       !Number.isInteger(mapRows) || !Number.isInteger(top) ||
@@ -366,11 +366,40 @@ function colorizeIndexedRows(mapIndex, width, mapHeight, margin, top, rows,
   if (out.length !== size)
     throw new RangeError("indexed map RGBA buffer has a wrong size");
   const palettes = compileCopperPaletteLines(
-    checks, mapHeight, margin, top, rows, 0, 0);
+    checks, mapHeight, margin, top, rows, blackLevel || 0, whiteLevel || 0);
   for (let sy = 0; sy < rows; sy++) {
     const src = (top + sy) * width, pal = sy * 16;
     for (let x = 0; x < width; x++) {
       const word = palettes[pal + mapIndex[src + x]];
+      const o = (sy * width + x) * 4;
+      out[o] = ((word >> 8) & 15) * 17;
+      out[o + 1] = ((word >> 4) & 15) * 17;
+      out[o + 2] = (word & 15) * 17;
+      out[o + 3] = 255;
+    }
+  }
+  return out;
+}
+
+/* Varianta pro uz vyrezany 320x256 compositor. Zdroj zacina radkem 0,
+   ale Copper paleta se stale pocita z absolutniho mapoveho paletteTop. */
+function colorizeIndexedField(fieldIndex, width, rows, mapHeight, margin,
+                              paletteTop, checks, out,
+                              blackLevel, whiteLevel) {
+  if (!Number.isInteger(width) || width <= 0 ||
+      !Number.isInteger(rows) || rows < 0 || fieldIndex.length !== width * rows)
+    throw new RangeError("indexed field has a wrong size");
+  const size = width * rows * 4;
+  if (out === undefined) out = new Uint8ClampedArray(size);
+  if (out.length !== size)
+    throw new RangeError("indexed field RGBA buffer has a wrong size");
+  const palettes = compileCopperPaletteLines(
+    checks, mapHeight, margin, paletteTop, rows,
+    blackLevel || 0, whiteLevel || 0);
+  for (let sy = 0; sy < rows; sy++) {
+    const pal = sy * 16;
+    for (let x = 0; x < width; x++) {
+      const word = palettes[pal + fieldIndex[sy * width + x]];
       const o = (sy * width + x) * 4;
       out[o] = ((word >> 8) & 15) * 17;
       out[o + 1] = ((word >> 4) & 15) * 17;
@@ -393,6 +422,12 @@ function renderMap(state, lv, withObjects) {
   const W = 320, H = height + 2 * MARGIN;
   const px = new Uint8ClampedArray(W * H * 4);
   const mapIndex = new Uint8Array(W * H);
+  // Druha control plane mapy z 0x34f2/0x3dd4: 1 = volno. Fyzicke
+  // .LIN casti s raw flagem bit2 z ni mintermem $0A vyrezavaji svou
+  // opaque masku. Je oddelena od barev; i neviditelny flag 0x10 muze
+  // zamerne vytvorit prekazku (_STOP#3 ma 0x14).
+  const terrainOpen = new Uint8Array(W * H);
+  terrainOpen.fill(1);
   mapIndex.fill(10);
 
   const rgb = v => [((v >> 8) & 15) * 17, ((v >> 4) & 15) * 17, (v & 15) * 17];
@@ -436,10 +471,42 @@ function renderMap(state, lv, withObjects) {
       }
     }
   }
-  for (const t of tiles) blit(t.x, t.y, t.gfx);
+  function paintTerrainControl(rx, ry, gfx) {
+    const fname = order[gfx & 0x1FF];
+    if (!fname) return;
+    const lf = framesFor(state, fname)[gfx >> 9];
+    if (!lf) return;
+    for (const part of lf.parts) {
+      if (!(part.flags & 0x04) || !part.w || !part.h) continue;
+      const wd = (part.w + 15) >> 4;
+      if (part.data.length < wd * 8 * part.h) continue;
+      const x0 = rx + XOFF - part.cx;
+      const y0 = height + MARGIN - ry - part.cy;
+      for (let y = 0; y < part.h; y++) {
+        const ty = y0 + y;
+        if (ty < 0 || ty >= H) continue;
+        for (let x = 0; x < part.w; x++) {
+          const tx = x0 + x;
+          if (tx < 0 || tx >= W) continue;
+          const word = x >> 4, bit = 0x8000 >> (x & 15);
+          let color = 0;
+          for (let plane = 0; plane < 4; plane++) {
+            const o = (y * 4 + plane) * wd * 2 + word * 2;
+            if (((part.data[o] << 8) | part.data[o + 1]) & bit)
+              color |= 1 << plane;
+          }
+          if (color !== part.trans) terrainOpen[ty * W + tx] = 0;
+        }
+      }
+    }
+  }
+  for (const t of tiles) {
+    paintTerrainControl(t.x, t.y, t.gfx);
+    blit(t.x, t.y, t.gfx);
+  }
   if (withObjects !== false)
     for (const t of objs) blit(t.x, t.y, t.gfx);
-  return { px, mapIndex, w: W, h: H, name: pamName,
+  return { px, mapIndex, terrainOpen, w: W, h: H, name: pamName,
            tiles: tiles.length, objs: objs.length };
 }
 
@@ -573,15 +640,15 @@ function ModPlayer(bytes) {
 }
 
 /* ============================================================ HRA
-   Hratelna kostra nad skutecnymi daty diskety. Autenticke: mapa,
-   grafika, palety, tempo scrollu, pozice a typy spawnu. ODHADNUTE
-   (zatim): chovani nepratel, rychlosti strel, hitboxy - postupne se
-   nahrazuje dekompilovanym originalem z AMPROG.OBJ. */
+   Hratelna rekonstrukce nad skutecnymi daty diskety. TOWN mapa, grafika,
+   Copper palety, spawn dispatch, podporovane korutiny, strely i resident
+   collision sweep jsou transkripce z AMPROG.OBJ; vedome mezery jsou v
+   docs/TOWN-PARITY.md a docs/GAPS.md. */
 "use strict";
 const $ = s => document.querySelector(s);
 const state = {};
 const TICK = 1 / 50;                 // herni logika na 50 Hz jako original
-const SCROLL = 12;                   // px/s (zmereno z videa TOWN)
+const SCROLL = 12.5;                 // 0x1da6: $4000 16.16 = .25 px/VBL
 
 /* ---- nacteni diskety ---- */
 window.addEventListener("dragover", e => e.preventDefault());
@@ -810,8 +877,9 @@ function blitIndexedOperation(dst, dstW, dstH, spr, anchorX, anchorY, op) {
   if (op !== BOB_COOKIE_COPY && op !== BOB_CLEAR_INDEX0)
     throw new RangeError("unknown indexed BOB operation");
   const clear = op === BOB_CLEAR_INDEX0;
-  const left = Math.round(anchorX + spr.ox);
-  const top = Math.round(anchorY + spr.oy);
+  // 68k 16.16 souradnice se pri cteni high-word orezavaji dolu.
+  const left = Math.floor(anchorX + spr.ox);
+  const top = Math.floor(anchorY + spr.oy);
   for (let sy = 0; sy < spr.h; sy++) {
     const dy = top + sy;
     if (dy < 0 || dy >= dstH) continue;
@@ -838,6 +906,214 @@ function clearIndexedMask(dst, dstW, dstH, spr, anchorX, anchorY) {
    odpovidaji canvasove ceste sprite(). Cilovy Uint8Array meni na miste. */
 function blitIndexed(dst, dstW, dstH, spr, anchorX, anchorY) {
   return blitIndexedCookie(dst, dstW, dstH, spr, anchorX, anchorY);
+}
+
+const BOB_FILL_INDEX9 = "fill9";
+function blitIndexedSolid(dst, dstW, dstH, spr, anchorX, anchorY, color) {
+  const left = Math.floor(anchorX + spr.ox);
+  const top = Math.floor(anchorY + spr.oy);
+  for (let sy = 0; sy < spr.h; sy++) {
+    const dy = top + sy;
+    if (dy < 0 || dy >= dstH) continue;
+    for (let sx = 0; sx < spr.w; sx++) {
+      const dx = left + sx;
+      if (dx < 0 || dx >= dstW) continue;
+      if (spr.pix[sy * spr.w + sx] !== 0xFF)
+        dst[dy * dstW + dx] = color & 15;
+    }
+  }
+  return dst;
+}
+
+/* Jeden skutecny TOWN BOB compositor. Kazdy frame zacina cistou kopii
+   mapoveho indexoveho viewportu, potom vsechny podporovane objekty vlozi
+   do jedine unsigned depth fronty 0x481a. Save-under A0 prepass neni ve
+   stateless bufferu viditelna operace; cookie, subtractive a shadow ano. */
+function composeTownBobs(g, top) {
+  const W = 320, H = 256;
+  if (!Number.isInteger(top) || top < 0 || top + H > g.mapH)
+    throw new RangeError("BOB viewport is outside the map");
+  const dst = g.bobIndex && g.bobIndex.length === W * H
+    ? g.bobIndex : (g.bobIndex = new Uint8Array(W * H));
+  dst.set(g.mapIndex.subarray(top * W, (top + H) * W));
+
+  // 0x898c zapisuje decal do obou mapovych stran, tedy je soucasti
+  // pozadi pred BOB frontou. Stateless compositor jej aplikuje jako
+  // ekvivalentni indexovy prepass (nikoli jako z=1 objekt).
+  for (const ef of g.effects || []) {
+    const decal = indexedFrameFor(state, ef.file, ef.frame);
+    if (decal) blitIndexedCookie(dst, W, H, decal, ef.x, ef.y - top);
+  }
+
+  let serial = 0;
+  const records = [];
+  const pending = [];
+  const frame = (file, idx) => indexedFrameFor(state, file, idx);
+  function enqueue(spec) {
+    if (!spec.primary) return;
+    const batch = standardBobRecords(spec, serial);
+    records.push(...batch.records); serial = batch.nextSerial;
+    if (spec.primaryOp)
+      for (const r of batch.records)
+        if (r.kind === "main") r.op = spec.primaryOp;
+  }
+  function bob(id, file, idx, x, y, z, opts) {
+    opts = opts || {};
+    const primary = frame(file, idx);
+    if (!primary) return;
+    const spec = { id, primary,
+      secondary: opts.secondaryFile === undefined ? null
+        : frame(opts.secondaryFile, opts.secondaryFrame),
+      x, y, z, objectFlags: opts.objectFlags || 0,
+      castShadow: opts.castShadow,
+      primaryOp: opts.primaryOp };
+    pending.push({ spec,
+      priority: Number.isInteger(opts.priority) ? opts.priority : 100,
+      ordinal: Number.isInteger(opts.ordinal)
+        ? opts.ordinal : 0x40000000 + pending.length,
+      collected: pending.length });
+  }
+
+  // Mapove objekty. MEDTANK ma dve cookie vrstvy stejne hloubky;
+  // turret se vlozi driv, a proto pri stejnem klici skonci navrchu.
+  for (const s of g.spawns) {
+    if (!s.born || !s.alive) continue;
+    const sy = s.y - top;
+    if (sy < -96 || sy > 352) continue;
+    if (s.beh === "boss") {
+      if (!s.bodyHidden) {
+        const secondaryVisible = s.rotorActive && (s.rotorTick & 1) === 0;
+        bob("boss-main", s.file, s.bodyFrame || 0, s.x, sy, 32, {
+          ordinal: s.bobOrdinal,
+          secondaryFile: secondaryVisible ? "JEEPHELI.LIN" : undefined,
+          secondaryFrame: 5 + ((s.rotorTick >> 1) & 3),
+          primaryOp: s.hitSpread ? BOB_FILL_INDEX9 : null,
+        });
+      }
+      for (const q of s.parts || []) {
+        if (!q.entered) continue;
+        const pos = bossPartPosition(s, q, top);
+        bob("boss-" + q.id, "GOOSE.LIN", q.frame,
+            pos.x, pos.y, q.z || 33, { ordinal: q.bobOrdinal });
+      }
+      continue;
+    }
+    if (s.beh === "tank") {
+      if (!s.tankSetup) continue;
+      if (s.turretTask && s.turretTask.alive)
+        bob("tank-turret", s.file, Math.min(19, 4 + dir16(s.tang)),
+            s.x, sy, 1, { castShadow: false,
+                           ordinal: s.turretBobOrdinal,
+                           primaryOp: s.hitFlash ? BOB_FILL_INDEX9 : null });
+      bob("tank-hull", s.file, s.hullF, s.x, sy, 0,
+          { castShadow: false,
+            ordinal: s.bobOrdinal,
+            primaryOp: s.hitFlash ? BOB_FILL_INDEX9 : null });
+      continue;
+    }
+    const idx = s.fr >= 0 ? s.fr
+      : (s.anim ? s.anim.frames[s.apos].frame : s.idx);
+    const file = s.fr >= 0 || !s.anim ? s.file : s.anim.frames[s.apos].file;
+    if (s.beh === "mill") {
+      const secondaryVisible = (s.rotorTick & 1) === 0;
+      bob("mill", file, idx, s.x, sy, 32, {
+        ordinal: s.bobOrdinal,
+        secondaryFile: secondaryVisible ? "JEEPHELI.LIN" : undefined,
+        secondaryFrame: 5 + ((s.rotorTick >> 1) & 3),
+        primaryOp: s.hitFlash ? BOB_FILL_INDEX9 : null,
+      });
+    } else {
+      bob("spawn", file, idx, s.x, sy, 0, {
+        ordinal: s.bobOrdinal,
+        castShadow: false,
+        primaryOp: s.hitFlash ? BOB_FILL_INDEX9 : null,
+      });
+    }
+  }
+
+  for (const h of g.hazards || []) {
+    if (!h.alive || h.consumed) continue;
+    const idx = h.seq ? h.seq[h.apos] : h.frame;
+    const z = h.kind === "minecore" || h.kind === "proxfrag" ? 32 : 0;
+    bob("hazard-" + h.kind, h.file, idx, h.x, h.y - top, z,
+        { castShadow: false,
+          ordinal: h.bobOrdinal,
+          priority: h.bobPriority,
+          objectFlags: h.kind === "minecore" || h.kind === "proxfrag" ? 1 : 0,
+          primaryOp: h.hitFlash ? BOB_FILL_INDEX9 : null });
+  }
+
+  for (const a of g.air || []) {
+    if (!a.alive) continue;
+    const file = a.kind === "fod" ? "FODDERA.LIN"
+      : a.kind === "yel" ? "YELLOW.LIN" : "BIRD.LIN";
+    bob("air-" + a.kind, file, a.seq[a.apos], a.x, a.y - top, 32,
+        { ordinal: a.bobOrdinal,
+          primaryOp: a.hitFlash ? BOB_FILL_INDEX9 : null });
+  }
+
+  for (const bm of g.booms || []) {
+    if (bm.t < 0) continue;
+    const big = bm.kind === "big";
+    const file = big ? "EXPL2.LIN" : "EXPL1.LIN";
+    const idx = big ? Math.min(6, Math.floor(bm.t / 6))
+                    : 7 + Math.min(6, bm.t >> 2);
+    bob("boom", file, idx, bm.x, bm.y - top, bm.z ?? 1,
+        { ordinal: bm.bobOrdinal, castShadow: false, objectFlags: 1 });
+  }
+
+  // PLOP#0 je setup BOB pred prvnim animator tickem a v beznem 50Hz fieldu
+  // se neenqueueuje; fallback nize slouzi jen rucne pozastavenemu stavu.
+  // Prvni publikovany PLOP je HW BULLET#2. HOMING zustava bezny BOB.
+  for (const pl of g.plops || [])
+    if (pl.t === 0)
+      bob("plop", "PLOP.LIN", 0, pl.x, pl.y, 33,
+          { ordinal: pl.bobOrdinal, castShadow: false, objectFlags: 1 });
+  for (const sh of g.shots || [])
+    if (sh.kind === "hom")
+      bob("homing", "HOMING.LIN", dir16(sh.ang), sh.x, sh.y, 32,
+          { ordinal: sh.bobOrdinal, castShadow: false, objectFlags: 1 });
+
+  for (const k of g.tokens || [])
+    bob("token", "TOKEN.LIN", k.blink ? 0 : TOKEN_ICONS[k.typ],
+        k.x, k.y - top, 32, { ordinal: k.bobOrdinal,
+          castShadow: false, objectFlags: 1 });
+
+  const p = g.player;
+  if (p && p.alive) {
+    // Svazany MINE oblouk meni z o +/-2, takze globalni fronta jej jednou
+    // polozi pred a jednou za hrace.
+    const bubble = p.bubbleBound;
+    if (bubble && bubble.visible)
+      bob("player-bubble", "MINE.LIN", bubble.frame,
+          p.x, p.y, 32 + bubble.z,
+          { ordinal: bubble.bobOrdinal, castShadow: false, objectFlags: 1 });
+    const playerFrame = HELI_SEQUENCE[(p.heliAnimPos | 0) & 7]; // 0x945a
+    bob("player", "JEEPHELI.LIN", playerFrame, p.x, p.y, 32, {
+      ordinal: p.bobOrdinal,
+      primaryOp: (p.inv & 8) ? BOB_FILL_INDEX9 : null,
+    });
+    // HELI weapon child 0x939c je neviditelny scheduler task. Snimky
+    // JEEPHELI#9..16 patri jeepu/lodi 0x89e8, nikoli vrtulniku 0x9410.
+  }
+
+  // Scheduler tasky bezi v creation order. Pri shodnem depth key ale
+  // 0x481a vlozi novejsi BOB pred starsi; proto nejdriv enqueueujeme
+  // actor batch podle stabilniho task ordinalu, ne podle JS kontejneru.
+  pending.sort((a, b) => a.priority - b.priority ||
+    a.ordinal - b.ordinal || a.collected - b.collected);
+  for (const item of pending) enqueue(item.spec);
+  const ordered = sortBobRecords(records);
+  for (const r of ordered) {
+    if (r.op === BOB_CLEAR_INDEX0)
+      clearIndexedMask(dst, W, H, r.spr, r.x, r.y);
+    else if (r.op === BOB_FILL_INDEX9)
+      blitIndexedSolid(dst, W, H, r.spr, r.x, r.y, 9);
+    else
+      blitIndexedCookie(dst, W, H, r.spr, r.x, r.y);
+  }
+  g.lastBobRecords = ordered;
+  return { index: dst, records, ordered };
 }
 
 /* sprite -> offscreen canvas (cache); pal = 16x[r,g,b] */
@@ -898,7 +1174,7 @@ function drawAirBob(ctx, a, spr, ay) {
   ctx.globalAlpha = 0.45;
   ctx.drawImage(sh.cv, Math.round(a.x + sh.ox + 16), Math.round(ay + sh.oy + 32));
   ctx.globalAlpha = 1;
-  const img = a.flashT > 0 ? whiteOf(spr) : spr;
+  const img = a.hitFlash ? whiteOf(spr) : spr;
   ctx.drawImage(img.cv, Math.round(a.x + img.ox), Math.round(ay + img.oy));
 }
 /* stinova silueta spritu (cerna kopie) */
@@ -915,24 +1191,541 @@ function shadowOf(spr) {
   return spr._sh;
 }
 
-/* ---- zvuk (8bit signed PCM ze .SND) ---- */
-let actx = null, sndBuf = {};
-function snd(name, rate) {
-  if (!actx) try { actx = new AudioContext(); } catch (e) { return; }
-  if (!sndBuf[name]) {
-    const f = state.files.find(f => f.name === name);
-    if (!f) return;
-    const raw = unpackFile(state.adf, f);
-    const buf = actx.createBuffer(1, raw.length, rate || 8000);
-    const ch = buf.getChannelData(0);
-    for (let i = 0; i < raw.length; i++)
-      ch[i] = ((raw[i] << 24) >> 24) / 128;
-    sndBuf[name] = buf;
+/* ---- Paula/CIA zvukove efekty (0x4a66..0x56fc) ----
+   Efekt neni "prehraj soubor": original arbitruje ctyri persistentni
+   voice struktury, procedurarni zvuky krokuje CIAB ~204.8 Hz a diskove
+   vzorky BIGEXPL.SND/SMART.SND pousti pres Paula DMA. Logicky stav bezi i
+   pri mute, aby priority, scratch a RNG zustaly deterministicke. */
+let actx = null;
+const PAULA_CLOCK = 3546895;
+const PAULA_PAL_MIN_DMA_PERIOD = 123;
+const SFX_CIA_CLOCK = 709379, SFX_CIA_LATCH = 0x0D88;
+const SFX_CIA_HZ = SFX_CIA_CLOCK / SFX_CIA_LATCH;
+const SFX_VBL_DEN = SFX_CIA_LATCH * 50;
+const SFX_HW_CHANNELS = [3, 2, 1, 0];
+const SFX_FIRE_WAVE = new Int8Array([
+  0,16,32,64,127,64,32,16, 0,-64,-96,-112,-127,-112,-96,-64,
+]);
+const SFX_HIT_WAVE = new Int8Array([
+  0,32,64,96,127,96,64,32, 0,-32,-64,-96,-128,-96,-64,-32,
+]);
+const SFX_OPEN_WAVE = new Int8Array([
+  0,64,127,64,0,-64,-127,-64, 0,32,64,32,0,-32,-64,-32,
+]);
+const SFX_TOKEN_WAVE_TABLE = new Int8Array([
+  8,24,40,56,-56,-40,-24,-8, 8,24,40,56,-56,-40,-24,-8,
+]);
+const sfxAudioCache = new Map();
+
+function createTownSfxState() {
+  return { phase: 0, irq: 0, serial: 0, events: [],
+    voices: SFX_HW_CHANNELS.map(channel => ({
+      channel, guard: 0, scratch: new Uint8Array(256),
+      effect: null, source: null,
+    })) };
+}
+function ensureTownSfx(g) {
+  if (!g.sfx || !Array.isArray(g.sfx.voices) || g.sfx.voices.length !== 4)
+    g.sfx = createTownSfxState();
+  return g.sfx;
+}
+function sfxLog(sfx, event) {
+  sfx.events.push(event);
+  if (sfx.events.length > 256) sfx.events.splice(0, sfx.events.length - 256);
+}
+function sfxPairForX(x) {
+  // 0x4c0c: signed D0<160 -> nejdriv structs 0/3 = AUD3/AUD0;
+  // vpravo -> nejdriv structs 1/2 = AUD2/AUD1. Pri shode vyhrava prvni.
+  return signedWord(Math.trunc(x || 0)) < 160 ? [0, 3] : [1, 2];
+}
+function sfxLeastBusyVoice(sfx, pair) {
+  return sfx.voices[pair[1]].guard < sfx.voices[pair[0]].guard
+    ? pair[1] : pair[0];
+}
+function sfxSelectVoice(sfx, x, priority) {
+  const guard = (priority & 0xffff) * 4;
+  const preferred = sfxPairForX(x);
+  let vi = sfxLeastBusyVoice(sfx, preferred);
+  if (guard > sfx.voices[vi].guard) return { vi, guard };
+  // 0x4b8c/0x4bb4 po rejectu prvni dvojice propadnou do druheho
+  // selectoru. Panovani je tedy preference, nikoli pevny dvoukanalovy limit.
+  const fallback = preferred[0] === 0 ? [1, 2] : [0, 3];
+  vi = sfxLeastBusyVoice(sfx, fallback);
+  return guard > sfx.voices[vi].guard ? { vi, guard } : null;
+}
+function sfxSignedByte(v) { return (v << 24) >> 24; }
+function sfxPaulaVolume(v) { return (v & 0x40) ? 64 : (v & 0x3f); }
+function sfxReadLong(bytes) {
+  return (((bytes[0] << 24) | (bytes[1] << 16) |
+           (bytes[2] << 8) | bytes[3]) >>> 0);
+}
+function sfxWriteLong(bytes, off, v) {
+  bytes[off] = v >>> 24; bytes[off + 1] = v >>> 16;
+  bytes[off + 2] = v >>> 8; bytes[off + 3] = v;
+}
+/* 0x56e6: scratch[0] je persistentni seed; D0=N vyrobi pres DBF presne
+   N longu (ne N+1). */
+function sfxNoiseFill(scratch, longs) {
+  let v = (~sfxReadLong(scratch)) >>> 0;
+  for (let i = 0; i < longs; i++) {
+    const carry = v >>> 31;
+    v = (v << 1) >>> 0;
+    // 0x56f4 BHI preskoci XOR jen pri C=0 A Z=0. Vedle carry se tedy
+    // polynomial pouzije i pro zdvojenou nulu (seed scratch=0xffffffff).
+    if (carry || v === 0) v = (v ^ 0x1D872B41) >>> 0;
+    v = ((v << 16) | (v >>> 16)) >>> 0;
+    sfxWriteLong(scratch, i * 4, v);
   }
+  return scratch;
+}
+function sfxStaticTimeline(wave, volume, period, count, volStep, periodShift) {
+  const states = [];
+  let v = volume, p = period;
+  for (let i = 0; i < count; i++) {
+    states.push({ wave, volume: v, period: p, length: wave.length, ticks: 1 });
+    v += volStep;
+    p = signedWord(p + (signedWord(p) >> periodShift));
+  }
+  return states;
+}
+function sfxFireTimeline() {
+  return sfxStaticTimeline(SFX_FIRE_WAVE, 32, 1000, 32, -1, 4);
+}
+function sfxHitTimeline() {
+  return sfxStaticTimeline(SFX_HIT_WAVE, 64, 200, 16, -4, 2);
+}
+function sfxShieldBubbleTimeline() {
+  // 0x500e: bound MINE#9/#10 child, nikoli TOKEN typ3. NOT.W se pouzije
+  // jen pri nastavenem bitu2 volume counteru a vysledek se omezi na 2 bity.
+  const states = [];
+  for (let volume = 48; volume > 0; volume--) {
+    let phase = volume;
+    if (phase & 4) phase = ~phase;
+    states.push({ wave: SFX_HIT_WAVE, volume,
+                  period: 150 + ((phase & 3) << 2),
+                  length: 16, ticks: 1 });
+  }
+  return states;
+}
+function sfxTokenPickupTimeline(period, ops = null) {
+  // 0x5672: osmbajtovy waveform je rozdil zdvojene tabulky 0x56c6 a
+  // jejiho offsetu ((volume&31)>>2). Kazdy stav ceka pres 0x4ab8 dva IRQ.
+  const states = [];
+  for (let volume = 64; volume > 0; volume--) {
+    const off = (volume & 31) >> 2, wave = new Uint8Array(8);
+    for (let i = 0; i < wave.length; i++)
+      wave[i] = SFX_TOKEN_WAVE_TABLE[i] - SFX_TOKEN_WAVE_TABLE[i + off];
+    if (ops) ops.push({ tick: 1 + states.length * 2, bytes: wave.slice() });
+    states.push({ wave, volume: sfxPaulaVolume(volume), period,
+                  length: 8, ticks: 2 });
+  }
+  return states;
+}
+function sfxPlayerTransitionTimeline() {
+  // 0x4dc6: period stridave XORuje bit6 a klesa o dva; raw volume
+  // 64..1 prochazi pres skutecnou 7bitovou Paula volume semantiku.
+  const states = [];
+  let period = 1500;
+  for (let volume = 64; volume > 0; volume--) {
+    states.push({ wave: SFX_HIT_WAVE, volume: sfxPaulaVolume(volume),
+                  period, length: 16, ticks: 1 });
+    period = signedWord((period ^ 0x40) - 2);
+  }
+  return states;
+}
+function sfxBossDeathTimeline(base) {
+  // 0x553a/0x5556: dve nucene stereo vetve, kazda 32 dvojkroku.
+  const wave = new Int8Array([0,64,127,64,0,-64,-128,-64]);
+  const states = [];
+  for (let volume = 32; volume > 0; volume--) {
+    states.push({ wave, volume: sfxPaulaVolume(volume),
+                  period: signedWord(base + volume * 4),
+                  length: 8, ticks: 3 });
+    states.push({ wave, volume: sfxPaulaVolume(-volume),
+                  period: signedWord(base - volume * 4),
+                  length: 8, ticks: 3 });
+  }
+  return states;
+}
+function sfxGooseHitTimeline(scratch) {
+  // 0x4e7c..0x4e9e: globalni seed je do scratch[0] zapsan pouze pred
+  // vstupem. Kratky skok 66dc se vraci na 0x4e7c, ne na RNG v 0x4e76.
+  const states = [];
+  let period = 150;
+  for (let volume = 64; volume > 0; volume--) {
+    sfxNoiseFill(scratch, 6);                  // 6 longu = AUDLEN 12 words
+    states.push({ wave: scratch.slice(0, 24),
+                  volume: sfxPaulaVolume(volume), period,
+                  length: 24, ticks: 1 });
+    period = signedWord(period + (signedWord(period) >> 5));
+  }
+  return states;
+}
+function sfxOpeningTimeline(base, hold) {
+  const states = [];
+  let p = signedWord(base * 4), last = p;
+  while (p > base) {
+    last = p;
+    states.push({ wave: SFX_OPEN_WAVE, volume: 48, period: p,
+                  length: 16, ticks: 1 });
+    p = signedWord(p - (signedWord(p) >> 5));
+  }
+  states.push({ wave: SFX_OPEN_WAVE, volume: 48, period: last,
+                length: 16, ticks: hold });
+  p = base;
+  for (let volume = 48; volume > 0; volume--) {
+    states.push({ wave: SFX_OPEN_WAVE, volume, period: p,
+                  length: 16, ticks: 4 });
+    p = signedWord(p + (signedWord(p) >> 4));
+  }
+  return states;
+}
+function sfxNoiseTimeline(voice, kind) {
+  const scratch = voice.scratch.slice(), states = [], ops = [];
+  // Prvni CIAB resume teprve vstoupi do callbacku a na jeho uvodnim
+  // 0x4ae0 znovu yieldne. Prvni buffer se proto meni az na ticku 1.
+  let tick = 1;
+  const noise = (longs, volume, period, length, ticks = 1, clear = 0) => {
+    if (clear) scratch.fill(0, 0, clear);
+    sfxNoiseFill(scratch, longs);
+    ops.push({ tick, longs, clear });
+    states.push({ wave: scratch.slice(0, Math.max(length, longs * 4)),
+                  volume: sfxPaulaVolume(volume), period,
+                  length, ticks });
+    tick += ticks;
+  };
+  if (kind === "homing") {
+    for (let i = 0; i < 64; i++) noise(8, 64 - i, 320 - i, 32);
+  } else if (kind === "cannon") {
+    let period = 256;
+    for (let volume = 96, first = true; volume > 0; volume -= 2) {
+      const words = (volume & 3) + 1;
+      noise(2, volume, period, words * 2, 1, first ? 12 : 0);
+      first = false;
+      period = signedWord(period + (signedWord(period) >> 3));
+    }
+  } else if (kind === "flame-puff") {
+    for (let volume = 0; volume < 64; volume += 2)
+      noise(8, volume, 500, 32);
+    for (let volume = 64; volume > 0; volume--)
+      noise(8, volume, 1000, 32, 2);
+  }
+  // Po poslednim audible waitu prijde jeste resume do cleanupu 0x4bf2.
+  return { states, logical: { tick: 0, end: tick + 1, ops } };
+}
+function sfxRenderTimeline(states, sampleRate) {
+  const ticks = states.reduce((n, s) => n + s.ticks, 0);
+  const out = new Float32Array(Math.max(1,
+    Math.ceil(ticks * sampleRate / SFX_CIA_HZ)));
+  let si = 0, stateEnd = states.length ? states[0].ticks : 1, phase = 0;
+  for (let i = 0; i < out.length && states.length; i++) {
+    const at = i * SFX_CIA_HZ / sampleRate;
+    while (si + 1 < states.length && at >= stateEnd) {
+      si++; stateEnd += states[si].ticks;
+    }
+    const s = states[si], wave = s.wave;
+    const length = Math.max(1, Math.min(s.length || wave.length, wave.length));
+    out[i] = sfxSignedByte(wave[Math.floor(phase) % length]) / 128 *
+             (s.volume / 64);
+    // Period je WORD registr. ASR aktualizace jej muze prevest do zaporneho
+    // signed JS cisla, Paula ale stale vidi stejne unsigned 16 bitu. Pod PAL
+    // DMA minimem 123 nestihne nacist dalsi byte a znovu pouzije predchozi.
+    // WebAudio surrogate proto omezi prumerny posun adresy na 1 byte / 123
+    // tiku. Bitove presny vzor reuse by navic vyzadoval beam/DMA-slot fazi.
+    const dmaPeriod = Math.max(PAULA_PAL_MIN_DMA_PERIOD,
+                               (s.period & 0xffff) || 1);
+    phase += PAULA_CLOCK / dmaPeriod / sampleRate;
+  }
+  return out;
+}
+function sfxLogicalTimeline(states, ops = []) {
+  return { tick: 0,
+    // 1x uvodni callback yield + audible wait(y) + 1x cleanup resume.
+    end: states.reduce((ticks, state) => ticks + state.ticks, 2), ops };
+}
+function sfxTimelineBuffer(states, cacheKey) {
+  if (!actx) return null;
+  const key = cacheKey && cacheKey + ":" + actx.sampleRate;
+  if (key && sfxAudioCache.has(key)) return sfxAudioCache.get(key);
+  const pcm = sfxRenderTimeline(states, actx.sampleRate);
+  const buf = actx.createBuffer(1, pcm.length, actx.sampleRate);
+  buf.copyToChannel(pcm, 0);
+  if (key) sfxAudioCache.set(key, buf);
+  return buf;
+}
+function sfxRawBuffer(name, rate = 8000) {
+  if (!actx) return null;
+  const key = "raw:" + name + ":" + rate;
+  if (sfxAudioCache.has(key)) return sfxAudioCache.get(key);
+  const f = state.files && state.files.find(f => f.name === name);
+  if (!f) return null;
+  const raw = unpackFile(state.adf, f);
+  const buf = actx.createBuffer(1, raw.length, rate), ch = buf.getChannelData(0);
+  for (let i = 0; i < raw.length; i++) ch[i] = sfxSignedByte(raw[i]) / 128;
+  sfxAudioCache.set(key, buf);
+  return buf;
+}
+function sfxStopVoiceSource(voice) {
+  if (!voice.source) return;
+  try { voice.source.stop(); } catch (_e) {}
+  voice.source = null;
+}
+function sfxAttachVoiceSource(voice, src) {
+  const pan = actx.createStereoPanner ? actx.createStereoPanner() : null;
+  if (pan) {
+    pan.pan.value = (voice.channel === 0 || voice.channel === 3) ? -1 : 1;
+    src.connect(pan); pan.connect(actx.destination);
+  } else src.connect(actx.destination);
+  voice.source = src;
+  src.onended = () => { if (voice.source === src) voice.source = null; };
+}
+function sfxPlayVoice(voice, spec) {
+  if (!actx) return;
+  if (actx.state === "suspended") actx.resume().catch(() => {});
+  sfxStopVoiceSource(voice);
+  // 0x4e46 nezna svuj waveform pri eventu: globalni RNG seeduje kazdy
+  // prijaty hlas az po uvodnim callback yieldu. Zdroj proto zalozi IRQ model.
+  if (spec.deferred) return;
   const src = actx.createBufferSource();
-  src.buffer = sndBuf[name];
-  src.connect(actx.destination);
-  src.start();
+  if (spec.sample) {
+    src.buffer = sfxRawBuffer(spec.sample, 8000);
+    src.playbackRate.value = (PAULA_CLOCK / spec.period) / 8000;
+  } else {
+    src.buffer = sfxTimelineBuffer(spec.states, spec.cacheKey);
+  }
+  if (!src.buffer) return;
+  sfxAttachVoiceSource(voice, src);
+  // Prvni IRQ callback pouze rozbehne a hned yieldne; hardware se zapise
+  // pri druhem IRQ. Wall-clock audio sleduje stejny dvoutikovy nabeh.
+  src.start(actx.currentTime + 2 / SFX_CIA_HZ);
+}
+function sfxPlayTimelineNow(voice, states) {
+  if (!actx) return;
+  if (actx.state === "suspended") actx.resume().catch(() => {});
+  sfxStopVoiceSource(voice);
+  const src = actx.createBufferSource();
+  src.buffer = sfxTimelineBuffer(states, null);
+  if (!src.buffer) return;
+  sfxAttachVoiceSource(voice, src);
+  // Volano primo pri druhem CIAB resume, kdy 0x4e5e zapisuje prvni stav.
+  src.start(actx.currentTime);
+}
+function submitTownSfx(g, x, priority, kind, makeSpec) {
+  const sfx = ensureTownSfx(g), selected = sfxSelectVoice(sfx, x, priority);
+  const serial = ++sfx.serial;
+  if (!selected) {
+    sfxLog(sfx, { serial, tick: g.tick | 0, kind, accepted: false,
+                  x: signedWord(Math.trunc(x || 0)), priority });
+    return null;
+  }
+  const voice = sfx.voices[selected.vi];
+  voice.guard = selected.guard; voice.effect = null;
+  const spec = makeSpec ? makeSpec(voice) : {};
+  if (spec.logical) voice.effect = spec.logical;
+  sfxLog(sfx, { serial, tick: g.tick | 0, kind, accepted: true,
+                voice: selected.vi, channel: voice.channel,
+                x: signedWord(Math.trunc(x || 0)),
+                priority, guard: selected.guard,
+                period: spec.period === undefined ? null : spec.period });
+  sfxPlayVoice(voice, spec);
+  return voice;
+}
+function sfxAdvanceGooseHit(g, voice, fx) {
+  // IRQ #1 (logical tick 0) je pouze uvodni 0x4ae0 yield. IRQ #2..65
+  // programuji 64 stavu; RNG seed prijde jen v prvnim z nich.
+  if (fx.tick < 1 || fx.tick > 64) return;
+  const dyn = fx.dynamic;
+  if (fx.tick === 1) {
+    const seed = random32(g);
+    dyn.seed = seed >>> 0;
+    sfxWriteLong(voice.scratch, 0, seed);
+    // WebAudio muze dopredu slozit zbytek, protoze dalsich 63 iteraci uz
+    // globalni RNG necte. Ziva scratch se ale smi posunout jen o jeden IRQ,
+    // aby preempce zachovala skutecny persistentni stav voice struktury.
+    const renderScratch = voice.scratch.slice();
+    sfxPlayTimelineNow(voice, sfxGooseHitTimeline(renderScratch));
+  }
+  sfxNoiseFill(voice.scratch, 6);
+  dyn.stateCount++;
+  dyn.lastVolume = dyn.volume;
+  dyn.lastPeriod = dyn.period;
+  dyn.volume--;
+  dyn.period = signedWord(dyn.period + (signedWord(dyn.period) >> 5));
+}
+function sfxAdvanceLogicalVoice(g, voice) {
+  const fx = voice.effect;
+  if (!fx) return;
+  for (const op of fx.ops)
+    if (op.tick === fx.tick) {
+      if (op.bytes) voice.scratch.set(op.bytes, op.offset || 0);
+      else {
+        if (op.clear) voice.scratch.fill(0, 0, op.clear);
+        sfxNoiseFill(voice.scratch, op.longs);
+      }
+    }
+  if (fx.dynamic && fx.dynamic.kind === "goose-hit")
+    sfxAdvanceGooseHit(g, voice, fx);
+  if (++fx.tick >= fx.end) {
+    voice.effect = null;
+    voice.guard = 0;                            // 0x4bf2 po konci tasku
+  }
+}
+function advanceTownSfxIrq(g) {
+  const sfx = ensureTownSfx(g);
+  perturbRandomSoundIrq(g, sfx.irq++);
+  for (const voice of sfx.voices) {
+    if (voice.guard > 0) voice.guard--;
+    sfxAdvanceLogicalVoice(g, voice);
+  }
+}
+function advanceTownSfxClock(g) {
+  const sfx = ensureTownSfx(g);
+  sfx.phase += SFX_CIA_CLOCK;
+  let ticks = 0;
+  while (sfx.phase >= SFX_VBL_DEN) {
+    sfx.phase -= SFX_VBL_DEN; ticks++;
+    advanceTownSfxIrq(g);
+  }
+  return ticks;
+}
+function sfxPlayerFire(g, x) {
+  return submitTownSfx(g, x, 20, "player-fire", () => {
+    const states = sfxFireTimeline();
+    return { states, logical: sfxLogicalTimeline(states),
+             cacheKey: "fire-4f3e" };
+  });
+}
+function sfxGenericHit(g, x) {
+  return submitTownSfx(g, x, 20, "generic-hit", () => {
+    const states = sfxHitTimeline();
+    return { states, logical: sfxLogicalTimeline(states),
+             cacheKey: "hit-5070" };
+  });
+}
+function sfxOpening(g, x) {
+  submitTownSfx(g, x, 80, "opening-a", () => {
+    const states = sfxOpeningTimeline(2500, 50);
+    return { states, logical: sfxLogicalTimeline(states),
+             cacheKey: "open-2500-50" };
+  });
+  return submitTownSfx(g, x, 80, "opening-b", () => {
+    const states = sfxOpeningTimeline(2227, 90);
+    return { states, logical: sfxLogicalTimeline(states),
+             cacheKey: "open-2227-90" };
+  });
+}
+function sfxNoise(g, x, priority, kind) {
+  return submitTownSfx(g, x, priority, kind, voice =>
+    sfxNoiseTimeline(voice, kind));
+}
+function sfxBigExplosion(g, x) {
+  // 0x4c58 vola 0x4c5e jako podprogram a jeho return PC je opet 0x4c5e:
+  // dve vrstvy, dve RNG hodnoty, obe pred arbitrazi i pri mute/rejectu.
+  let last = null;
+  for (let layer = 0; layer < 2; layer++) {
+    const period = 592 + (random32(g) & 31);
+    last = submitTownSfx(g, x, 50, "bigexpl", () => ({
+      sample: "BIGEXPL.SND", period,
+    }));
+  }
+  return last;
+}
+function sfxSmartBomb(g) {
+  // 0x885a -> 0x4cb2/0x4cd2: stejny raw sample ve ctyrech mirne
+  // rozladenych vrstvach. Vsechny jdou pres pravou preferenci 0x4b8c;
+  // na prazdnu tim postupne obsadi AUD2,AUD1,AUD3,AUD0.
+  const voices = [];
+  for (const period of [1040, 1025, 1010, 996])
+    voices.push(submitTownSfx(g, 320, 127, "smart-bomb", () => ({
+      sample: "SMART.SND", period,
+      // One-shot DMA latchne sample a task pote 65535 IRQ ceka nad tichym
+      // reload wordem. Guard se nezavisle uvolni uz po 508 IRQ.
+      logical: { tick: 0, end: 65539, ops: [] },
+    })));
+  return voices;
+}
+function sfxShieldBubble(g, x) {
+  // 0x98f2 -> 0x4ffe: jediny prostorovy hlas pri zalozeni bound bubble.
+  const states = sfxShieldBubbleTimeline();
+  return submitTownSfx(g, x, 60, "shield-bubble", () => ({
+    states, logical: sfxLogicalTimeline(states, [
+      { tick: 1, bytes: SFX_HIT_WAVE.slice() },
+    ]),
+    cacheKey: "shield-bubble-4ffe", period: 150,
+  }));
+}
+function sfxTokenPickupNote(g, x, period) {
+  const ops = [], states = sfxTokenPickupTimeline(period, ops);
+  return submitTownSfx(g, x, 120, "token-pickup", () => ({
+    states, logical: sfxLogicalTimeline(states, ops),
+    cacheKey: "token-pickup-5672-" + period, period,
+  }));
+}
+function ensureTokenSfxTasks(g) {
+  if (!Array.isArray(g.tokenSfxTasks)) g.tokenSfxTasks = [];
+  return g.tokenSfxTasks;
+}
+function sfxTokenPickup(g, x) {
+  // 0x97ce -> 0x5614: selector se zachyti z TOKEN x jednou a stejny pan
+  // pouziji vsechny ctyri noty. Prvni zacne hned, dalsi po 5 VBL.
+  const periods = [159, 212, 159, 141];
+  const panX = signedWord(Math.trunc(x || 0));
+  sfxTokenPickupNote(g, panX, periods[0]);
+  ensureTokenSfxTasks(g).push({ x: panX, periods, next: 1, wait: 5 });
+}
+function advanceTokenSfxTasks(g) {
+  const tasks = ensureTokenSfxTasks(g), keep = [];
+  for (const task of tasks) {
+    if (--task.wait > 0) { keep.push(task); continue; }
+    // I po ctvrte note nativni task jeste wait5 dokonci, teprve potom
+    // nacte nulovy terminator tabulky a zanikne.
+    if (task.next >= task.periods.length) continue;
+    sfxTokenPickupNote(g, task.x, task.periods[task.next++]);
+    task.wait = 5; keep.push(task);
+  }
+  g.tokenSfxTasks = keep;
+}
+function sfxPlayerTransition(g, x) {
+  return submitTownSfx(g, x, 10, "player-transition", () => {
+    const states = sfxPlayerTransitionTimeline();
+    return { states, logical: sfxLogicalTimeline(states),
+             cacheKey: "player-transition-4dc6" };
+  });
+}
+function sfxPlayerBurst(g) {
+  // 0x88fc -> 0x4c1c: ctyri fixed BIGEXPL vrstvy, vsechny s nucenou
+  // pravou preferenci 0x4b8c. Fallback dovoluje na prazdnu obsadit 4 hlasy.
+  for (const period of [1024, 1032, 1152, 1160])
+    submitTownSfx(g, 320, 100, "player-burst", () => ({
+      sample: "BIGEXPL.SND", period,
+    }));
+}
+function sfxBossDeath(g) {
+  // 0x553a ignoruje polohu: prvni hlas preferuje AUD2/AUD1, druhy
+  // AUD3/AUD0. Selector muze u obou po rejectu propadnout do opacne dvojice.
+  const right = sfxBossDeathTimeline(200);
+  submitTownSfx(g, 320, 100, "goose-death-r", () => ({
+    states: right, logical: sfxLogicalTimeline(right),
+    cacheKey: "goose-death-200",
+  }));
+  const left = sfxBossDeathTimeline(202);
+  return submitTownSfx(g, 0, 100, "goose-death-l", () => ({
+    states: left, logical: sfxLogicalTimeline(left),
+    cacheKey: "goose-death-202",
+  }));
+}
+function sfxGooseHit(g) {
+  // 0x4e46: dva prostorove preferovane (ne natvrdo vazane) selectory.
+  // Na prazdnu: struct0/AUD3 vlevo, potom struct1/AUD2 vpravo.
+  const make = () => ({
+    deferred: true, period: 150,
+    logical: { tick: 0, end: 66, ops: [],
+      dynamic: { kind: "goose-hit", volume: 64, period: 150,
+                 stateCount: 0, seed: null } },
+  });
+  const left = submitTownSfx(g, 0, 40, "goose-hit-l", make);
+  const right = submitTownSfx(g, 320, 40, "goose-hit-r", make);
+  return [left, right];
 }
 
 /* paleta platna na dane radce mapy (img souradnice) */
@@ -957,12 +1750,245 @@ const CANNON_ACCENTS = [
   0xC00, 0xFF0, 0xFC0, 0x800, 0xF80, 0xF00, 0xC00, 0xFF0,
   0xC80, 0xFF0, 0xF80, 0x800, 0xFF0, 0x000, 0xFF0, 0x800,
 ];
-const CANNON_PALS = CANNON_ACCENTS.map(accent => {
-  const p = Array.from({ length: 16 }, () => [0, 0, 0]);
-  p[1] = rgb12(0xFFF); p[2] = rgb12(0x999); p[3] = rgb12(accent);
-  return p;
-});
-const cannonPal = tick => CANNON_PALS[tick & 15];
+
+/* ---- Nativni HUD: embedded 7-row font + pata bitplane (0x591c/0x5aa4) ----
+   Font lookup je 0xd384 + ASCII*16. Vysledkem je stejnych 352 B jako
+   originalni 352x8 work plane. OCS verze jej pouziva jako masku spodnich
+   ctyr rovin: viditelny tah proto bere radkovy COLOR16. Naivni petibitova
+   kompozice 16|lower4 je prave AGA chyba popsana autorem hry -- odkryje
+   blikajici COLOR17..31 urcene hardwarovym projektilum. */
+const HUD_FONT_LOOKUP = 0xD384, HUD_WIDTH = 352, HUD_ROWS = 8;
+const HUD_STRIDE = HUD_WIDTH >> 3, HUD_SCREEN_Y = 8;
+const HUD_COLOR16_STEADY = [
+  0x88D, 0xAAE, 0xCCF, 0xCCF, 0xCCF, 0xAAE, 0x88D, 0x88D,
+];
+
+function hudNativeCode(ch) {
+  let code = ch.charCodeAt(0);
+  if (code >= 97 && code <= 122) code -= 32;
+  if (code < 32 || code > 94)
+    throw new RangeError("HUD character is outside ASCII 32..94");
+  return code;
+}
+function hudGlyph(prog, ch) {
+  const off = HUD_FONT_LOOKUP + hudNativeCode(ch) * 16;
+  if (!prog || off + 16 > prog.length)
+    throw new RangeError("AMPROG.OBJ is too short for HUD font");
+  const width = (prog[off] << 8) | prog[off + 1], rows = [];
+  if (width > 16) throw new RangeError("invalid native HUD glyph width");
+  for (let y = 0; y < 7; y++)
+    rows.push((prog[off + 2 + 2 * y] << 8) | prog[off + 3 + 2 * y]);
+  return { width, rows };
+}
+function hudTextWidth(prog, text) {
+  let width = 0;
+  for (const ch of text) width += hudGlyph(prog, ch).width + 1;
+  return width;
+}
+function drawHudText(prog, plane, text, x) {
+  const total = hudTextWidth(prog, text);
+  if (x < 0 || x + total > HUD_WIDTH)
+    throw new RangeError("native HUD text exceeds its 352px plane");
+  let pen = x;
+  for (const ch of text) {
+    const glyph = hudGlyph(prog, ch);
+    for (let y = 0; y < 7; y++) {
+      const bits = glyph.rows[y];
+      for (let gx = 0; gx < glyph.width; gx++) {
+        if (!(bits & (1 << (glyph.width - 1 - gx)))) continue;
+        const px = pen + gx;
+        plane[y * HUD_STRIDE + (px >> 3)] |= 0x80 >> (px & 7);
+      }
+    }
+    pen += glyph.width + 1;
+  }
+  return pen;
+}
+function buildHudPlane(prog, leftText, rightText = "PRESS FIRE") {
+  const bytes = new Uint8Array(HUD_STRIDE * HUD_ROWS);
+  const leftWidth = hudTextWidth(prog, leftText);
+  const rightWidth = hudTextWidth(prog, rightText);
+  const rightX = 312 - rightWidth;
+  drawHudText(prog, bytes, leftText, 8);
+  drawHudText(prog, bytes, rightText, rightX);
+  return { bytes, leftWidth, rightWidth, rightX };
+}
+function hudHighColorWord(index, row, tick, grayFlash = false,
+                          firstPass = false) {
+  index &= 31; row &= 7;
+  if (index === 16)
+    return firstPass && row === 0 ? 0xDDF : HUD_COLOR16_STEADY[row];
+  const sub = (index - 16) & 3, bank = (index - 16) >> 2;
+  if (sub === 0) return 0x000;                 // COLOR20/24/28 cold-boot policy
+  if (sub === 1) return 0xFFF;                 // COLOR17/21/25/29
+  if (sub === 2) return grayFlash ? 0xFFF : 0x999;
+  return CANNON_ACCENTS[((tick & 15) + bank) & 15];
+}
+function updateRetainedHighColors(g) {
+  // Pole i reprezentuje skutecny registr COLOR(16+i). 20/24/28 se
+  // zamerne nikdy nenastavuji: nulovy zacatek je explicitni cold-boot
+  // policy, dokud capture nezmeri zdedeny hardware stav.
+  if (!(g.hwHighColors instanceof Uint16Array) ||
+      g.hwHighColors.length !== 16)
+    g.hwHighColors = new Uint16Array(16);
+  // 0x2904/0x2afc: za black fadu writer vubec nebezi a vsechny registry
+  // COLOR17..31 si ponechaji hodnotu z predchoziho frame/screen.
+  if (g.fadeBlack) return g.hwHighColors;
+  for (let bank = 0; bank < 4; bank++) {
+    const base = bank * 4;
+    g.hwHighColors[base + 1] = 0xFFF;
+    g.hwHighColors[base + 2] = g.spriteColorFlash ? 0xFFF : 0x999;
+    g.hwHighColors[base + 3] =
+      CANNON_ACCENTS[((g.tick & 15) + bank) & 15];
+  }
+  return g.hwHighColors;
+}
+function compositeHudPlane(fieldIndex, width, rgba, plane, tick,
+                           highColors, firstPass = false) {
+  if (!plane || plane.length !== HUD_STRIDE * HUD_ROWS ||
+      fieldIndex.length * 4 !== rgba.length ||
+      !highColors || highColors.length !== 16)
+    throw new RangeError("native HUD compositor received a wrong buffer");
+  for (let row = 0; row < HUD_ROWS; row++) {
+    const sy = HUD_SCREEN_Y + row;
+    if (sy < 0 || sy >= fieldIndex.length / width) continue;
+    for (let x = 0; x < Math.min(width, HUD_WIDTH); x++) {
+      if (!(plane[row * HUD_STRIDE + (x >> 3)] & (0x80 >> (x & 7))))
+        continue;
+      // Ronald Pieket-Weeserik popsal BPL5 jako nerolujici masku, ktera
+      // prekryje zbyle ctyri roviny. SWIV WHDLoad AGA fix potvrzuje stejny
+      // zamer tim, ze pro maskovany bank vyrobi jednotnou barvu. Canvas
+      // proto musi reprodukovat efektivni OCS vystup, ne AGA artefakt
+      // 16|lower4 (zlute/cervene problikavani textu pres teren a sprity).
+      const word = hudHighColorWord(16, row, tick, false, firstPass);
+      const o = (sy * width + x) * 4;
+      rgba[o] = ((word >> 8) & 15) * 17;
+      rgba[o + 1] = ((word >> 4) & 15) * 17;
+      rgba[o + 2] = (word & 15) * 17;
+      rgba[o + 3] = 255;
+    }
+  }
+  return rgba;
+}
+function hudPlaneForGame(g) {
+  const key = hudStatusText(g) + "\0PRESS FIRE";
+  if (g.hudPlaneKey !== key) {
+    g.hudPlaneKey = key;
+    g.hudPlane = buildHudPlane(state.prog, hudStatusText(g), "PRESS FIRE");
+  }
+  return g.hudPlane;
+}
+
+/* ---- Globalni TOWN HW sprite allocator (0x3d00..0x3daa) ----
+   Cannon/PLOP jsou priority100 actor tasky, P1 bolt pool se zaradi az
+   updaterem 0xfffe. Vsechny sdileji 64 zaznamu a 8 DMA channel listu. */
+function hwSpriteCandidate(g, source, kind, file, frame, fixedDepth) {
+  const spr = indexedFrameFor(state, file, frame);
+  if (!spr) return null;
+  const anchorX = positionWord(source.x);
+  const worldY = positionWord(source.y + g.scroll);
+  const anchorY = positionWord(worldY - positionWord(g.scroll));
+  const depth = fixedDepth === undefined
+    ? ((worldY & 0xffff) >>> 1) : fixedDepth;
+  return { kind, source, file, frame, anchorX, anchorY,
+    startX: anchorX + spr.ox, startY: anchorY + spr.oy,
+    stopY: anchorY + spr.oy + spr.h,
+    key: bobDepthKey(depth), serial: 0, channel: -1, bank: -1,
+    dmaVisible: true };
+}
+function townHwCandidates(g) {
+  const actors = [];
+  for (const s of g.shots || []) {
+    if (s.dead || s.kind !== "can") continue;
+    if (!Number.isInteger(s.bobOrdinal)) assignBobOrdinal(g, s);
+    actors.push({ ordinal: s.bobOrdinal, source: s, kind: "cannon",
+                  file: "BULLET.LIN", frame: cannonFrameFor(s),
+                  fixedDepth: Number.isInteger(s.hwDepth)
+                    ? s.hwDepth : undefined });
+  }
+  for (const pl of g.plops || []) {
+    if (pl.t !== 1) continue;
+    if (!Number.isInteger(pl.bobOrdinal)) assignBobOrdinal(g, pl);
+    actors.push({ ordinal: pl.bobOrdinal, source: pl, kind: "plop",
+                  file: "BULLET.LIN", frame: 2, fixedDepth: 33 });
+  }
+  actors.sort((a, b) => a.ordinal - b.ordinal);
+
+  let serial = 0, out = [];
+  for (const a of actors) {
+    const r = hwSpriteCandidate(g, a.source, a.kind, a.file, a.frame,
+                                a.fixedDepth);
+    if (r) { r.serial = serial++; r.taskOrdinal = a.ordinal; out.push(r); }
+  }
+
+  normalizePlayerBulletSlots(g);
+  const bullets = (g.bullets || []).filter(b => b.poolSlot >= 0)
+    .slice().sort((a, b) => a.poolSlot - b.poolSlot);
+  for (const b of bullets) {
+    const r = hwSpriteCandidate(g, b, "player-bolt", "BULLET.LIN",
+                                b.frame ?? 14);
+    if (r) { r.serial = serial++; r.poolSlot = b.poolSlot; out.push(r); }
+  }
+  return out;
+}
+function allocateHwSpriteQueue(candidates, fadeBlack = 0) {
+  const channels = Array.from({ length: 8 }, () => []);
+  const traversal = candidates.slice().sort((a, b) =>
+    ((b.key & 0xffff) - (a.key & 0xffff)) || (b.serial - a.serial));
+  const accepted = [];
+  if (fadeBlack) return { channels, traversal, accepted, remaining: 64 };
+  let remaining = 64;
+  for (const r of traversal) {
+    if (r.startY < 0 || remaining === 0) continue;
+    const channel = remaining & 7;             // 64->ch0, 63->ch7, ...
+    remaining--;
+    r.channel = channel; r.bank = channel >> 1;
+    channels[channel].push(r); accepted.push(r);
+  }
+  // Jeden channel je linearni DMA list. Bez alespon jednoho prazdneho
+  // scanline mezi VSTOP a dalsim VSTART se channel uz pro zbytek fieldu
+  // nezotavi; sloty jsou presto spotrebovane.
+  for (const list of channels) {
+    let previousStop = -Infinity, blocked = false;
+    for (const r of list) {
+      if (blocked || r.startY <= previousStop) {
+        r.dmaVisible = false; blocked = true;
+      } else {
+        r.dmaVisible = true; previousStop = r.stopY;
+      }
+    }
+  }
+  return { channels, traversal, accepted, remaining };
+}
+function allocateTownHwSprites(g) {
+  const result = allocateHwSpriteQueue(townHwCandidates(g), g.fadeBlack || 0);
+  g.lastHwRecords = result.accepted;
+  return result;
+}
+function hwSpritePalette(g, bank) {
+  const high = updateRetainedHighColors(g), base = (bank & 3) * 4;
+  const pal = Array.from({ length: 16 }, () => [0, 0, 0]);
+  pal[1] = rgb12(high[base + 1]);
+  pal[2] = rgb12(high[base + 2]);
+  pal[3] = rgb12(high[base + 3]);
+  return { pal, key: `hw:${bank}:${high[base + 1].toString(16)}:` +
+    `${high[base + 2].toString(16)}:${high[base + 3].toString(16)}` };
+}
+function drawTownHardwareSprites(ctx, g) {
+  const allocation = allocateTownHwSprites(g);
+  // Nizsi sprite number ma vyssi pixelovou prioritu; Canvas jej proto
+  // kresli pozdeji. Uvnitr channelu zustava fyzicke DMA-list poradi.
+  for (let channel = 7; channel >= 0; channel--) {
+    const hp = hwSpritePalette(g, channel >> 1);
+    for (const r of allocation.channels[channel]) {
+      if (!r.dmaVisible) continue;
+      const spr = sprite(r.file, r.frame, hp.pal, hp.key);
+      if (spr) ctx.drawImage(spr.cv, r.anchorX + spr.ox,
+                             r.anchorY + spr.oy);
+    }
+  }
+  return allocation;
+}
 
 /* ---- Fade palety: 0x4a48 (k cerne), 0x4a40 (k bile), driver 0x28b0 ----
    Skalovac je BEZSTAVOVY, nikoli interpolator: kazdy nibble RGB12 se
@@ -971,7 +1997,7 @@ const cannonPal = tick => CANNON_PALS[tick & 15];
    Fade plati jen pro registry 0x180-0x19F = COLOR00-15, takze pozadi
    i boby ano, ale HW barvy COLOR17+ a HUD COLOR16+ neskaluje. Dulezita
    vyjimka runtime: pri nenulovem black fade 0x3d4e HW sprite vubec
-   nezaradi; prepnuti teto vrstvy ceka na globalni sprite-bank allocator. */
+   nezaradi; TOWN allocator tuto podminku aplikuje pred spotrebou slotu. */
 /* 0x28b0: registrovana korutina, telo konci yieldem 0x5f0a a skokem
    na sebe, takze krokuje presne jednou za snimek. */
 function stepFade(g) {
@@ -992,6 +2018,27 @@ function stepFade(g) {
     if (g.fadeWhite < 0) g.fadeWhite = 0;
   }
 }
+function ensureSmartPulseTasks(g) {
+  if (!Array.isArray(g.smartPulseTasks)) g.smartPulseTasks = [];
+  // Kompatibilita izolovanych fixture/starych save stavu, ktere nesou jen
+  // drivejsi scalar countdown. Produkcni trigger vzdy zaklada task nize.
+  if ((g.smartPulse | 0) > 0 && g.smartPulseTasks.length === 0)
+    g.smartPulseTasks.push(g.smartPulse | 0);
+  return g.smartPulseTasks;
+}
+function startWhiteFlash(g) {                   // 0x8852 / 0x885a
+  sfxSmartBomb(g);                              // 0x4cb2: 4x SMART.SND
+  g.fadeWhite = 256;
+  g.fadeWhiteStep = -4;                        // gameplay hodnota z 0x1028
+  // Kazdy trigger 0x8852 zalozi VLASTNI 0x885a task s wait50. Ktery-koli
+  // jeho deadline pak udela SF globalniho fp@(169), i kdyz novejsi task
+  // stale ceka. Seznam je nutny pro pripad A@0, B@20, C@55: zbyvajici
+  // deadline B musi C vypnout uz v t70. Bila se na 256 resetuje vzdy.
+  const tasks = ensureSmartPulseTasks(g);
+  tasks.push(50);
+  if (!((g.smartPulse | 0) > 0))
+    g.smartPulse = Math.min(...tasks);
+}
 
 /* HOMING.LIN je ve skutecnosti 4bitovy BOB v bezne Copper COLOR00-15.
    Tato stara izolovana paleta je vedoma runtime aproximace do plneho
@@ -1003,8 +2050,9 @@ const HOMINGPAL = (() => {
   return p;
 })();
 
-/* Stara video aproximace boltu. BULLET#14 je HW sprite a ma sdilenou
-   COLOR17-31 banku; odstrani ji budouci globalni sprite allocator. */
+/* Stara video aproximace boltu, pouzita vyhradne volitelnym
+   legacyCanvasOverlay. Produkcni pass bere BULLET#14 ze sdilene
+   COLOR17-31 banky globalniho TOWN HW allocatoru. */
 function boltPal(ball) {
   const p = [];
   for (let i = 0; i < 16; i++) p.push([255, 255, 255]);
@@ -1018,12 +2066,29 @@ const BOLTPAL_R = boltPal([255, 60, 30]);
    Uhly 0..255: 0=vychod, 64=jih(dolu), 128=zapad, 192=sever (sin tab 0x6a6a,
    overeno MEDTANK typ2: x=-32, uhel 0, jede doprava). Rychlost px/tick(50Hz)
    = +356/256 (0x65f2). 16-smerovy snimek = (uhel+8)>>4 (0xa290), frame0=E. */
+const signedWord = n => (n << 16) >> 16;
+const positionWord = x => signedWord(Math.floor(x));
+/* Presny port 0x6610. Residentni rutinou pouzivana 32x32 BYTE tabulka
+   lezi primo v AMPROG.OBJ na 0x666a; atan2 se u beznych vektoru lisi az
+   o dva angle unity a posouval GOOSE docking o nekolik VBL. */
 function angTo(fx, fy, tx, ty) {
-  return (Math.round(Math.atan2(ty - fy, tx - fx) / Math.PI * 128) + 256) & 255;
+  let dx = signedWord(positionWord(tx) - positionWord(fx));
+  let dy = signedWord(positionWord(ty) - positionWord(fy));
+  const xNeg = dx < 0, yNeg = dy < 0;
+  if (xNeg) dx = -dx;
+  if (yNeg) dy = -dy;
+  while (dx >= 32 || dy >= 32) { dx >>= 1; dy >>= 1; }
+  let a = state.prog[0x666a + (dy << 5) + dx];
+  if (xNeg) a = (128 - a) & 255;
+  if (yNeg) a = (-a) & 255;
+  return a;
 }
 function angVel(a, spd) {
-  const r = a * Math.PI / 128;
-  return { vx: Math.cos(r) * spd, vy: Math.sin(r) * spd };
+  // 0x65f2 -> 0x6a6a: signed word LUT v meritku 256, ne host sin/cos.
+  // Lokalni SIN256/COS256 jsou overeny byte-for-byte proti 0x6a82.
+  const ai = a & 255;
+  return { vx: COS256[ai] * spd / 256,
+           vy: SIN256[ai] * spd / 256 };
 }
 function turnToward(cur, want, max) {        // 0x65be: otocka omezena na max
   let d = ((want - cur + 128) & 255) - 128;
@@ -1031,15 +2096,92 @@ function turnToward(cur, want, max) {        // 0x65be: otocka omezena na max
   return (cur + d) & 255;
 }
 const dir16 = a => ((a + 8) >> 4) & 15;
-/* 0x959e: uhel podle joystickoveho nibblu (0x71ac: bit0 nahoru, bit1 dolu,
-   bit2 vlevo, bit3 vpravo); -1 (0xffff) = zadny pohyb. */
+const dir8 = a => ((a + 16) >> 5) & 7;
+/* 0x959e: joystickovy nibble z 0x71ac (bit0 nahoru, bit1 dolu, bit2 vlevo,
+   bit3 vpravo) se preklada primo na uhel pohybu. 0xffff = bez pohybu. */
 const JOY_ANGLE = [-1, 192, 64, -1, 128, 160, 96, 64,
                    0, 224, 32, 0, -1, 192, 64, -1];
+/* 0x945a neni smerova animace: raw skript period(1) proklada zakladni
+   JEEPHELI#0 mezi ctyri krajni polohy rotoru. */
+const HELI_SEQUENCE = [0, 1, 0, 2, 0, 3, 0, 4];
 
-/* 0x85f0/0x861e: vychozi PLOP#0 vydrzi jeden tik, inline skript
-   period(1) pak ukaze BULLET#2 a prikaz kill objekt dalsi tik zrusi. */
+function resetPlayerHeliAnim(p) {
+  p.heliAnimPos = 0;
+  // Animator je pripojen pred prvnim yieldem; prvni scheduler resume
+  // jeste enqueueuje #0 a teprve dalsi VBL pokroci na #1.
+  p.heliAnimFresh = true;
+}
+function stepPlayerHeliAnim(p) {
+  if (!Number.isInteger(p.heliAnimPos)) resetPlayerHeliAnim(p);
+  if (p.heliAnimFresh) p.heliAnimFresh = false;
+  else p.heliAnimPos = ((p.heliAnimPos | 0) + 1) & 7;
+}
+function playerMoveVelocity(a) {
+  // 0x6a6a vraci pro diagonalu 181/256; 181*768/65536 = 543/256.
+  const d = 543 / 256;
+  return [[3, 0], [d, d], [0, 3], [-d, d],
+          [-3, 0], [-d, -d], [0, -3], [d, -d]][(a >> 5) & 7];
+}
+
+/* 0x85f0/0x861e: attach countdown1 se zpracuje uz v prvnim 0x62d2
+   noveho same-VBL childa. Prvni publikovany field je proto BULLET#2;
+   dalsi resume zpracuje KILL. PLOP#0 je jen setup graphic pred enqueue. */
 const PLOP_SEQUENCE = [["PLOP.LIN", 0], ["BULLET.LIN", 2]];
-function spawnPlop(g, x, y) { g.plops.push({ x, y, t: 0 }); }
+function assignBobOrdinal(g, o) {
+  if (!Number.isInteger(o.bobOrdinal)) {
+    const n = Number.isInteger(g.nextBobOrdinal) ? g.nextBobOrdinal : 1;
+    o.bobOrdinal = n; g.nextBobOrdinal = n + 1;
+  }
+  return o.bobOrdinal;
+}
+/* P1 resident HW projectile pool 0x6028 ma presne 30 slotu. Pool slot
+   urcuje poradi updateru na priorite 0xfffe a neni priority100 ordinal. */
+function firstFreePlayerBulletSlot(g) {
+  const used = new Uint8Array(30);
+  for (const b of g.bullets || [])
+    if (Number.isInteger(b.poolSlot) && b.poolSlot >= 0 && b.poolSlot < 30)
+      used[b.poolSlot] = 1;
+  for (let slot = 0; slot < 30; slot++) if (!used[slot]) return slot;
+  return -1;
+}
+function spawnPlayerBullet(g, spec) {
+  const slot = firstFreePlayerBulletSlot(g);
+  if (slot < 0) return false;
+  spec.poolSlot = slot;
+  g.bullets.push(spec);
+  return true;
+}
+/* Stare save/izolovane fixtures slot nemaji. Produkcni spawn jej vzdy ma;
+   pri renderu legacy stavu jej doplnime stejnym first-free pravidlem. */
+function normalizePlayerBulletSlots(g) {
+  const used = new Uint8Array(30), pending = [];
+  for (const b of g.bullets || []) {
+    if (Number.isInteger(b.poolSlot) && b.poolSlot >= 0 && b.poolSlot < 30 &&
+        !used[b.poolSlot]) used[b.poolSlot] = 1;
+    else pending.push(b);
+  }
+  for (const b of pending) {
+    let slot = -1;
+    for (let i = 0; i < 30; i++) if (!used[i]) { slot = i; break; }
+    b.poolSlot = slot;
+    if (slot >= 0) used[slot] = 1;
+  }
+}
+function spawnPlop(g, x, y, parentVx = 0, parentVy = 0) {
+  // 0x617a zdedi parentovy +332/+336; prvni same-VBL 0x62d2 je pricte
+  // jeste pred animatorem a publikaci BULLET#2.
+  const p = { x: x + parentVx, y: y + parentVy,
+              vx: parentVx, vy: parentVy,
+              t: 1, bornTick: g.tick | 0,
+              cost: 1, budgeted: true };
+  g.activeCost = (g.activeCost || 0) + p.cost;  // bez 0x8822 guardu
+  assignBobOrdinal(g, p); g.plops.push(p);
+}
+function releaseEnemyShot(g, s) { releaseCost(g, s); s.dead = true; }
+function clearEnemyShots(g) {
+  for (const s of g.shots || []) releaseEnemyShot(g, s);
+  g.shots = [];
+}
 
 const POPUP_OPEN_FRAMES = [1, 2, 3, 4, 5, 6, 7];
 const POPUP_CLOSE_FRAMES = [6, 5, 4, 3, 2, 1];
@@ -1066,15 +2208,67 @@ function cannonFrameFor(s) {
   return (s.phase ? 40 : 24) + dir16(s.ang);
 }
 
-/* Kanonovy granat (0x95fe/0x9602): okamzity krok 16 px z hlavne, start
-   0.5 px/t, +0.5 kazdych 5 tiku, strop 10.5. Sprite BULLET#24+smer.
+function invalidateEnemyShotIfOutside(s) {
+  // 0x6480 bezi uvnitr kazdeho 0x62d2, tedy i v prvni same-VBL
+  // aktivaci childa zalozeneho az za centralnim updaterem.
+  if (outsideCullMargin(s.x, s.y, 0)) {
+    s.retireAfterField = true;
+    return true;
+  }
+  return false;
+}
+
+function advanceCannonShot(g, s, scrollDelta = 0, initial = false) {
+  if (!initial) {
+    s.y -= scrollDelta;                         // world-space camera projection
+    s.phase ^= 1;                               // druhy resume ukaze #40+
+  }
+  // 0x96aa je pred 0x96c2 -> 0x62d2: depth je pre-move, pozice post-move.
+  s.hwDepth = ((positionWord(s.y + g.scroll) & 0xffff) >>> 1);
+  const v = angVel(s.ang, s.spd);
+  s.x += v.vx; s.y += v.vy;
+  s.st = (s.st | 0) + 1;
+  if (s.accel !== false && s.st % 5 === 0 && s.spd < 10.5)
+    s.spd += 0.5;                               // nova rychlost az dalsi krok
+  invalidateEnemyShotIfOutside(s);
+}
+
+function advanceHomingShot(g, s) {
+  if ((s.lead | 0) > 0) {
+    s.lead--;
+  } else if (s.corr > 0 && --s.ct <= 0) {
+    s.ct = 8; s.corr--;
+    const p = g.player;
+    s.ang = turnToward(s.ang, angTo(s.x, s.y, p.x, p.y), 14);
+  }
+  const v = angVel(s.ang, s.spd);
+  s.x += v.vx; s.y += v.vy;
+  invalidateEnemyShotIfOutside(s);
+}
+
+/* Kanonovy granat (0x95fe/0x9602): muzzle vektor rychlosti16 se pricte
+   pres signed high word po ose, pak start 0.5 px/t, +0.5 kazdych 5 tiku,
+   strop 10.5. Sprite BULLET#24+smer.
    fp@(206) zacina na 4, spawn jej po kontrole zaporu snizi: max. 5 kusu. */
 function fireCannon(g, x, y, a, accel = true, checkBudget = true) {
   let n = 0; for (const s of g.shots) if (s.kind === "can") n++;
   if (checkBudget && n >= 5) return false;
   const v = angVel(a, 16);
-  g.shots.push({ kind: "can", x: x + v.vx, y: y + v.vy,
-                 ang: a, spd: accel ? 0.5 : 5, st: 0, accel, phase: 0 });
+  // 0x961e/0x9626 ADD.W pouze high word 16.16 muzzle vektoru. Zaporne
+  // komponenty se proto zaokrouhli dolu (-11.3125 -> -12), ne k nule.
+  const shot = { kind: "can",
+                 x: x + positionWord(v.vx), y: y + positionWord(v.vy),
+                 bornTick: g.tick | 0,
+                 ang: a, spd: accel ? 0.5 : 5, st: 0, accel, phase: 0 };
+  // Cannon je priority100 object task. Ordinal se musi pridělit pri spawnu,
+  // aby HW sprite queue zachovala skutecne creation order.
+  assignBobOrdinal(g, shot); g.shots.push(shot);
+  // 0x9606 vola 0x53be jen po uspesnem zalozeni childa; D0 stale nese
+  // puvodni x hlavne pred muzzle posunem.
+  sfxNoise(g, x, 50, "cannon");
+  // FIFO inserce noveho priority100 tasku jej jeste v tomto scheduler sweepu
+  // dovede pres prvni 0x96aa/0x62d2: base #24 zustane, ale pohyb uz probehne.
+  advanceCannonShot(g, shot, 0, true);
   return true;
 }
 /* 0x95c2 -> 0x95ec: bez kontroly budgetu, bez mireni a bez akcelerace. */
@@ -1082,22 +2276,59 @@ function fireCannonStraight(g, x, y, a) {
   fireCannon(g, x, y, a, false, false);
 }
 /* Mirena varianta (0x95d2): zamiri na hrace v okamziku vystrelu. */
-function fireCannonAimed(g, x, y) {
-  const p = g.player; if (!p.alive) return;
+function fireCannonAimed(g, x, y, parentVx = 0, parentVy = 0) {
+  // 0x95d2 drzi ukazatel na player slot a miri na posledni ulozenou
+  // pozici i behem death/respawn tasku; alive flag zde nekontroluje.
+  const p = g.player; if (!p) return;
   if (fireCannon(g, x, y, angTo(x, y, p.x, p.y - 8)))
-    spawnPlop(g, x, y);
+    spawnPlop(g, x, y, parentVx, parentVy);
 }
 /* Navadena strela (0x8530/0x8566): HOMING.LIN 16 smeru, 3 px/t, kazdych
    8 tiku otocka k hraci max 14 jednotek, 12 korekci, pak rovne.
-   U hlavne blesk PLOP#0 (0x85f0). */
-function fireHoming(g, x, y, a) {
-  g.shots.push({ kind: "hom", x, y, ang: a, spd: 3, corr: 12, ct: 8 });
-  spawnPlop(g, x, y);
+   U hlavne PLOP setup #0; prvni publikovany field je HW BULLET#2. */
+const SFX_HOMING_PAN_DEFAULT = 0;
+function fireHoming(g, x, y, a, parentVx = 0, parentVy = 0) {
+  const h = { kind: "hom", x, y, ang: a, spd: 3,
+              bornTick: g.tick | 0,
+              lead: 20, corr: 2 * (5 + (g.difficulty || 0)), ct: 0,
+              cost: 5, budgeted: true };
+  g.activeCost = (g.activeCost || 0) + h.cost;  // bez 0x8822 guardu
+  assignBobOrdinal(g, h); g.shots.push(h);
+  // 0x8566 vola 0x528a se zdedenym D0, jehoz puvod neni dosud uzavren.
+  // Nula je explicitni deterministicka politika, nikoli tvrzeni o x-panu.
+  sfxNoise(g, SFX_HOMING_PAN_DEFAULT, 80, "homing");
+  // 0x629c nejprve kontroluje deadline a v spawn VBL rovnou vola 0x62d2.
+  advanceHomingShot(g, h);                      // prvni ze 20 primych kroku
+  spawnPlop(g, x, y, parentVx, parentVy);
 }
 
 /* ---- prelozene vzdusne formace ---- */
-function random32() {
-  return Math.floor(Math.random() * 0x100000000) >>> 0;
+/* 0x883c: 32bitovy stav se zdvoji; pri carry nebo nulovem vysledku se
+   XORne $1d872b41, prohodi poloviny a tato hodnota se vrati i ulozi.
+   Zvukovy CIAB IRQ 0x4abc (~204.8 Hz) navic ADD.W VHPOSR do horniho wordu
+   (big-endian adresa zacatku LONGu), bez prenosu do dolniho.
+   Browser nema beam counter, proto je vychozi VHPOSR prispevek nula;
+   zachyceny trace lze vlozit do rngVhposTrace bez zmeny algoritmu. */
+let fallbackRandomState = 0;
+function perturbRandomSoundIrq(g, irqIndex = 0) {
+  if (!g) return;
+  const trace = g.rngVhposTrace;
+  const vhpos = trace && trace.length
+    ? trace[(irqIndex >>> 0) % trace.length]
+    : (g.rngVhposWord || 0);
+  const seed = Number.isInteger(g.rngState) ? g.rngState >>> 0 : 0;
+  // 68000 je big-endian: ADD.W na zacatku LONGu meni horni polovinu.
+  const hi = (((seed >>> 16) + (vhpos & 0xffff)) & 0xffff) >>> 0;
+  g.rngState = ((hi << 16) | (seed & 0xffff)) >>> 0;
+}
+function random32(g) {
+  const old = g && Number.isInteger(g.rngState)
+    ? g.rngState >>> 0 : fallbackRandomState >>> 0;
+  let next = (old << 1) >>> 0;
+  if ((old >>> 31) !== 0 || next === 0) next ^= 0x1d872b41;
+  next = ((next << 16) | (next >>> 16)) >>> 0;
+  if (g) g.rngState = next; else fallbackRandomState = next;
+  return next;
 }
 function reserveCost(g, o) {
   const cost = o.cost || 0;
@@ -1106,143 +2337,226 @@ function reserveCost(g, o) {
   o.budgeted = cost > 0;
   return true;
 }
+/* Prime a2c6 bez predchoziho 0x8822 vzdy zalozi task a muze prelezt 160. */
+function accountCost(g, o) {
+  if (o.budgeted) return true;
+  const cost = o.cost || 0;
+  g.activeCost = (g.activeCost || 0) + cost;
+  o.budgeted = cost > 0;
+  return true;
+}
 function releaseCost(g, o) {
+  if (o.turretTask) {
+    releaseCost(g, o.turretTask);
+    o.turretTask.alive = false;
+  }
   if (!o.budgeted) return;
   g.activeCost = Math.max(0, (g.activeCost || 0) - (o.cost || 0));
   o.budgeted = false;
 }
 /* ---- TOWN boss GOOSE (0xc78a), docs/TOWN-AUDIT.md sekce 4 ----
-   Rodic: a2c6(GOOSE#0, coll 0, margin 0, hp 0, body 0, cost 100),
-   st +534 (imunni vuci smart bombe), bit 4, presun na x 160 a o 288 px
-   dal (nalet zespodu vy = -2). Ctyri potomci pres 0x6144: pod 0xcaac a
-   tri casti tela 0xc9e2/0xc9ec/0xc9f0; +276 = 4 = pocet nezadokovanych.
-   Behem naletu telo blika (0xc7fc: period 1, orflag 128 / andflag 128).
-   Po zastaveni na screen y 72: anim 0xc82e (period 10: 0,0,1,2,3,4,5,
-   end), HP 25 a kolizni trida 34 uz tady (0xc842..0xc854), rotor
-   overlay 0x93e2, a teprve pak ceka na +276 == 0 (0xc85e). */
-const BOSS_PARTS = [                             // 0xcaac / 0xc9f0 / 0xc9ec / 0xc9e2
-  { dx:   0, dy:  24, frame:  8, pod: true },    // GOOSE#8..11 pod (0xcaac)
-  { dx: -16, dy: -12, frame:  6 },               // GOOSE#6 bok (0xc9f0)
-  { dx:  16, dy: -12, frame:  6 },               // GOOSE#6 bok (0xc9ec)
-  { dx:   0, dy: -44, frame:  7 },               // GOOSE#7 vrsek (0xc9e2)
+   Rodic je a2c6(GOOSE#0, coll0, margin0, hp0, body0, cost100), ma +534
+   imunitu vuci smart bombe a bit4 jej odpojuje od scrollu. Nese tri dilce
+   tela a ctvrteho doprovodneho potomka. Vsechny
+   deti nejprve leti jako samostatne BOB objekty z horniho okraje, 75 tiku
+   pokracuji rovne a potom se rychlosti 2 px/t nataceji k pohyblivemu cili
+   (0xcb78..0xcc56). Az po pripojeni dostanou relativni z=+1 a stin. */
+const BOSS_BODY_PARTS = [                        // 0xc9e2 / 0xc9ec / 0xc9f0
+  { id: "left",  dx: -16, dy: -12, frame: 6 }, // GOOSE#6
+  { id: "right", dx:  16, dy: -12, frame: 6 }, // GOOSE#6
+  { id: "top",   dx:   0, dy: -44, frame: 7 }, // GOOSE#7
 ];
-const BOSS_ANIM = [0, 0, 1, 2, 3, 4, 5];         // 0xc82e, period 10, end
-/* Pod 0xcb20..0xcb2e: sest kroku -8, sest +8, nahodna pauza, sest +8,
-   sest -8, nahodna pauza; kazdy blok kroku konci cekanim 20 yieldu. */
-const POD_SWING = [-8, 8, "rand", 8, -8, "rand"];
+const BOSS_ESCORT = { id: "escort", dx: 0, dy: 24, frame: 8 };// 0xcaac
+
+function newBossChild(t, delay, escort) {
+  return {
+    id: t.id, kind: escort ? "escort" : "body",
+    tx: t.dx, ty: t.dy, frame: t.frame,
+    delay, phase: "delay", entered: false, linked: false,
+    x: 0, y: -24, ox: t.dx, oy: t.dy, z: 33,
+    ang: 64, vx: 0, vy: 2, wait: 75, settle: 0,
+    animTick: 0, animPos: 0, snakeWait: 0, snakeStage: 0,
+    snakeSteps: 0, snakeTurn: 0,
+  };
+}
 function spawnBossParts(g, boss) {
-  return BOSS_PARTS.map(t => ({
-    tx: t.dx, ty: t.dy, frame: t.frame, pod: !!t.pod,
-    // 0xca0a: nahodne cekani 0..63 snimku, pak vstup shora z nahodneho x
-    delay: random32() & 63,
-    entered: false, docked: false, phase: "wait", t: 0,
-    x: boss.x, y: boss.y, ang: 64, ox: 0, oy: 0,
-    swing: 0, swingT: 0, swingLeft: 0, swingStep: 0, animT: 0, animFr: 8,
-  }));
+  // 0xc7d2 vytvori nejdrive doprovod, pak levy/pravy/horni dil. RNG body
+  // delay se ale spotrebuje az pri prvnim resume kazdeho child tasku.
+  const parts = [
+    newBossChild(BOSS_ESCORT, 0, true),
+    ...BOSS_BODY_PARTS.map(t => newBossChild(t, null, false)),
+  ];
+  for (const q of parts) assignBobOrdinal(g, q);
+  return parts;
 }
-/* 0xcb78: cast (i pod) leti z horniho okraje: 75 snimku rovne dolu
-   2 px/t (uhel 64), pak se naklada na cil = rodic + ofset: otocka max
-   ((63 - dist) clamp >= 2) / 2 jednotek za tik, rychlost 2 px/t; pri
-   Manhattan < 6 jeden tik dvojnasobnou rychlosti (0xcc16), pak snap na
-   ofset s bitem 3 (sleduje rodice) a rodicovo +276 klesne (0xcc52). */
-function stepBossPart(g, boss, q) {
-  if (q.phase === "wait") {
-    if (q.delay-- > 0) return;
-    q.entered = true; q.phase = "dive"; q.t = 75;   // 0xcbc2: wait 75
-    q.x = 32 + (random32() & 255);                  // 0xca3c / 0xcaf2
-    q.y = g.scroll - 24;                            // 0xca4c: screen y -24
-    q.ang = 64;
-    return;
+function startBossChild(g, q) {                 // 0xca3c / 0xcaf2
+  q.phase = "straight"; q.entered = true;
+  q.x = 32 + (random32(g) & 255); q.y = -24;
+  q.ang = 64; q.vx = 0; q.vy = 2; q.wait = 75;
+  // Child a2c6 cost10 nema 0x8822 guard; body plati az po random waitu.
+  if (!q.budgeted) {
+    q.cost = 10; q.budgeted = true;
+    g.activeCost = (g.activeCost || 0) + q.cost;
   }
-  if (q.docked) {
-    if (q.pod) stepBossPod(g, boss, q);
-    else {
-      // 0xca5e: pri hit flashi rodice se ofset zdvojnasobi, 0xca7a pak
-      // vraci po 4 px/tik na osu
-      if (boss.jolt) { q.ox = 2 * q.tx; q.oy = 2 * q.ty; }
-      if (q.ox !== q.tx) q.ox -= (q.ox > q.tx) ? 4 : -4;
-      if (q.oy !== q.ty) q.oy -= (q.oy > q.ty) ? 4 : -4;
+}
+function moveBossChild(q, scrollDelta, mul = 1) {
+  // Pred bit3/follow-parent je dite world-space, proto se v obrazovych
+  // souradnicich projevi i delta kamery.
+  q.x += q.vx * mul;
+  q.y += q.vy * mul - scrollDelta;
+}
+function attachBossChild(boss, q) {             // 0xcc2a..0xcc56
+  q.phase = q.kind === "escort" ? "escort-wait" : "linked";
+  q.linked = true; q.ox = q.tx; q.oy = q.ty; q.z = 33;
+  q.vx = 0; q.vy = 0;
+  if (q.kind === "escort") q.snakeWait = 20;   // 0xcb0e
+  boss.assemblyLeft = Math.max(0, (boss.assemblyLeft || 0) - 1);
+}
+const BOSS_SNAKE_ACTIONS = [-8, "hold", 8, "hold", "random",
+                             8, "hold", -8, "hold", "random"];
+function beginBossSnakeAction(g, q) {
+  const action = BOSS_SNAKE_ACTIONS[q.snakeStage];
+  if (action === "hold") q.snakeWait = 20;
+  else if (action === "random") q.snakeWait = 10 + (random32(g) & 31);
+  else { q.snakeTurn = action; q.snakeSteps = 6; }
+}
+function advanceBossSnakeAction(g, q) {
+  q.snakeStage = (q.snakeStage + 1) % BOSS_SNAKE_ACTIONS.length;
+  beginBossSnakeAction(g, q);
+}
+function stepBossEscort(g, q) {
+  if (q === undefined) { q = g; g = null; }    // izolovany diagnosticky krok
+  if (q.phase === "escort-wait") {
+    if (--q.snakeWait > 0) return;
+    q.phase = "snake"; q.ang = 64; q.snakeStage = 0;
+    beginBossSnakeAction(g, q);                 // expiry propadne do kroku
+  }
+  if (q.phase !== "snake") return;
+  if (q.snakeWait > 0) {                       // 0xcb32: wait 10..41
+    if (--q.snakeWait > 0) return;
+    advanceBossSnakeAction(g, q);
+    if (q.snakeWait > 0) return;                // dalsi akce je opet wait
+  }
+  q.ang = (q.ang + q.snakeTurn) & 255;
+  const v = angVel(q.ang, 18);                 // +356 = 0x1200
+  // Follow-parent housekeeping pred kazdym yieldem znovu nasadi pozici
+  // rodice. 0xcb52 proto uklada aktualni relativni vektor, neintegruje jej.
+  q.ox = v.vx;
+  q.oy = v.vy + 12;                           // 0xcb5e: addi.w #12,+336
+  if (--q.snakeSteps > 0) return;
+  advanceBossSnakeAction(g, q);
+}
+function stepBossParts(g, boss, scrollDelta) {
+  const bsy = boss.y - g.scroll;
+  for (const q of boss.parts) {
+    if (q.phase === "delay") {
+      // Body 0xca0a vola 0x5f22 i pro random delay 0. Wait helper vzdy
+      // provede cooperative yield, takze telo na rozdil od escorty nesmi
+      // propadnout do a2c6 uz v creation passu.
+      if (q.delay === null) q.delay = (random32(g) & 63) + 1;
+      if (q.delay-- > 0) continue;
+      startBossChild(g, q);
     }
-    q.x = boss.x + q.ox; q.y = boss.y + q.oy;
-    return;
+    if (q.kind === "escort" && q.entered && ++q.animTick >= 8) {
+      q.animTick = 0; q.animPos = (q.animPos + 1) & 3;
+      q.frame = 8 + q.animPos;                  // 0xcae2 bezi uz pri ingressu
+    }
+    if (q.linked) {
+      if (q.kind === "body") {
+        // Damage callback rodice uz pred child resume nastavi 2*cile a
+        // propadne do prvniho 4px contraction kroku. V tomtez VBL je proto
+        // znovu neroztahujeme; dalsi resume pokracuji po 4 px k zakladu.
+        if (!boss.hitSpread) {
+          const tx = q.tx, ty = q.ty;
+          if (q.ox !== tx) q.ox += q.ox < tx ? 4 : -4;
+          if (q.oy !== ty) q.oy += q.oy < ty ? 4 : -4;
+        }
+      } else {
+        stepBossEscort(g, q);
+      }
+      continue;
+    }
+    if (q.phase === "straight") {
+      moveBossChild(q, scrollDelta);
+      if (--q.wait <= 0) q.phase = "home";
+      continue;
+    }
+    if (q.phase === "home") {
+      const tx = boss.x + q.tx, ty = bsy + q.ty;
+      const dx = signedWord(positionWord(tx) - positionWord(q.x));
+      const dy = signedWord(positionWord(ty) - positionWord(q.y));
+      const dist = Math.abs(dx) + Math.abs(dy);
+      if (dist < 6) {
+        // 0xcc16: posledni nepripojeny frame udela okamzite 2*v. Kamera
+        // se pricte jen jednou; snap/counter-- prijde az pri resume T+1.
+        q.phase = "overshoot";
+        moveBossChild(q, scrollDelta, 2);
+      }
+      else {
+        const turn = Math.max(2, 63 - dist) >> 1;
+        q.ang = turnToward(q.ang, angTo(q.x, q.y, tx, ty), turn);
+        const v = angVel(q.ang, 2); q.vx = v.vx; q.vy = v.vy;
+        moveBossChild(q, scrollDelta);
+      }
+      continue;
+    }
+    if (q.phase === "overshoot") {
+      attachBossChild(boss, q);                  // 0xcc2a..0xcc56, dalsi tick
+    }
   }
-  if (q.phase === "dive") {
-    q.y += 2;
-    if (--q.t <= 0) q.phase = "home";
-    return;
-  }
-  // home (0xcbc6..0xcc14): cil se cte z rodice kazdy tik
-  const tx = boss.x + q.tx, ty = boss.y + q.ty;
-  const dist = Math.abs(q.x - tx) + Math.abs(q.y - ty);
-  if (dist < 6) {
-    const v = angVel(q.ang, 4);                     // 0xcc16: rychlost x2
-    q.x += v.vx; q.y += v.vy;
-    q.docked = true; q.ox = q.tx; q.oy = q.ty;      // 0xcc2a: snap + bit 3
-    q.x = boss.x + q.ox; q.y = boss.y + q.oy;
-    boss.undocked--;                                // 0xcc52
-    if (q.pod) { q.phase = "podWait"; q.t = 20; }   // 0xcb0e: wait 20 yieldu
-    return;
-  }
-  const maxTurn = Math.max(2, 63 - dist) >> 1;      // 0xcbf6..0xcc02
-  q.ang = turnToward(q.ang, angTo(q.x, q.y, tx, ty), maxTurn);
-  const v = angVel(q.ang, 2);
-  q.x += v.vx; q.y += v.vy;
 }
-/* 0xcb14..0xcb76: pod visi na rameni 18 px (+356 = 0x1200) pod telem,
-   uhel 64 +- kroky po 8 jednotkach; po kazdem kroku +336 += 12 px. */
-function stepBossPod(g, boss, q) {
-  if (q.phase === "podWait") { if (--q.t <= 0) { q.phase = "swing"; q.ang = 64; q.swing = 0; q.swingLeft = 0; q.t = 0; } return; }
-  if (q.phase !== "swing") return;
-  if (q.t > 0) { q.t--; return; }                   // cekani 20 / nahodne
-  if (q.swingLeft === 0) {
-    const cmd = POD_SWING[q.swing];
-    q.swing = (q.swing + 1) % POD_SWING.length;
-    if (cmd === "rand") { q.t = (random32() & 31) + 10; return; }   // 0xcb32
-    q.swingStep = cmd; q.swingLeft = 6;             // 0xcb4c: +276 = 6
+function bossAssembled(boss) { return (boss.assemblyLeft || 0) === 0; }
+function bossPartPosition(boss, q, top) {
+  return q.linked
+    ? { x: boss.x + q.ox, y: boss.y - top + q.oy }
+    : { x: q.x, y: q.y };
+}
+
+function releaseBossGroup(g, boss, orphanCallbacks = false) {
+  if (boss.groupReleased) return;
+  boss.groupReleased = true;
+  // 0x6458/+542: tri body children maji silent 0x6db4. Escort si po
+  // vlastnim a2c6 startu instaluje 0xa36a a pri orphaningu jednou vybuchne.
+  if (orphanCallbacks) {
+    const escort = (boss.parts || []).find(q =>
+      q.kind === "escort" && q.entered && q.budgeted);
+    if (escort) {
+      const ep = bossPartPosition(boss, escort, g.scroll);
+      spawnBoom(g, ep.x, ep.y + g.scroll, "small", 34);
+      sfxBigExplosion(g, ep.x);
+    }
   }
-  q.ang = (q.ang + q.swingStep) & 255;              // 0xcb52
-  const v = angVel(q.ang, 18);                      // 0xcb5a: 0x65f2
-  q.ox = v.vx; q.oy = v.vy + 12;                    // 0xcb5e: +336 += 12
-  if (--q.swingLeft === 0) q.t = 20;                // 0xcb70: wait 20 yieldu
+  releaseCost(g, boss);
+  for (const q of boss.parts || []) releaseCost(g, q);
 }
-function stepBossParts(g, boss) {
-  for (const q of boss.parts) stepBossPart(g, boss, q);
-  boss.jolt = false;
-}
-/* 0xc974: zasah -1 HP, negl +332, zvuk 0x8834 a hit flash (0xa35a);
-   casti ho vidi jako zdvojnaseni ofsetu (0xca5e). */
-function hitBoss(g, s) {
-  if (--s.hp > 0) { s.vx = -s.vx; s.flashT = 1; s.jolt = true; return false; }
-  killBoss(g, s); return true;
-}
-/* Dotek hrace: telo ma tridu 34 az od 0xc854 (po zastaveni) a handler
-   0xc974 i v +514; casti a pod maji tridu 34 od a2c6 (0xca26/0xcabe),
-   HP 0 -> bez handleru, jen zabijeji. */
-function bossTouch(g, s, touches) {
-  let lethal = false;
-  const sy = s.y - g.scroll;
-  if (s.st >= 1) {
-    const body = sprite(s.file, s.bodyFr);
-    if (body && touches(body)(s.x, sy)) { lethal = true; hitBoss(g, s); }
+
+/* Jediny GOOSE damage callback 0xc974. Event bity koaleskuji vsechny bolty
+   stejne kategorie v jednom ticku, ale player-contact jej muze zavolat
+   podruhe samostatnym bitem. */
+function damageBoss(g, boss) {
+  if (!boss.alive || boss.hp <= 0) return false;
+  if (--boss.hp > 0) {
+    boss.vx = -boss.vx;
+    sfxGooseHit(g);                             // 0xc97e -> 0x8834/0x4e46
+    boss.hitSpread = true;
+    for (const q of boss.parts || []) {
+      if (q.kind !== "body" || !q.linked) continue;
+      q.ox = q.tx * 2; q.oy = q.ty * 2;
+      // 0xc944 vstoupi do contraction smycky jeste pred prvnim BOB yieldem.
+      if (q.ox !== q.tx) q.ox += q.ox < q.tx ? 4 : -4;
+      if (q.oy !== q.ty) q.oy += q.oy < q.ty ? 4 : -4;
+    }
+    return false;
   }
-  for (const q of s.parts) {
-    if (!q.entered) continue;
-    const pr = sprite(s.file, q.pod ? q.animFr : q.frame);
-    if (pr && touches(pr)(q.x, q.y - g.scroll)) lethal = true;
-  }
-  return lethal;
-}
-/* 0xc986: 0x60e0 odpoji deti, 2 nebo 3 kruhy TOKENu, zvuk 0x8838 a
-   0xa36a s +376 = 0x894a (maly EXPL1), 0 bodu. Sirotci handler +542:
-   casti (0x6db4) zmizi, pod (0xa36a) exploduje. */
-function killBoss(g, s) {
-  s.alive = false;
-  releaseCost(g, s);
-  dropBossTokens(g, s, s.timer <= 500 ? 3 : 2);   // 0xc98c
-  spawnBoom(g, s.x, s.y);
-  for (const q of s.parts)
-    if (q.entered && q.pod) spawnBoom(g, q.x, q.y);
-  snd("BIGEXPL.SND", 8000);
+
+  boss.alive = false;
+  // c98c rozhoduje unsigned WORD +280: 0..500 => tri, jinak dva kruhy.
+  dropBossTokens(g, boss, (boss.timer & 0xFFFF) <= 500 ? 3 : 2);
+  spawnBoom(g, boss.x, boss.y, "small", 33);
+  sfxBossDeath(g);                              // 0xc998 -> 0x8838/0x553a
+  sfxBigExplosion(g, boss.x);                  // 0xa36a -> 0x894a/0x4c58
+  releaseBossGroup(g, boss, true);
+  return true;
 }
 
 /* 0xc9a0: po jednom kruhu bonusu za kazdeho zijiciho hrace. Krok uhlu je
@@ -1253,13 +2567,21 @@ function dropBossTokens(g, boss, perPlayer) {
   const count = perPlayer * living;
   if (count <= 0) return;
   const stepAng = (256 / count) | 0;
-  let ang = random32() & 255;
+  let ang = random32(g) & 255;
   for (let i = 0; i < count; i++) {
-    // 0x9704: rodi se jako typ 3, 12 obehnuti; rozjezd viz stepTokens
-    g.tokens.push({
-      x: boss.x, y: boss.y, ang, t: 0,
-      typ: 3, cycles: 12, blink: false, hitLock: false, dead: false,
-    });
+    const v = angVel(ang, 1.25);                // 0x9714: 0x140 / 256
+    const token = {
+      x: boss.x, y: boss.y, ang, vx: v.vx, vy: v.vy - 1,
+      // 0x9704: kazdy GOOSE token zacina typem 3 (ochrana), nikoli 0.
+      typ: 3, cycles: 12, blink: false, hitCooldown: 0,
+      burst: 32, phase: "burst", interactive: false, dead: false,
+      cost: 5, budgeted: true,
+    };
+    // TOKEN vola a2c6 primo bez 0x8822 guardu; timeoutovy kruh tak muze
+    // docasne prekrocit globalni limit 160.
+    g.activeCost = (g.activeCost || 0) + token.cost;
+    assignBobOrdinal(g, token);
+    g.tokens.push(token);
     ang = (ang + stepAng) & 255;
   }
 }
@@ -1271,41 +2593,69 @@ const TOKEN_ICONS = [1, 2, 3, 4, 5];             // 0x0218,0x0418,...,0x0a18
    32 snimku (0x9722) leti rychlosti +356 = 320 = 1.25 px/t ve smeru
    kruhu z 0xc9a0, k tomu 1 px/t nahoru (subqw #1,+336). Teprve pak
    nainstaluje 0x97c6 (sebrani) a 0x9780 (strela), zastavi, oreze x na
-   8..312 (0x9742), zapne cull a klesa 0.5 px/t (+338 = 0x8000).
-   Hlavni smycka 0x9764: kazdy druhy snimek se strida ikona typu a
-   TOKEN#0, takze bonus blika; pred kazdym cyklem uvolni zamek zasahu
+   8..312 (0x9742), zapne cull a klesa 0.5 px/t (+338 = 0x8000). */
+function releaseToken(g, k) {
+  releaseCost(g, k);
+  k.dead = true;
+}
+
+/* Hlavni smycka 0x9764: kazdy druhy snimek se strida ikona typu a TOKEN#0,
+   takze bonus blika. Zaroven se pred kazdym cyklem uvolni zamek zasahu
    (+278 = -1), proto lze typ prepnout nejvys jednou za dva tiky. */
-const TOKEN_LAUNCH = 32;
-function tokenLive(k) { return !(k.t < TOKEN_LAUNCH); }
 function stepTokens(g, scrollDelta) {
   for (const k of g.tokens) {
     k.y += scrollDelta;                          // bit 4: odpojeny scroll
-    if (!tokenLive(k)) {
-      const v = angVel(k.ang, 1.25);
-      k.x += v.vx; k.y += v.vy - 1;
-      if (++k.t === TOKEN_LAUNCH)
-        k.x = Math.max(8, Math.min(312, k.x));   // 0x9742: orez na 8..312
+    if (k.phase === "burst") {
+      k.x += k.vx; k.y += k.vy;
+      if (--k.burst <= 0) {
+        // wait32 prave dokoncil posledni burst BOB. Callbacky/bounds se
+        // instaluji az na resume nasledujiciho VBL.
+        k.phase = "transition";
+      }
       continue;
     }
-    k.y += 0.5;
-    k.blink = !k.blink;
-    if (k.blink) k.hitLock = false;
+    if (k.phase === "transition") {
+      k.phase = "active"; k.interactive = true;
+      k.vx = 0; k.vy = 0.5;
+      // 0x9742 meni pouze high word 16.16 pozice; low-word frakce zustava.
+      const xFrac = k.x - Math.floor(k.x);
+      k.x = Math.max(8, Math.min(312, Math.floor(k.x))) + xFrac;
+      k.y += k.vy;                              // prvni active pohyb 0.5
+      k.hitCooldown = -1;
+      k.blink = false; k.activeHalf = 1;        // prvni icon, pak blank
+      continue;
+    }
+    k.x += k.vx; k.y += k.vy;
+    // 0x9764..0x9776: ikonovy a prazdny frame tvori dvoutikovy cyklus.
+    // Cooldown zasahu se zmensi jen na jeho zacatku, tedy jednou za 2 t.
+    if ((k.activeHalf & 1) === 0) k.hitCooldown--;
+    k.blink = (k.activeHalf & 1) !== 0;
+    k.activeHalf ^= 1;
   }
-  const sy = y => y - g.scroll;
-  g.tokens = g.tokens.filter(k => !k.dead && sy(k.y) > -48 && sy(k.y) < 320);
+  // Behem burstu 0x96f4 docasne zneplatni bounds callback. 0x975c jej
+  // pri prechodu do active vrati; pak plati bezne hranice 0x6480.
+  for (const k of g.tokens) {
+    if (k.dead || k.phase !== "active") continue;
+    const sy = k.y - g.scroll;
+    if (outsideCullMargin(k.x, sy, -64))
+      releaseToken(g, k);
+  }
+  g.tokens = g.tokens.filter(k => !k.dead);
 }
 
 /* 0x9780 (callback +510, instalovany 0x653e): STRELA do bonusu ho vyhodi
    o 8 px vzhuru a prepne typ. Po dvanacti obehnutich vsech ctyr typu se
    zamkne na typ 4 (TOKEN#5 = plna sila). */
 function shootToken(g, k) {
+  if (!k.interactive) return;                    // callback az po 32t burstu
   k.y -= 8;                                      // subqw #8, mapY
-  if (k.hitLock) return;
-  k.hitLock = true;
+  if (k.hitCooldown >= 0) return;
+  k.hitCooldown = 4;                            // dalsi zmena nejdrive za 10 t
   k.typ = (k.typ + 1) & 3;
   if (k.typ !== 0) return;
   if (--k.cycles !== 0) return;
   k.typ = 4;                                     // 0x97a2
+  k.hitCooldown += 8;                           // neni permanentni lock: 12
 }
 
 /* 0x97c6 (callback +514, instalovany 0x6564): SEBRANI. Hracska pole podle
@@ -1313,66 +2663,104 @@ function shootToken(g, k) {
    +104 rezim, +98 prodleva palby, +108 doba ochrany, +76 skore. */
 function pickupToken(g, k) {
   const p = g.player;
+  g.tokensPickedUp = (g.tokensPickedUp || 0) + 1; // fp@(0x30ca)
+  sfxTokenPickup(g, k.x);                       // 0x97ce -> 0x5614/0x5672
   // 0x97e4: kazdy typ nejdriv inkrementuje +102, ale 20 se vrati na 19.
   p.tokenCount = Math.min(19, (p.tokenCount || 0) + 1);
   if (k.typ === 2) {                             // 0x982a: rychlejsi palba
     p.reload = Math.max(8, (p.reload ?? 11) - 3);
   } else if (k.typ === 3) {                      // 0x983e: OCHRANA + body
-    p.inv += 500;                                // +108 += 500 (~10 s)
+    p.inv = ((p.inv || 0) + 500) & 0xFFFF;      // ADDI.W: scita se, 16bit wrap
     awardScore(g, 500);                          // +76 += 500
   } else if (k.typ === 4) {                      // 0x984e: plna sila
     p.weapon = 6; p.reload = 8;
-    // 0x8852 jeste zaklada zablesk do bila (fp@(11166) = 256), ale krok
-    // jeho doznivani nikde nenastavuje - neprepsano, viz docs/GAPS.md.
+    startWhiteFlash(g);                         // 0x8852: 256, potom -4/VBL
   } else {                                       // 0x9808 / 0x980c: rezim
     const mode = (k.typ === 1) ? 1 : 0;
     // 0x981a: silu prida jen kdyz uz hrac tento rezim mel; strop 5
     if (p.mode === mode && p.weapon < 5) p.weapon++;
     p.mode = mode;
   }
-  k.dead = true;                                 // 0x9826: ldr_obj_kill
+  releaseToken(g, k);                            // 0x9826: ldr_obj_kill
 }
 
-function fodderInitial() {                     // 0x813a
-  const r = random32(), hi = r >>> 16;
+function fodderInitial(g) {                    // 0x813a
+  const r = random32(g), hi = r >>> 16;
   return { x: 32 + (r & 255),
            vx: (hi & 0x8000 ? hi - 0x10000 : hi) / 32768 };
 }
 function spawnFodderFormation(g, s) {          // mapovy vstup 0x8048
+  assignBobOrdinal(g, s);
   g.waveSeq = (g.waveSeq || 0) + 1;
   const scatter = (g.waveSeq & 3) === 0;
-  const shared = fodderInitial();              // 0x804c, vzdy se spotrebuje
-  const count = g.players >= 2 ? 5 : 4;
+  const shared = fodderInitial(g);             // 0x804c, vzdy se spotrebuje
+  const count = (g.difficulty || 0) >= 2 ? 5 : 4;
   for (let i = 0; i < count; i++) {
-    const k = scatter ? fodderInitial() : shared;
-    const carrier = ((Math.random() * 4 | 0) + g.players) >= 5;
-    g.air.push({ kind: "fod", x: k.x, y: s.y - i * 4,
+    const k = scatter ? fodderInitial(g) : shared;
+    const a = { kind: "fod", x: k.x, y: s.y - i * 4,
                  vx: k.vx, vy: 0, ax: 0, ay: 1 / 32,
                  alive: false, pending: true, dead: false,
                  cost: 10, budgeted: false, hp: 1, scoreValue: 12,
-                 shooter: carrier,
-                 cool: carrier ? 32 + (Math.random() * 64 | 0) : -1,
+                 shooter: false, shooterPending: true, cool: -1,
                  seq: s.typ === 1 ? [2, 3, 2, 4, 2, 5, 2, 6] : [0, 1],
-                 per: 1, apos: 0, at: 0, animFresh: true });
+                 per: 1, apos: 0, at: 0, animFresh: true };
+    if (i === count - 1) a.bobOrdinal = s.bobOrdinal;
+    else assignBobOrdinal(g, a);
+    g.air.push(a);
   }
 }
 function spawnYellowFormation(g, s) {          // 0x86bc + a2a2(0,-8,6,0)
-  for (let i = 0; i < 6; i++)
-    g.air.push({ kind: "yel", x: 0, y: s.y - i * 8,
+  assignBobOrdinal(g, s);
+  for (let i = 0; i < 6; i++) {
+    const a = { kind: "yel", x: 0, y: s.y - i * 8,
                  alive: false, pending: true, dead: false,
-                 cost: 10, budgeted: false, hp: g.players + 1, scoreValue: 35,
+                 cost: 10, budgeted: false, hp: 0, scoreValue: 35,
                  ang: 64, spd: 2, ct: 0,
                  seq: [0, 1, 0, 2, 0, 3, 0, 4],
-                 per: 1, apos: 0, at: 0, animFresh: true });
+                 per: 1, apos: 0, at: 0, animFresh: true };
+    if (i === 5) a.bobOrdinal = s.bobOrdinal;
+    else assignBobOrdinal(g, a);
+    g.air.push(a);
+  }
 }
 function spawnBirdFormation(g, s) {            // 0x862e + a2a2(32,-4,4,0)
-  for (let i = 0; i < 4; i++)
-    g.air.push({ kind: "bird", x: s.x + i * 32, y: s.y - i * 4,
+  assignBobOrdinal(g, s);
+  for (let i = 0; i < 4; i++) {
+    const a = { kind: "bird", x: s.x + i * 32, y: s.y - i * 4,
                  vx: 0, vy: 0,
                  alive: false, pending: true, dead: false,
                  cost: 10, budgeted: false, hp: 2, scoreValue: 55,
                  seq: [0, 1, 2, 3, 2, 1],
-                 per: 4, apos: 0, at: 0, animFresh: true });
+                 per: 4, apos: 0, at: 0, animFresh: true };
+    if (i === 3) a.bobOrdinal = s.bobOrdinal;
+    else assignBobOrdinal(g, a);
+    g.air.push(a);
+  }
+}
+/* 0x365e map reader vytvari object task uz zhruba 256 px pred hornim
+   okrajem. Kod pred a2c6 (clone formace a RNG prahy) proto musi probehnout
+   zde, nikoli teprve na viditelnem activation marginu. */
+function startMapObjectTask(g, s) {
+  if (s.taskStarted) return;
+  s.taskStarted = true; assignBobOrdinal(g, s);
+  if (s.beh === "wave") {
+    spawnFodderFormation(g, s); s.born = true; s.alive = false;
+  } else if (s.beh === "yellow") {
+    spawnYellowFormation(g, s); s.born = true; s.alive = false;
+  } else if (s.beh === "bird") {
+    spawnBirdFormation(g, s); s.born = true; s.alive = false;
+  } else if (s.beh === "popup") {
+    s.activationMargin = 64 + (random32(g) & 63); // 0xa6ae pred a2c6
+  } else if (s.beh === "proxmine") {
+    s.activationMargin = 85 + (random32(g) & 31); // 0xa9e0 pred a2c6
+  }
+}
+function yellowTarget(g, playerOverride) {     // 0x72a6
+  const p = playerOverride || g.player;
+  if (p && p.alive) return { x: p.x, y: p.y };
+  const b = (g.tick | 0) & 255;
+  const n = b < 128 ? b : 255 - b;
+  return { x: 96 + n, y: 128 + n };
 }
 function activateAirMember(g, a, p) {
   if (!a.pending || a.y - g.scroll < -48) return false;
@@ -1386,11 +2774,20 @@ function activateAirMember(g, a, p) {
     return false;
   }
   a.alive = true; a.animFresh = true;
-  if (a.kind === "yel") {                      // RNG az po a2c6
-    a.x = (random32() & 63) + (p.x < 160 ? 256 : 0);
+  if (a.kind === "fod") {
+    // 0x80d4: jediny random long; low2 rozhodnou strelce, puvodni high
+    // word tehoz vysledku dava cooldown. Difficulty se cte az po a2c6.
+    const r = random32(g);
+    a.shooter = ((r & 3) + (g.difficulty || 0)) >= 5;
+    a.shooterPending = false;
+    a.cool = a.shooter ? 32 + ((r >>> 16) & 63) : -1;
+  } else if (a.kind === "yel") {               // RNG az po a2c6
+    a.hp = (g.difficulty || 0) + 1;
+    const target = yellowTarget(g, p);
+    a.x = (random32(g) & 63) + (target.x < 160 ? 256 : 0);
     a.ang = 64; a.spd = 2; a.ct = 0;
   } else if (a.kind === "bird") {              // 0x8658..0x8668
-    a.vy = 1 + (random32() & 0x7FFF) / 65536;
+    a.vy = 1 + (random32(g) & 0x7FFF) / 65536;
   }
   return true;
 }
@@ -1413,9 +2810,99 @@ function advanceAirAnim(a) {
 }
 
 /* ---- pohyblive casti min a plamenometu ---- */
+function incrementPlayerRank(p) {               // 0x70f6..0x7104
+  const rank = signedWord(p.rank || 0);
+  p.rank = rank < 0x7fff ? rank + 1 : 0x7fff;  // signed-overflow saturace
+}
+function updateDifficulty(g) {                  // 0x1cd4..0x1d02
+  const p1 = g.player || {}, p2 = g.player2 || {};
+  const r1 = signedWord(p1.rank || 0) >> 8;
+  const r2 = signedWord(p2.rank || 0) >> 8;
+  const powers = signedWord((p1.weapon || 0) + (p2.weapon || 0)) >> 2;
+  const phase = (g.levelPhase || 0) > 0 ? (g.levelPhase | 0) - 1 : 0;
+  g.difficulty = Math.min(10, ((r1 + r2 + powers) >> 3) + phase);
+}
 function awardScore(g, points) {
   g.score += points;
-  if (g.score >= g.nextLife) { g.lives++; g.nextLife += 30000; }
+  if (g.score >= g.nextLife) {
+    g.lives++; g.nextLife += 30000;
+    if (g.player)
+      g.player.rank = signedWord((g.player.rank || 0) + 6000);// 0x7116
+  }
+}
+/* Resident collision sweep 0x6ee2 nepouziva rozmery obrazku. Porovnava
+   integerove strety uzlu s inclusive half-extent 8; udalosti stejneho
+   bitu se pak za jeden VBL pouze ORnou. */
+function collisionNodeHit(ax, ay, bx, by) {
+  return Math.abs(Math.floor(ax) - Math.floor(bx)) <= 8 &&
+         Math.abs(Math.floor(ay) - Math.floor(by)) <= 8;
+}
+/* Bit15 projectile node sam nesweepuje. Kladny target porovnava obe
+   poloviny inclusive: defaultni extent8 tedy dx/dy -8..+8. */
+function projectileNodeHit(px, py, tx, ty) {
+  const dx = Math.floor(px) - Math.floor(tx);
+  const dy = Math.floor(py) - Math.floor(ty);
+  return dx >= -8 && dx <= 8 && dy >= -8 && dy <= 8;
+}
+function outsideCullMargin(x, y, margin) {       // 0x6480, inclusive
+  const ix = Math.floor(x), iy = Math.floor(y);
+  return ix <= margin || ix >= 320 - margin ||
+         iy <= margin || iy >= 256 - margin;
+}
+
+function killSpawnCredited(g, s) {             // 0xa36a z player eventu
+  if (!s.alive) return;
+  s.alive = false; releaseCost(g, s);
+  awardScore(g, s.scoreValue ?? 100);
+  spawnBoom(g, s.x, s.y, "small", s.beh === "mill" ? 33 : 1);
+  if (["tank", "popup", "flame", "proxmine"].includes(s.beh))
+    addDecal(g, "EXPL1.LIN", 0, s.x, s.y);
+  sfxBigExplosion(g, s.x);
+}
+function damageSpawn(g, s) {
+  if (!s.alive || s.hp <= 0) return false;
+  if (--s.hp > 0) {
+    s.hitFlash = true; sfxGenericHit(g, s.x); return false;
+  }
+  killSpawnCredited(g, s); return true;
+}
+function killAirCredited(g, a) {
+  if (!a.alive) return;
+  releaseAirMember(g, a); awardScore(g, a.scoreValue ?? 0);
+  spawnBoom(g, a.x, a.y, "small", 33);
+  sfxBigExplosion(g, a.x);
+}
+function damageAir(g, a) {
+  if (!a.alive || a.hp <= 0) return false;
+  if (--a.hp > 0) {
+    a.hitFlash = true;
+    if (a.kind !== "bird") sfxGenericHit(g, a.x); // BIRD hit je tichy
+    return false;
+  }
+  killAirCredited(g, a); return true;
+}
+function damageBirdEvent(g, a) {               // 0x8696, +510 i +514
+  const ay = a.y - g.scroll;
+  const died = damageAir(g, a);
+  if (!died) {
+    a.y -= 6;
+    fireCannon(g, a.x, ay - 6, 56 + (random32(g) & 15), true, false);
+  }
+  return died;
+}
+function killHazardCredited(g, h) {
+  if (!h.alive) return;
+  releaseHazard(g, h); awardScore(g, h.scoreValue ?? 0);
+  spawnBoom(g, h.x, h.y, "small",
+            h.kind === "minecore" || h.kind === "proxfrag" ? 33 : 1);
+  sfxBigExplosion(g, h.x);
+}
+function damageHazard(g, h) {
+  if (!h.alive || h.hp <= 0) return false;
+  if (--h.hp > 0) {
+    h.hitFlash = true; sfxGenericHit(g, h.x); return false;
+  }
+  killHazardCredited(g, h); return true;
 }
 /* 0x737e..0x73ea: stejny text, ktery nativni renderer sklada do BPL5.
    Skore je sest internich cislic a literalni nula, tedy zobrazene x10. */
@@ -1426,10 +2913,11 @@ function hudStatusText(g, prefix = "HELI") {
   const score = String(Math.max(0, Math.trunc(g.score || 0))).padStart(6, "0") + "0";
   return prefix + " " + lives + "[ " + weapon + "* " + score;
 }
-function spawnBoom(g, x, y, kind = "small") {
+function spawnBoom(g, x, y, kind = "small", z = 1) {
   // Efekty vznikaji uvnitr step() jeste pred spolecnym starnutim na konci
   // tiku. Start na -1 proto zachova cely prvni snimek po 4 rendery.
-  g.booms.push({ x, y, kind, t: -1 });
+  const boom = { x, y, kind, z, t: -1 };
+  assignBobOrdinal(g, boom); g.booms.push(boom);
 }
 function boomLife(bm) {
   return bm.kind === "big" ? 42 : 28;
@@ -1440,13 +2928,15 @@ const COS256 = Array.from({ length: 256 }, (_, a) => SIN256[(a + 64) & 255]);
 function spawnPlayerBurst(g, x, y, theta = 192) { // 0x9306 -> 0x88fc
   // Sestnact statickych EXPL1 chvostu, kazdy o dva tiky pozdeji. Offset
   // bere signed high word 16.16 rychlosti z puvodni SIN256/COS256 tabulky.
+  sfxPlayerBurst(g);
   for (let i = 0; i < 16; i++) {
     const a = (theta + 100 * i) & 255;
     const speedRaw = 0x300 * i;
     const dx = (COS256[a] * speedRaw) >> 16;
     const dy = (SIN256[a] * speedRaw) >> 16;
-    g.booms.push({ x: x + dx, y: y + dy, kind: "small",
-                   t: -1 - 2 * i });
+    const boom = { x: x + dx, y: y + dy, kind: "small", z: 33,
+                   t: -1 - 2 * i };
+    assignBobOrdinal(g, boom); g.booms.push(boom);
   }
 }
 function addDecal(g, file, frame, x, y) {      // 0x898c: zapis do mapy
@@ -1456,98 +2946,74 @@ function releaseHazard(g, h) {
   releaseCost(g, h);
   h.alive = false; h.dead = true;
 }
-/* 0x70c8: pri (re)spawnu hrace se z tabulky 0x70c0 (bajty 02 0b / 03 0a /
-   04 0a / 05 08) vezme dvojice (sila, kadence) podle +102/5. Sila se jen
-   zvedne (0x70e6: max), kadence +98 se prepise (0x70f2). Behem zivota
-   tabulku uz nic nevola - bonusy 2/4 prepisuji +98 primo. */
-function applyWeaponTable(p) {
-  const tier = Math.min(3, ((p.tokenCount || 0) / 5) | 0);
-  const [pow, cad] = [[2, 11], [3, 10], [4, 10], [5, 8]][tier];
-  if ((p.weapon | 0) < pow) p.weapon = pow;
-  p.reload = cad;
-}
-/* 0xa36a: smrt s body. Body +362 pripise hraci, exploze je sablona +376
-   (vychozi 0x894a = maly EXPL1), dekal +374 (0x898c) zustane v mape. */
-function killSpawn(g, s) {
-  s.alive = false; releaseCost(g, s);
-  awardScore(g, s.scoreValue ?? 0);
-  spawnBoom(g, s.x, s.y);
-  if (["tank", "popup", "flame", "proxmine"].includes(s.beh))
-    addDecal(g, "EXPL1.LIN", 0, s.x, s.y);      // +374 = 5 (0x9e28, 0xa6d6, ...)
-  else if (s.beh === "mine")
-    addDecal(g, "MINE.LIN", 8, s.x, s.y);       // +374 = 0x1011 (0x9b28)
-  snd("BIGEXPL.SND", 8000);
-}
-function killAir(g, a) {
-  releaseAirMember(g, a); awardScore(g, a.scoreValue);
-  spawnBoom(g, a.x, a.y);
-  snd("BIGEXPL.SND", 8000);
-}
-function killHazard(g, h) {
-  releaseHazard(g, h); awardScore(g, h.scoreValue);
-  spawnBoom(g, h.x, h.y);
-  snd("BIGEXPL.SND", 8000);
-}
-/* 0xa362: damage handler z a2c6 (slot +510 pro strelu, +514 pro dotek
-   vrtulniku): -1 HP, pri nule smrt 0xa36a, jinak zvuk 0x5070(x) a jeden
-   snimek hit flashe (0xa35a: bit 1 v +367, housekeeping 0x6452 maze). */
-function damageAir(g, a) {
-  if (--a.hp > 0) { a.flashT = 1; return false; }
-  killAir(g, a); return true;
-}
-function damageHazard(g, h) {
-  if (--h.hp > 0) { h.flashT = 1; return false; }
-  killHazard(g, h); return true;
-}
-
-/* 0x8852/0x885a: smart bomba. Zvuk 0x4cb2, st fp@(169) na 50 snimku a
-   fp@(11166) = 256 (plna bila). Doznivani je fp@(11168) = -4 za snimek:
-   posledni zapisy jsou v uvodni sekvenci (0xc9a, 0x1028), za hry se
-   nemeni. Po dobu fp@(169) housekeeping 0x6468 vola +534 kazdeho objektu;
-   a2c6 tam na 0xa326 dava 0xa36a, takze vse aktivni na obrazovce zemre
-   s body. Spousti ji TOKEN typ 4 (0x985a), sestreleni jadra miny (0x98ba)
-   a sebrani jadra s uz aktivnim stitem (0x98ec). */
-function smartBomb(g) {
-  g.fadeWhite = 256; g.fadeWhiteStep = -4;
-  g.smartT = 50;
-  snd("SMART.SND", 8000);     // 0x4cb2; prirazeni samplu neni z kodu overene
-}
-function stepSmartBomb(g) {
-  if (!(g.smartT > 0)) return;
-  g.smartT--;
-  // Imunni jsou objekty, ktere udelaly st +534: GOOSE telo (0xc7b2), jeho
-  // casti (0xca2a) a pod (0xcac2), TOKEN (0x96f0), orb stitu (0x9916).
-  for (const a of g.air) if (a.alive) killAir(g, a);
-  for (const s of g.spawns) {
-    if (!s.born || !s.alive) continue;
-    if (s.beh === "boss" || s.beh === "unimplemented" ||
-        s.beh === "missing-dispatch") continue;
-    // +534 dostane objekt az po navratu z a2c6, tj. az je na obrazovce;
-    // POPUP tam ceka s marginem 63 (0xa6c6).
-    if (s.beh === "popup" && (s.y - g.scroll) < 63) continue;
-    killSpawn(g, s);
-  }
-  for (const h of g.hazards) if (h.alive) killHazard(g, h);
-  // Granaty (0x960e) i HOMING (0x8578) prosly a2c6, takze zmizi take.
-  g.shots = [];
-}
 
 function spawnMineCore(g, s) {                 // 0x9860: MINE#9/#10
   const h = { kind: "minecore", file: "MINE.LIN", x: s.x, y: s.y,
+              bobPriority: 101,
               vx: 0, vy: 0.5, alive: true, dead: false,
               scrollLocked: true,
               cost: 5, budgeted: false, hp: 10, scoreValue: 30,
-              seq: [9, 10], per: 1, apos: 0, at: 0 };
-  if (reserveCost(g, h)) g.hazards.push(h);
+              seq: [9, 10], per: 1, apos: 0, at: 0,
+              consumed: 0, harmless: true };
+  // Prime a2c6 cost5 bez nasledneho 0x8822 guardu: core se zalozi i
+  // nad limitem160, stejne jako TOKEN a bound bubble.
+  h.budgeted = true;
+  g.activeCost = (g.activeCost || 0) + h.cost;
+  assignBobOrdinal(g, h);
+  g.hazards.push(h);
 }
-function spawnProxFragment(g, s, ang, alternate) { // 0xaa9c
+function pickupMineCore(g, h) {                // 0x98c4
+  if (!h.alive || h.consumed) return;
+  const p = g.player;
+  if (!(p.bubbleTimer | 0)) {
+    // -1 necha hracskou korutinu 0x92a0 zalozit svazany MINE#9/#10 BOB.
+    p.bubbleTimer = -1;
+    h.consumed = 10;                            // event 10 a pak kill
+    h.consumedTick = g.tick | 0;                // callbackuv prvni wait-yield
+  } else {
+    // Dalsi core aktivni bublinu neprodlouzi; pouze vyvola bily flash.
+    startWhiteFlash(g);
+    releaseHazard(g, h);
+  }
+}
+
+/* Svazany vizual 0x98f2 je samostatna cost5 taska se stejnou prioritou
+   jako hrac. Loader ji vlozi za bezici player tasku, takze po playerove
+   yield pokracuje jeste v temze VBL; dalsi VBL hrac snizi +106 prvni. */
+function stepPlayerBubbleChild(g, p) {
+  const q = p.bubbleBound;
+  if (!q) return;
+  if (!q.started) {
+    if ((p.bubbleTimer | 0) <= 0) { p.bubbleBound = null; return; }
+    sfxShieldBubble(g, p.x);                    // 0x98f2 -> 0x4ffe
+    q.started = true; q.visible = true; q.phase = 0;
+    q.frame = 9; q.z = 2;
+    q.cost = 5; q.budgeted = true;
+    // Stejne jako TOKEN zde neni 0x8822 guard; total muze jit nad 160.
+    g.activeCost = (g.activeCost || 0) + q.cost;
+    return;
+  }
+  if ((p.bubbleTimer | 0) === 0) {
+    releaseCost(g, q);
+    p.bubbleBound = null;
+    return;
+  }
+  q.phase ^= 1;
+  q.frame = q.phase ? 10 : 9;
+  q.z = q.phase ? -2 : 2;
+  q.visible = true;
+}
+function spawnProxFragment(g, s, ang) {           // 0xaa9c
+  // Kazdy child testuje high word globalniho seedu po vlastnim a2c6.
+  const alternate = !!((g.rngState >>> 0) & 0x80000000);
   const seq = alternate ? [12, 13, 14, 15] : [6, 7, 8, 9, 10, 11];
   const v = angVel(ang, 2.5);
   const h = { kind: "proxfrag", file: "PROXMINE.LIN", x: s.x, y: s.y,
               vx: v.vx, vy: v.vy, ang, alive: true, dead: false,
               cost: 5, budgeted: false, hp: 1, scoreValue: 5,
               seq, per: alternate ? 3 : 2, apos: 0, at: 0 };
-  if (reserveCost(g, h)) g.hazards.push(h);
+  accountCost(g, h);                            // prime a2c6, bez 0x8822
+  assignBobOrdinal(g, h); g.hazards.push(h);
 }
 function spawnFlameEmitter(g, parent) {        // 0xab78, svazany s rodicem
   const h = { kind: "flameEmitter", file: "FLAME.LIN",
@@ -1557,29 +3023,116 @@ function spawnFlameEmitter(g, parent) {        // 0xab78, svazany s rodicem
               seq: [12, 13, 12, 14, 12, 13, 14, 13,
                     12, 13, 12, 13, 14, 13],
               per: 2, apos: 0, at: 0, t: 100 };
-  if (reserveCost(g, h)) g.hazards.push(h);
+  accountCost(g, h);                            // prime a2c6, bez 0x8822
+  assignBobOrdinal(g, h); g.hazards.push(h);
 }
 function spawnFlamePuff(g, emitter) {          // 0xabd2
+  // 0xabd2 nuluje D0 pred 0x50d0: kazdy puff preferuje levou dvojici,
+  // nikoli dynamicky x parentu.
+  sfxNoise(g, 0, 40, "flame-puff");
   const h = { kind: "flamePuff", file: "FLAME.LIN",
               x: emitter.x, y: emitter.y, vx: 2.5, vy: 0,
               alive: true, dead: false, cost: 10, budgeted: false,
               hp: 0, scoreValue: 0,
               seq: [5, 6, 7, 8, 9, 10, 11],
               per: 5, apos: 0, at: 0, life: 35 };
-  if (reserveCost(g, h)) g.hazards.push(h);
+  accountCost(g, h);                            // prime a2c6, bez 0x8822
+  assignBobOrdinal(g, h); g.hazards.push(h);
 }
 function spawnTrainCars(g, loco, count) {       // 0x9c16, linked chain
   let parent = loco;
   for (let i = 0; i < count; i++) {
-    const frame = (random32() & 0x4000) ? 2 : 1;
+    // 0x9c44: BTST #14; SET znamena TRAIN#1, clear TRAIN#2.
+    const frame = (random32(g) & 0x4000) ? 1 : 2;
     const h = { kind: "traincar", file: "TRAIN.LIN", frame,
                 x: parent.x - 48 * Math.sign(parent.vx), y: parent.y,
-                vx: parent.vx, vy: 0, parent,
+                vx: parent.vx, vxRaw: parent.vxRaw ??
+                  Math.trunc(parent.vx * 65536), vy: 0, parent,
                 alive: true, dead: false, cost: 15, budgeted: false,
                 hp: 2, scoreValue: 50, seq: [frame], per: 1,
                 apos: 0, at: 0 };
-    if (!reserveCost(g, h)) break;
-    g.hazards.push(h); parent = h;
+    accountCost(g, h);                          // prime a2c6, bez 0x8822
+    assignBobOrdinal(g, h); g.hazards.push(h); parent = h;
+  }
+}
+
+/* 0x9c86: orphan TRAIN car zpomaluje jako signed 16.16 LONG,
+   raw -= raw>>4. JS nasobeni 15/16 by po prvnim nedelitelnem kroku
+   zachovalo zlomky, ktere 68000 kazdy VBL zahodi. */
+function decayTrainVelocity(h) {
+  let raw = Number.isInteger(h.vxRaw)
+    ? h.vxRaw | 0 : Math.trunc((h.vx || 0) * 65536) | 0;
+  raw = (raw - (raw >> 4)) | 0;
+  h.vxRaw = raw; h.vx = raw / 65536;
+}
+
+/* MEDTANK parent 0x9eca a samostatny turret child 0x9faa. Child nema
+   vlastni hit node, ale stoji cost4, sleduje parent a bezi i mimo viewport. */
+function spawnTankTurret(g, s) {
+  if (s.turretTask && s.turretTask.alive) return;
+  const q = { alive: true, cost: 4, budgeted: false };
+  accountCost(g, q); assignBobOrdinal(g, q);
+  s.turretTask = q; s.turretBobOrdinal = q.bobOrdinal;
+  s.tang = s.ang; s.turretPhase = "first-gate";
+  s.turretStartTick = g.tick | 0; s.turretWait = 0;
+}
+function setupTankMotion(g, s, t) {
+  if (t === 1) { s.x = 352; s.ang = 128; }
+  else if (t === 2) { s.x = -32; s.ang = 0; }
+  else if (t === 3) { s.ang = 64; }
+  else if (t === 4) { s.ang = 192; }
+  else s.ang = 64;
+  s.tankSpeed = t >= 1 && t <= 4 ? 0.5 : 0;
+  s.hullF = (s.ang >> 6) & 3;
+  s.drives = 3; s.st = 1; s.t = 300; s.fr = -2;
+  s.tankSetup = true;
+  spawnTankTurret(g, s);
+}
+function tankTargetAngle(g, s) {                // 0x7312, single-player path
+  const p = g.player;
+  return angTo(s.x, s.y - g.scroll,
+               p && p.alive ? p.x : 160, p && p.alive ? p.y : 192);
+}
+function finishTankTurn(g, s, purpose) {
+  if (purpose === "aim") {
+    s.turretPhase = "prefire"; s.turretWait = 16;
+  } else {
+    // 0xa08e -> 0x9ffa: ulozit novy global tick a znovu cely gate.
+    s.turretPhase = "first-gate"; s.turretStartTick = g.tick | 0;
+  }
+}
+function beginTankTurn(g, s, target, purpose) { // 0xa096
+  // SUB.W + EXT.W znamena signed LOW BYTE: modulo-256 nejkratsi smer.
+  const diff = (((target | 0) - (s.tang | 0)) << 24) >> 24;
+  const steps = (Math.abs(diff) + 8) >> 4;
+  if (!steps) { finishTankTurn(g, s, purpose); return; }
+  s.turretStep = diff < 0 ? -16 : 16;
+  s.turretSteps = steps - 1;
+  s.tang = signedWord(s.tang + s.turretStep);  // prvni krok je okamzity
+  s.turretPurpose = purpose;
+  s.turretPhase = "turn"; s.turretWait = 6;
+}
+function stepTankTurret(g, s) {
+  const q = s.turretTask;
+  if (!q || !q.alive) return;
+  if (s.turretPhase === "first-gate") {
+    const threshold = (12 - (g.difficulty || 0)) << 4;
+    const elapsed = ((g.tick | 0) - (s.turretStartTick | 0)) & 0xffff;
+    if (elapsed < threshold) return;
+    beginTankTurn(g, s, tankTargetAngle(g, s), "aim");
+  } else if (s.turretPhase === "turn") {
+    if (--s.turretWait > 0) return;
+    if (s.turretSteps-- > 0) {
+      s.tang = signedWord(s.tang + s.turretStep);
+      s.turretWait = 6;
+    } else finishTankTurn(g, s, s.turretPurpose);
+  } else if (s.turretPhase === "prefire") {
+    if (--s.turretWait <= 0) {
+      fireCannon(g, s.x, s.y - g.scroll, s.tang, true, false);
+      s.turretPhase = "postfire"; s.turretWait = 8;
+    }
+  } else if (s.turretPhase === "postfire" && --s.turretWait <= 0) {
+    beginTankTurn(g, s, s.ang, "return");
   }
 }
 function initMill(g, s) {                      // 0x79d4 po a2c6
@@ -1594,17 +3147,258 @@ function detonateMine(g, s, credited) {
   s.alive = false; releaseCost(g, s);
   if (credited) awardScore(g, 25);
   spawnBoom(g, s.x, s.y);
+  sfxBigExplosion(g, s.x);
   addDecal(g, "MINE.LIN", 8, s.x, s.y);
-  spawnMineCore(g, s);
+  // 0x9b62 je callback zasahu hracskou strelou. Kontaktni exploze core
+  // nezaklada; vystreleny core je ochranny pickup, nikoli nepratelsky hazard.
+  if (credited) spawnMineCore(g, s);
 }
 function detonateProx(g, s) {
   if (!s.alive) return;
   s.alive = false; releaseCost(g, s);
   spawnBoom(g, s.x, s.y);
+  sfxBigExplosion(g, s.x);
   const p = g.player;
-  const base = p.alive ? angTo(s.x, s.y - g.scroll, p.x, p.y) : 64;
+  const tx = p.alive ? p.x : 160, ty = p.alive ? p.y : 192;
+  const base = angTo(s.x, s.y - g.scroll, tx, ty);
   for (let k = 0; k < 6; k++)
-    spawnProxFragment(g, s, (base + 21 + 42 * k) & 255, s.proxAlternate);
+    spawnProxFragment(g, s, (base + 21 + 42 * k) & 255);
+}
+
+/* fp@(169) smart pulse z 0x885a. Default +534=a36a nedava score bez
+   projectile attribution bitu, ale udela standardni explozi/decal a task
+   cleanup. Custom MINE/PROX callbacks se nevolaji, tedy zadny core/strepy. */
+function pulseKillSpawn(g, s, credited) {
+  if (!s.born || !s.alive || s.beh === "boss") return;
+  s.alive = false; releaseCost(g, s);
+  if (credited) awardScore(g, s.scoreValue ?? 100);
+  spawnBoom(g, s.x, s.y, "small", s.beh === "mill" ? 33 : 1);
+  sfxBigExplosion(g, s.x);
+  if (["mine", "tank", "popup", "flame", "proxmine"].includes(s.beh))
+    addDecal(g, s.beh === "mine" ? "MINE.LIN" : "EXPL1.LIN",
+             s.beh === "mine" ? 8 : 0, s.x, s.y);
+}
+function pulseKillAir(g, a, credited) {
+  if (!a.alive) return;
+  releaseAirMember(g, a);
+  if (credited) awardScore(g, a.scoreValue ?? 0);
+  spawnBoom(g, a.x, a.y, "small", 33);
+  sfxBigExplosion(g, a.x);
+}
+function pulseKillHazard(g, h, credited) {
+  if (!h.alive || h.consumed) return;
+  releaseHazard(g, h);
+  if (credited) awardScore(g, h.scoreValue ?? 0);
+  spawnBoom(g, h.x, h.y, "small",
+            h.kind === "minecore" || h.kind === "proxfrag" ? 33 : 1);
+  sfxBigExplosion(g, h.x);
+}
+function pulseKillEnemyShot(g, sh, credited) {
+  if (sh.dead) return;
+  if (sh.kind === "hom") {
+    if (credited) awardScore(g, 7);
+    spawnBoom(g, sh.x, sh.y + g.scroll, "small", 33);
+    sfxBigExplosion(g, sh.x);
+  }
+  releaseEnemyShot(g, sh);                    // cannon konci bez exploze
+}
+function applySmartPulse(g, creditedTargets) {
+  const credited = o => !!creditedTargets && creditedTargets.has(o);
+  for (const s of g.spawns || []) pulseKillSpawn(g, s, credited(s));
+  for (const a of g.air || []) pulseKillAir(g, a, credited(a));
+  for (const h of g.hazards || []) pulseKillHazard(g, h, credited(h));
+  for (const sh of g.shots || []) pulseKillEnemyShot(g, sh, credited(sh));
+  g.shots = (g.shots || []).filter(sh => !sh.dead);
+}
+
+/* 0x70c0/0x70c8 se vola pouze pri startu a respawnu. CMP.W je v
+   originalu clamp dolu, ne upgrade: sila se omezi na strop tieru a
+   kadence se vzdy prepise. Tohle je zamerne min(), nikoli max(). */
+function applyWeaponTable(p) {
+  const tier = Math.min(3, Math.max(0, ((p.tokenCount || 0) / 5) | 0));
+  const [cap, cadence] = [[2, 11], [3, 10], [4, 10], [5, 8]][tier];
+  p.weapon = Math.min(p.weapon | 0, cap);
+  p.reload = cadence;
+}
+
+/* 0x3dd4: opaque mask JEEPHELI#0 proti nulam terrain control plane1.
+   Descriptor +410 je pri 0x9046 jeste nula, takze start i respawn vzdy
+   testuji prave frame0, nikoli prave zobrazenou fazi rotoru. */
+function heliTerrainBlocked(g, x, screenY) {
+  if (!g.terrainOpen) return false;             // izolovane stare fixture
+  const spr = indexedFrameFor(state, "JEEPHELI.LIN", 0);
+  if (!spr) return false;
+  const W = g.mapW || 320;
+  const H = Math.floor(g.terrainOpen.length / W);
+  const left = Math.floor(x + spr.ox);
+  const top = Math.floor(g.scroll) + Math.floor(screenY + spr.oy);
+  for (let sy = 0; sy < spr.h; sy++) {
+    const ty = top + sy;
+    if (ty < 0 || ty >= H) continue;
+    for (let sx = 0; sx < spr.w; sx++) {
+      if (spr.pix[sy * spr.w + sx] === 0xFF) continue;
+      const tx = left + sx;
+      if (tx >= 0 && tx < W && g.terrainOpen[ty * W + tx] === 0)
+        return true;
+    }
+  }
+  return false;
+}
+
+/* 0x9046: sloupce jsou vnejsi smycka. Pri plnem zablokovani vsech
+   16*12 kandidatu zustane puvodni nekontrolovany fallback (288,192). */
+function findPlayerRespawn(g) {
+  let probes = 0;
+  for (let x = 160; x <= 280; x += 8) {
+    for (let y = 192; y >= 104; y -= 8) {
+      probes++;
+      if (!heliTerrainBlocked(g, x, y)) return { x, y, probes };
+    }
+  }
+  return { x: 288, y: 192, probes };
+}
+
+function respawnPlayer(g) {                    // 0x714e -> 0x9046 -> 0x9410
+  const p = g.player;
+  if (--g.lives <= 0) { g.over = true; return; }
+  if (p.bubbleBound) releaseCost(g, p.bubbleBound);
+  p.alive = true; p.respawnT = 0;
+  const pos = findPlayerRespawn(g);
+  p.x = pos.x; p.y = pos.y; p.ang = 192;
+  p.weaponX = p.x; p.weaponY = p.y;
+  p.inv = 200; p.bubbleTimer = 0; p.bubbleBound = null;
+  p.cool = 0;
+  applyWeaponTable(p);
+  resetPlayerHeliAnim(p);
+}
+
+function killPlayer(g) {                       // 0x9306 + 0x714e
+  const p = g.player;
+  if (!p.alive) return;
+  p.alive = false; p.respawnT = 100; p.rank = 0;
+  spawnPlayerBurst(g, p.x, p.y + g.scroll, p.ang);
+}
+
+/* ---- Odlozene collision callbacky (0x62d2/0x64b6) ----
+   Resident sweep 0x6ec2 na konci VBL pouze ORne tridu protistrany do
+   event wordu +506. Objekt uz svuj field publikoval a yieldnul; smart a
+   callbacky v poradi 0,3,4,1,2,5 zpracuje az pri resume v dalsim VBL.
+   TOWN pouziva z tohoto poradi bity 0 (player bolt) a 3 (player kontakt). */
+const TOWN_EVENT_PLAYER_SHOT = 1 << 0;
+const TOWN_EVENT_PLAYER_CONTACT = 1 << 3;
+
+function queueTownCollisionEvent(o, bit) {
+  if (o) o.collisionEventWord = ((o.collisionEventWord | 0) | bit) & 0xffff;
+}
+
+/* Snapshot odpovida taskum, ktere uz pred zacatkem scheduler passu cekaly
+   za 0x643a. Child vytvoreny callbackem se do nej neprida: v tomtez passu
+   teprve publikuje prvni field a housekeeping jej ceka az priste. */
+function townCollisionResumeTasks(g) {
+  const tasks = [];
+  let fallback = 0;
+  const add = (kind, o) => {
+    if (!o) return;
+    const ordinal = Number.isFinite(o.bobOrdinal)
+      ? o.bobOrdinal : 0x40000000 + fallback;
+    tasks.push({ kind, o, ordinal, fallback: fallback++ });
+  };
+  for (const sh of g.shots || []) if (!sh.dead) add("shot", sh);
+  for (const a of g.air || []) if (a.alive) add("air", a);
+  for (const h of g.hazards || []) if (h.alive) add("hazard", h);
+  for (const s of g.spawns || []) if (s.born && s.alive) add("spawn", s);
+  for (const k of g.tokens || []) if (!k.dead) add("token", k);
+  tasks.sort((a, b) => a.ordinal - b.ordinal || a.fallback - b.fallback);
+  return tasks;
+}
+
+function smartResumeTownTask(g, task, credited) {
+  if (!(g.smartPulse | 0)) return;
+  const { kind, o } = task;
+  if (kind === "spawn") pulseKillSpawn(g, o, credited);
+  else if (kind === "air") pulseKillAir(g, o, credited);
+  else if (kind === "hazard") pulseKillHazard(g, o, credited);
+  else if (kind === "shot") pulseKillEnemyShot(g, o, credited);
+  // Player, TOKEN, bound bubble, PLOP a cela GOOSE child skupina maji
+  // +534 vypnute nebo vlastni imunitu a v teto fronte se proto nezabijeji.
+}
+
+function dispatchTownShotEvent(g, task) {
+  const { kind, o } = task;
+  if (kind === "token") {
+    if (!o.dead && o.interactive) shootToken(g, o);
+  } else if (kind === "spawn") {
+    if (!o.alive) return;
+    if (o.beh === "boss") damageBoss(g, o);
+    else if (o.beh === "mine") detonateMine(g, o, true);
+    else damageSpawn(g, o);
+  } else if (kind === "air") {
+    if (!o.alive) return;
+    if (o.kind === "bird") damageBirdEvent(g, o);
+    else damageAir(g, o);
+  } else if (kind === "hazard") {
+    if (!o.alive || o.consumed) return;
+    if (o.kind === "minecore") {
+      // 0x98b4: neletalni core hit je bez default flash/hit soundu.
+      if (--o.hp === 0) { startWhiteFlash(g); killHazardCredited(g, o); }
+    } else damageHazard(g, o);
+  } else if (kind === "shot" && o.kind === "hom" && !o.dead) {
+    releaseEnemyShot(g, o); awardScore(g, 7);
+    spawnBoom(g, o.x, o.y + g.scroll, "small", 33);
+    sfxBigExplosion(g, o.x);
+  }
+}
+
+function dispatchTownContactEvent(g, task) {
+  const { kind, o } = task;
+  if (kind === "token") {
+    if (!o.dead && o.interactive) pickupToken(g, o);
+  } else if (kind === "shot") {
+    if (o.dead) return;
+    if (o.kind === "hom") {
+      releaseEnemyShot(g, o); awardScore(g, 7);
+      spawnBoom(g, o.x, o.y + g.scroll, "small", 33);
+      sfxBigExplosion(g, o.x);
+    } else releaseEnemyShot(g, o);              // default +514=0x6db4
+  } else if (kind === "air") {
+    if (!o.alive) return;
+    if (o.kind === "bird") damageBirdEvent(g, o);
+    else damageAir(g, o);
+  } else if (kind === "spawn") {
+    if (!o.alive) return;
+    if (o.beh === "boss") damageBoss(g, o);
+    else if (o.beh === "mill") damageSpawn(g, o);
+  } else if (kind === "hazard") {
+    if (!o.alive) return;
+    if (o.kind === "minecore" && !o.consumed) pickupMineCore(g, o);
+    else if (o.kind === "proxfrag") releaseHazard(g, o);
+  }
+}
+
+function resumeTownObjectHousekeeping(g, task) {
+  const o = task.o;
+  const mask = o.collisionEventWord | 0;
+  const credited = !!o.collisionPlayerCredit;
+
+  // 0x6452 maze predchozi jednopolickovy hit flag jeste pred orphan/smart.
+  if (task.kind === "spawn" && o.beh === "boss") o.hitSpread = false;
+  else if ("hitFlash" in o) o.hitFlash = false;
+  // 0x6458 orphan callback je pro podporovane TOWN skupiny obslouzen jejich
+  // vlastnim state machine. 0x6468 smart musi predchazet 0x64b6 eventum.
+  smartResumeTownTask(g, task, credited);
+  if (mask & TOWN_EVENT_PLAYER_SHOT) dispatchTownShotEvent(g, task);
+  if (mask & TOWN_EVENT_PLAYER_CONTACT) dispatchTownContactEvent(g, task);
+
+  o.collisionEventWord = 0;                    // 0x6538 CLR.W +506
+  o.collisionPlayerCredit = false;
+}
+
+function resumePlayerCollision(g) {
+  const p = g.player;
+  const lethal = !!p.collisionLethal;
+  p.collisionEventWord = 0;
+  p.collisionLethal = false;
+  if (lethal && p.alive) killPlayer(g);
 }
 
 /* ---- start urovne ---- */
@@ -1657,22 +3451,32 @@ function startGame(lv) {
     });
 
   const g = state.g = {
-    lv, big, mapIndex: m.mapIndex, spawns, mapH: m.h,
+    lv, big, mapIndex: m.mapIndex, terrainOpen: m.terrainOpen,
+    mapW: m.w, spawns, mapH: m.h,
     scroll: m.h - MARGIN - 256,    // start = spodek obsahu urovne (bez okraje)
     frac: 0,
     // Hracsky struct fp@(11176): +98 prodleva, +100 sila (0x6fde: start 2),
     // +102 citac pickupu, +104 rezim, +106 stit, +108 ochrana (0x9424: 200).
-    player: { x: 160, y: 192, ang: 192, alive: true, inv: 200, cool: 0,
-              weapon: 2 /* +100: sila, bonus typu 4 dava 6 */,
+    player: { x: 160, y: 192, ang: 192, alive: true, inv: 200,
+              bubbleTimer: 0, bubbleFrame: 9, bubbleZ: 0, bubblePhase: 0,
+              bubbleBound: null,
+              bank: 0, cool: 0,
+              weapon: 2 /* 0x6fde +100; bonus typu 4 dava 6 */,
               tokenCount: 0 /* +102: vsechny pickupy, strop 19; HUD /5 + 2 */,
-              mode: 0 /* +104 */, reload: 12 /* +98 */,
-              shield: 0 /* +106: 0 nic, -1 prave sebrano, >0 odpocet */,
-              orb: null /* potomek 0x98f2 */, flash: false, respawnT: 0 },
+              mode: 0 /* +104 */, reload: 12 /* 0x6fde +98 */,
+              rank: 0 /* +110: difficulty accumulator */,
+              respawnT: 0, heliAnimPos: 0, heliAnimFresh: true,
+              weaponX: 160, weaponY: 192 },
+    nextBobOrdinal: 1,
     nextLife: 10000,   // extra zivot: prvni na 10k, pak po 30k (0x7116)
     bullets: [], shots: [], booms: [], plops: [], effects: [],
     air: [], hazards: [], tokens: [],
-    players: 1, activeCost: 0,
+    players: 1, difficulty: 0, levelPhase: lv, activeCost: 0,
     score: 0, tick: 0, over: false, won: false,
+    // AMPROG stav zacina v BSS; skutecny hardware jej pred kazdym během
+    // scheduleru meni VHPOSR. Bez zachyceneho beam trace pouzivame nulu,
+    // takze gameplay je deterministicky a samotny 0x883c zustava bitove presny.
+    rngState: 0, rngVhposWord: 0, sfx: createTownSfxState(),
     // fp@(138): ROTOBASE 0x9960 dela NOT.W pri kazde aktivaci. Nula je
     // stav po startu; prvni antena proto dostane reverzni skript 0x9986.
     rotoDirectionWord: 0,
@@ -1683,9 +3487,15 @@ function startGame(lv) {
     // 0x3092 vola po zalozeni hracskych korutin 0x2868 = fade z cerne,
     // tedy uroven 256 a smer +1: 16 snimku do plne palety.
     fadeBlack: 256, fadeWhite: 0, fadeDir: 1, fadeWhiteStep: 0,
+    smartPulse: 0, smartPulseTasks: [], tokenSfxTasks: [],
+    tokensPickedUp: 0,
   };
+  g.player.bobOrdinal = 0;                    // player task existuje pred spawnery
+  const startPos = findPlayerRespawn(g);      // 0x9416 -> 0x9046 i pri startu
+  g.player.x = startPos.x; g.player.y = startPos.y;
+  g.player.weaponX = startPos.x; g.player.weaponY = startPos.y;
+  applyWeaponTable(g.player);                 // 0x70c8: start = power2/reload11
   for (const s of g.spawns) s.armed = (s.y - g.scroll) < -32;
-  applyWeaponTable(g.player);                       // 0x70c8 pri spawnu
   if (state.titleMod) { state.titleMod.stop(); state.titleMod = null; }
   $("#levelpick").style.display = "none";
   $("#gamewrap").style.display = "";
@@ -1701,6 +3511,7 @@ document.getElementById("livesbox").onchange = e => {
   if (g.over && !g.won) {           // oziveni po game over pro dalsi testovani
     g.over = false; g.player.alive = true; g.player.inv = 200;
     g.player.x = 160; g.player.y = 192; g.player.respawnT = 0;
+    resetPlayerHeliAnim(g.player);
   }
 };
 document.getElementById("scrollpct").oninput = e => {
@@ -1722,88 +3533,152 @@ window.addEventListener("keyup", e => {
 
 /* ---- logika (50 Hz) ---- */
 function step(g) {
+  advanceTownSfxClock(g);                      // CIAB IRQ 0x4abc pred schedulerem
   g.tick++;
-  // 0x6452: hit flash (bit 1 v +367) plati jeden snimek - maze se az
-  // v dalsim tiku, aby ho render po zasahu videl.
-  for (const a of g.air) if (a.flashT > 0) a.flashT--;
-  for (const h of g.hazards) if (h.flashT > 0) h.flashT--;
-  for (const s of g.spawns) if (s.flashT > 0) s.flashT--;
+  advanceTokenSfxTasks(g);                     // 0x564c: dalsi nota po 5 VBL
+  // 0x6480 vola default +514=0x6db4 uprostred 0x62d2. Loader tim pouze
+  // zneplatni task: aktualni aktivace jeste publikuje posledni BOB/HW a
+  // collision node a skonci az pri pokusu o resume v pristim VBL.
+  for (const s of g.shots || [])
+    if (s.retireAfterField) releaseEnemyShot(g, s);
+  g.shots = (g.shots || []).filter(s => !s.dead);
   stepFade(g);
   const oldScroll = g.scroll;
   g.scroll -= SCROLL * TICK * (g.scrollMul || 1);   // scroll nahoru
-  const scrollDelta = g.scroll - oldScroll;
-  if (g.scroll <= 0) { g.won = true; g.over = true; }
-  const p = g.player;
-
-  // 0x714e: po smrti ceka hracsky task 100 snimku a znovu zalozi 0x9410.
-  if (!p.alive && p.respawnT > 0 && --p.respawnT === 0) {
-    if (--g.lives <= 0) g.over = true;
-    else {
-      p.alive = true; p.inv = 200;                  // 0x9424: +108 = 200
-      p.x = 160; p.y = 192;                         // 0x9046
-      applyWeaponTable(p);                          // 0x70c8
-    }
+  let scrollDelta = g.scroll - oldScroll;
+  if (g.scroll <= 0) {
+    g.scroll = 0; scrollDelta = -oldScroll;
+    g.won = true; g.over = true;
   }
+  const p = g.player;
+  ensureSmartPulseTasks(g);
+  const pulseTaskCountAtStart = g.smartPulseTasks.length;
+  const collisionResumeTasks = townCollisionResumeTasks(g);
+  // Strely, ktere uz cekaly na resume na zacatku scheduler passu. Child
+  // zalozeny pozdeji collision callbackem dostane prvni 0x62d2 uvnitr
+  // fireCannon/fireHoming a nesmi pak projit timto continuation loopem znovu.
+  const enemyShotsAtStart = new Set(g.shots || []);
+
+  // 0x714e je pocet simulacnich VBL, ne wall-clock timeout. Uroven i
+  // nepratelske tasky behem cekani normalne pokracuji.
+  if (!p.alive && (p.respawnT | 0) > 0 && --p.respawnT === 0)
+    respawnPlayer(g);
+
+  // Player task je v priority100 FIFO prvni. Event z collision sweepu N
+  // proto zabije HELI pri resume N+1 jeste pred vstupem, pohybem a palbou.
+  resumePlayerCollision(g);
+
   if (p.alive) {
-    // 0x958a: joystick nibble (bit0 nahoru, bit1 dolu, bit2 vlevo,
-    // bit3 vpravo) -> uhel z tabulky 0x959e, -1 = stoji; pak 0x65f2
-    // rychlosti +356 = 768 = 3 px/t (0x9476).
+    incrementPlayerRank(p);                    // player task pred enemy tasky
+    // 0x947c vola 0x954c pred nactenim vstupu a pred 0x92a0/0x62d2.
+    // Kardinalni pohyb proto muze na jeden publikovany frame dojit az na
+    // x=1/319 a y=1/255; dalsi resume jej nejdriv vrati na 4..316/252.
+    p.x = Math.max(4, Math.min(316, p.x));
+    p.y = Math.max(4, Math.min(252, p.y));
     const nib = (g.keys.u ? 1 : 0) | (g.keys.d ? 2 : 0) |
                 (g.keys.l ? 4 : 0) | (g.keys.r ? 8 : 0);
     const ja = JOY_ANGLE[nib];
-    if (ja >= 0) { const v = angVel(ja, 3); p.x += v.vx; p.y += v.vy; }
-    p.x = Math.max(4, Math.min(316, p.x));          // 0x954c
-    p.y = Math.max(4, Math.min(248, p.y));
-    // 0x92a0: stit +106 drzi ochranu +108 na 100 a odpocitava; -1 znamena
-    // prave sebrane jadro miny -> zalozit orb 0x98f2 a nastavit 500.
-    if (p.shield > 0) {
-      p.inv = 100;                                  // 0x92ac
-      if (--p.shield === 0) p.orb = null;           // 0x9940: orb konci
-    } else if (p.shield < 0) {
-      p.orb = { t: 0 };                             // 0x92c0: potomek 0x98f2
-      p.shield = 500;                               // 0x92cc
+    if (ja >= 0) {
+      p.ang = ja;
+      const [vx, vy] = playerMoveVelocity(ja);
+      p.x += vx; p.y += vy;
     }
-    if (p.inv > 0) p.inv--;
-    p.flash = p.inv > 0 && (p.inv & 8) !== 0;       // 0x92e4: btst #3 -> flash
-    // Zbran: sila +100 = pocet strel (0x8ad0: subq #1 + dbf), kadence +98.
+    // Dve puvodni ochrany jsou odlisne. MINE core drzi +106: pri -1
+    // zalozi svazany oblouk MINE#9/#10, pak 500 tiku natvrdo obnovuje
+    // +108 na 100. TOKEN typ3 pouze pricita 500 primo do +108.
+    if ((p.bubbleTimer | 0) < 0) {
+      p.bubbleTimer = 500;
+      // Loader po playerove yield spusti noveho priority100 childa jeste
+      // v tomto VBL: cost5 a prvni MINE#9 jsou viditelne okamzite.
+      p.bubbleBound = { started: false, visible: false, budgeted: false };
+      assignBobOrdinal(g, p.bubbleBound);
+      p.bubblePhase = 0; p.bubbleFrame = 9; p.bubbleZ = 2;
+    } else if ((p.bubbleTimer | 0) > 0) {
+      p.inv = 100;
+      p.bubbleTimer--;
+    }
+    stepPlayerBubbleChild(g, p);                // scheduler: player -> child
+    const bubble = p.bubbleBound;
+    if (bubble && bubble.started) {
+      p.bubblePhase = bubble.phase;
+      p.bubbleFrame = bubble.frame; p.bubbleZ = bubble.z;
+    }
+    if (p.inv > 0) p.inv = Math.max(0, p.inv - 1);
+    // Zbranovy child 0x939c ma vlastni konstantni uhel 192: pohyb hrace
+    // nikdy neotaci strely. +100 je primo pocet strel pro power 1..5.
     // Sude sily: pary (-2,-4)(2,-4)(-6,4)(6,4); liche: stred (0,-8) +
     // pary (-4,0)(4,0)(-8,8)(8,8). Vse 9 px/t vzhuru, sprite BULLET#14.
-    // Sila 6 (nad 5, 0x8b52) je osmismerovy rezim z tabulky 0x8dd6 - ten
-    // neni prepsany, zatim strili jako 5.
-    const pow = Math.max(1, Math.min(5, p.weapon | 0));
-    const cad = p.reload ?? 11;
+    const pow = Math.max(1, p.weapon | 0);
+    const storedCad = p.reload ?? 11;
+    const cad = (g.players || 1) > 1 ? Math.max(storedCad, 10) : storedCad;
     if (p.cool > 0) p.cool--;
     if (g.keys.f && p.cool <= 0) {
       p.cool = cad;
       const EVEN = [[-2, -4], [2, -4], [-6, 4], [6, 4]];
       const ODD = [[0, -8], [-4, 0], [4, 0], [-8, 8], [8, 8]];
       p.volley = (p.volley || 0) + 1;
-      for (const [dx, dy] of (pow & 1 ? ODD : EVEN).slice(0, pow))
-        g.bullets.push({ x: p.x + dx, y: p.y + dy, ball: p.volley & 1 });
+      // 0x939c pali pred kopirovanim parentovy pozice: origin je snapshot
+      // z konce predchozi aktivace child tasku.
+      const ox = p.weaponX ?? p.x, oy = p.weaponY ?? p.y;
+      sfxPlayerFire(g, ox);                    // 0x8aa0 -> 0x4f3e, 1x/salva
+      if (pow > 5) {
+        // 0x8b52/0x8dd6: osmismerova plna sila v pevnem poradi.
+        const RADIAL = [
+          [0, -4, 0, -9, 14], [-3, -3, -6, -6, 13],
+          [3, -3, 6, -6, 15], [-4, 0, -9, 0, 12],
+          [4, 0, 9, 0, 8], [-3, 3, -6, 6, 11],
+          [3, 3, 6, 6, 9], [0, 4, 0, 9, 10],
+        ];
+        for (const [dx, dy, vx, vy, frame] of RADIAL)
+          spawnPlayerBullet(g, { x: ox + dx, y: oy + dy, vx, vy, frame });
+      } else {
+        const muzzles = (pow & 1 ? ODD : EVEN).slice(0, pow);
+        // TOKEN typ1 prepne 0x939c na spread skript: stejne usti, ale
+        // postupne dvojice leti (±1,-8) a (±2,-7). Stred zustava (0,-9).
+        const FAN = pow & 1
+          ? [[0, -9], [-1, -8], [1, -8], [-2, -7], [2, -7]]
+          : [[-1, -8], [1, -8], [-2, -7], [2, -7]];
+        for (let i = 0; i < muzzles.length; i++) {
+          const [dx, dy] = muzzles[i];
+          const [vx, vy] = p.mode === 1 ? FAN[i] : [0, -9];
+          spawnPlayerBullet(g, { x: ox + dx, y: oy + dy, vx, vy,
+                                 frame: 14 });
+        }
+      }
     }
+    p.weaponX = p.x; p.weaponY = p.y;
+    stepPlayerHeliAnim(p);
   }
 
-  for (const b of g.bullets) b.y -= 9;          // 9 px/t (tabulka 0x8b86)
-  g.bullets = g.bullets.filter(b => b.y > -16);
+  // Ostatni tasky, ktere minuly VBL skoncily na 0x643a, provedou pred svym
+  // dalsim coroutine krokem orphan/smart/event housekeeping. Snapshot brani
+  // tomu, aby child zalozeny prave callbackem preskocil svuj prvni field.
+  for (const task of collisionResumeTasks)
+    resumeTownObjectHousekeeping(g, task);
+  g.shots = (g.shots || []).filter(s => !s.dead);
+  g.tokens = (g.tokens || []).filter(k => !k.dead);
 
   // strely nepratel: kanonove granaty rotuji/akceleruji, navadene koriguji kurz
   for (const s of g.shots) {
+    if (!enemyShotsAtStart.has(s)) continue;
     if (s.kind === "can") {
-      s.phase ^= 1;                                         // 0x96b4: object-local
-    } else if (s.corr > 0 && --s.ct <= 0) {
-      s.ct = 8; s.corr--;                                    // 0x8566
-      if (p.alive) s.ang = turnToward(s.ang, angTo(s.x, s.y, p.x, p.y), 14);
+      const cameraDelta = s.bornTick === g.tick ? 0 : scrollDelta;
+      advanceCannonShot(g, s, cameraDelta, false);
+    } else {
+      // 0x72ee drzi pointer na player slot; po smrti se miri na posledni
+      // znamou pozici, neprepina se na primy let kvuli alive flagu.
+      advanceHomingShot(g, s);
     }
-    const v = angVel(s.ang, s.spd);
-    s.x += v.vx; s.y += v.vy;
-    // 0x9676 zvysi rychlost az po patem pohybu; nova hodnota tedy plati
-    // od nasledujiciho tiku, ne uz pro prave provedeny krok.
-    if (s.kind === "can" && s.accel !== false &&
-        ++s.st % 5 === 0 && s.spd < 10.5)
-      s.spd += 0.5;
   }
-  g.shots = g.shots.filter(s => s.x > -24 && s.x < 344 && s.y > -24 && s.y < 280);
-  for (const pl of g.plops) pl.t++;
+  // Margin0 cull probiha uvnitr advance* (stejne jako uvnitr kazdeho
+  // nativniho 0x62d2), vcetne child tasku zalozenych pozdeji v tomto VBL.
+  // Invalidovany zaznam tu schvalne zustava pro posledni render/sweep.
+  for (const pl of g.plops) {
+    if (pl.bornTick === g.tick) continue;
+    pl.y -= scrollDelta; pl.t++;
+  }
+  for (const pl of g.plops)
+    if (pl.t >= PLOP_SEQUENCE.length) releaseCost(g, pl);
   g.plops = g.plops.filter(pl => pl.t < PLOP_SEQUENCE.length);
 
   // FODDERA/YELLOW jsou world-space objekty. Kazdy klon sam ceka na
@@ -1816,20 +3691,25 @@ function step(g) {
     // world-y. Aktivni letci se tedy na obrazovce hybou jen vlastni vy.
     if (!activated) a.y += scrollDelta;
     if (a.kind === "fod") {
-      stepFodderMotion(a);
       const sy = a.y - g.scroll;
-      if (a.shooter && p.alive && sy > 8 && --a.cool <= 0) {
+      // SUB.W #1,+276; BCC skip: vystreli az pri podteceni 0 -> $ffff.
+      // Zadny visibility ani alive gate; 0x95d2 pouzije ulozeny player slot.
+      if (a.shooter && (a.cool-- | 0) === 0) {
         a.shooter = false;                       // jedina rana (0x8122)
-        fireCannonAimed(g, a.x, sy);
+        fireCannonAimed(g, a.x, sy, a.vx, a.vy);
       }
+      stepFodderMotion(a);                      // 0x62d2 az po countdownu/rane
     } else if (a.kind === "yel") {             // YELLOW 0x86bc
       const sy = a.y - g.scroll;
-      if (p.alive && (activated || --a.ct <= 0)) {
+      if (activated || --a.ct <= 0) {
         a.ct = 15;
-        if (p.y - 24 >= sy) {
-          const d = Math.abs(a.x - p.x) + Math.abs(sy - (p.y - 24));
+        const target = yellowTarget(g);
+        if (target.y - 24 >= sy) {
+          const d = Math.abs(a.x - target.x) +
+                    Math.abs(sy - (target.y - 24));
           a.spd = ((2 * d) & 0x7FF) / 256;
-          a.ang = turnToward(a.ang, angTo(a.x, sy, p.x, p.y - 16), 12);
+          a.ang = turnToward(a.ang,
+            angTo(a.x, sy, target.x, target.y - 16), 12);
         } else { a.ang = 64; a.spd = 2; }
       }
       const v = angVel(a.ang, a.spd);
@@ -1842,7 +3722,7 @@ function step(g) {
   for (const a of g.air) {
     if (!a.alive) continue;
     const sy = a.y - g.scroll;
-    if (a.x <= -64 || a.x >= 384 || sy <= -64 || sy >= 320)
+    if (outsideCullMargin(a.x, sy, -64))
       releaseAirMember(g, a);
   }
   g.air = g.air.filter(a => !a.dead && (a.pending || a.alive));
@@ -1850,18 +3730,21 @@ function step(g) {
   // MINE core/PROXMINE strepy a svazane casti FLAME.
   for (const h of g.hazards.slice()) {
     if (!h.alive) continue;
-    if (h.scrollLocked) h.y += scrollDelta;
-    if (h.pickupT !== undefined) {              // 0x98e2: 10 snimku stoji, pak konec
-      if (--h.pickupT <= 0) releaseHazard(g, h);
-      continue;
+    if (h.kind === "minecore" && h.consumed > 0) {
+      if ((h.consumedTick | 0) === (g.tick | 0)) continue;
+      if (--h.consumed <= 0) releaseHazard(g, h);
+      continue;                                  // wait10: bez BOB/motion/anim
     }
+    if (h.scrollLocked) h.y += scrollDelta;
     if (h.kind === "flameEmitter") {
       if (!h.parent.alive) { releaseHazard(g, h); continue; }
       h.x = h.parent.x + 12; h.y = h.parent.y;
       if (--h.t <= 0) { h.t = 100; spawnFlamePuff(g, h); }
     } else if (h.kind === "traincar") {
-      if (h.parent.alive) h.vx = h.parent.vx;
-      else h.vx *= 15 / 16;
+      if (h.parent.alive) {
+        h.vx = h.parent.vx;
+        h.vxRaw = h.parent.vxRaw ?? Math.trunc(h.vx * 65536);
+      } else decayTrainVelocity(h);
       h.x += h.vx;
     } else {
       h.x += h.vx || 0; h.y += h.vy || 0;
@@ -1873,8 +3756,9 @@ function step(g) {
       h.at = 0; h.apos = (h.apos + 1) % h.seq.length;
     }
     const sy = h.y - g.scroll;
-    if (h.kind === "traincar" ? sy >= 272
-        : (h.x <= -80 || h.x >= 400 || sy <= -80 || sy >= 336))
+    const margin = h.kind === "proxfrag" ? 0 : -64;
+    if (h.kind === "traincar" ? Math.floor(sy) >= 272
+        : outsideCullMargin(h.x, sy, margin))
       releaseHazard(g, h);
   }
   g.hazards = g.hazards.filter(h => !h.dead && h.alive);
@@ -1882,30 +3766,30 @@ function step(g) {
   // mapove objekty -> prelozene korutiny (dispatch 0x7462)
   for (const s of g.spawns) {
     const esy = s.y - g.scroll;
+    if (!s.taskStarted && s.armed && esy >= -256)
+      startMapObjectTask(g, s);                 // map-reader prefetch
     // radek "vystrelil" trigger jen pri prekroceni vstupniho marginu
     // (v originale mapovy ctec zpracovava radky postupne se scrollem;
     // objekty uvnitr uvodniho okna korutinu nedostanou - zaber 22.35:
     // prvni vlna ~2 s po startu, po jedne)
     let fire = false;
     if (!s.born) {
-      if (s.armed) {
+      if (s.taskStarted) {
         let margin = -32;
         if (s.beh === "wave" || s.beh === "yellow" || s.beh === "bird" ||
             s.beh === "mill")
           margin = -48;
-        else if (s.beh === "mine" || s.beh === "camogun") margin = -16;
+        else if (s.beh === "mine" || s.beh === "camogun" ||
+                 s.beh === "tank" || s.beh === "roto") margin = -16;
         else if (s.beh === "flame") margin = 128;
         else if (s.beh === "train") margin = 100;
         else if (s.beh === "boss") margin = 0;   // 0xc7ae: a2c6 d2 = 0
+        else if (s.beh === "popup") {
+          // 0xa6ae RNG uz spotreboval map task pri -256.
+          margin = s.activationMargin;
+        }
         else if (s.beh === "proxmine") {
-          // 0xa9e0: RNG probe zacina az kdyz se objekt blizi nejnizsimu
-          // moznemu prahu; pak uz hodnota zustava pro tento objekt stabilni.
-          if (s.activationMargin === undefined && esy >= 85) {
-            const r = random32();
-            s.activationMargin = 85 + (r & 31);
-            s.proxAlternate = !!(r & 0x80000000);
-          }
-          margin = s.activationMargin ?? Infinity;
+          margin = s.activationMargin;
         }
         if (esy >= margin) fire = true;
       }
@@ -1916,6 +3800,7 @@ function step(g) {
     }
     if (fire) {
       s.born = true;
+      assignBobOrdinal(g, s);
       if (s.beh === "wave") {
         // 0x8048 je okamzita a2a2 formace, ne wait(10) stream z 0x8008.
         spawnFodderFormation(g, s);
@@ -1933,41 +3818,56 @@ function step(g) {
         // 0x9b16: staticka rotujici mina, one-hit/contact detonation.
         s.cost = 7; s.hp = 10; s.scoreValue = 25;
         s.fr = 0; s.at = 0;
-        if (!reserveCost(g, s)) s.alive = false;
+        accountCost(g, s);                     // prime a2c6, bez 0x8822
       } else if (s.beh === "proxmine") {
         // 0xa9e0: vyskoci az v nahodne hloubce 85..116.
         s.cost = 10; s.hp = 4; s.scoreValue = 30;
         s.st = 0; s.age = 0; s.fr = 0; s.at = 0;
-        if (!reserveCost(g, s)) s.alive = false;
+        accountCost(g, s);                     // prime a2c6, bez 0x8822
+        // 0xa9fc: pri nulove difficulty task po a2c6 okamzite uklidi.
+        if (!(g.difficulty | 0)) {
+          s.alive = false; releaseCost(g, s);
+        } else sfxOpening(g, s.x);             // 0xaa10 -> 0x5138
       } else if (s.beh === "train") {
         // 0x9b7e: lokomotiva prijede ze strany; TYP je pocet vagonu.
         s.cost = 15; s.hp = 10; s.scoreValue = 75; s.y -= 2; s.fr = 0;
         s.vx = s.x < 160 ? 1 : -1;
+        s.vxRaw = Math.trunc(s.vx * 65536);
         s.x = s.vx > 0 ? -48 : 368;
-        if (reserveCost(g, s)) spawnTrainCars(g, s, s.typ);
-        else s.alive = false;
+        accountCost(g, s);                     // loko i vagony mohou nad 160
+        spawnTrainCars(g, s, s.typ);
       } else if (s.beh === "mill") {
         // 0x79d4: pomaly letici osm smeru strilejici objekt.
         initMill(g, s);
       } else if (s.beh === "popup") {
-        s.st = 0; s.t = 64 + (Math.random() * 64 | 0);  // 0xa6ae
-        s.hp = 3; s.scoreValue = 70; s.fr = 0; s.alt = Math.random() < 0.5;
+        // a2c6(POPUP#0,0x24,random 64..127,HP3,score70,cost14).
+        // Po navratu se opening pripoji ihned a soubezne zacne wait50.
+        s.cost = 14; s.hp = 3; s.scoreValue = 70;
+        s.st = 0; s.t = 1; s.fr = 0;
+        s.popupShotWord = s.typ & 0xffff;
+        s.popupShotsLeft = ((g.difficulty || 0) >> 1) + 1;
         s.popupAnim = null;
+        // Prime a2c6 nema 0x8822 guard a muze docasne prekrocit 160.
+        g.activeCost = (g.activeCost || 0) + s.cost; s.budgeted = true;
+        // 0xa6ca: difficulty0 zavreny POPUP bez animace hned uklidi.
+        if (!(g.difficulty | 0)) {
+          s.alive = false; releaseCost(g, s);
+        } else sfxOpening(g, s.x);             // 0xa6e0 -> 0x5138
       } else if (s.beh === "tank") {
-        // 0x9eca: typ -> najezd; rychlost 0.5 px/t, 300 jed / 100 stuj, 3x
-        const t = s.typ & 7;
-        s.hp = 2; s.scoreValue = 50; s.drives = 3; s.st = 1; s.t = 300;
-        if (t === 1) { s.x = 352; s.ang = 128; }
-        else if (t === 2) { s.x = -32; s.ang = 0; }
-        else if (t === 3) { s.ang = 64; }
-        else if (t === 4) { s.ang = 192; }
-        else { s.ang = 64; s.st = 0; }          // bez typu: stoji
-        s.hullF = (s.ang >> 6) & 3;             // korba: 0=E,1=S,2=W,3=N
-        s.tang = s.ang; s.gate = 176; s.fr = -2; // fr=-2: kresli hull+vez
+        // 0x9eca: parent a2c6 existuje uz na -16. Bit3 meni class 24->20,
+        // pro pohyb se smaze; TYP4 pak raw-waituje az do screen-y 288.
+        const rawType = s.typ & 0xffff, t = rawType & ~8;
+        s.hp = (g.difficulty || 0) + 1; s.scoreValue = 50; s.cost = 10;
+        accountCost(g, s);                     // prime a2c6, bez 0x8822
+        s.tankType = t; s.collisionClass = (rawType & 8) ? 0x20 : 0x24;
+        s.tankSetup = false; s.fr = -2; s.hullF = 0;
+        if (t !== 4) setupTankMotion(g, s, t);
       } else if (s.beh === "camogun") {
         // 0xac12: oba mapove TYPy jsou stejne; +276 se pozdeji prepise
         // osmitikovym recoil citacem. Aktivacni margin z a2c6 je -16.
-        s.hp = 2; s.scoreValue = 40; s.st = 0; s.t = 100; s.fr = 0;
+        s.hp = 2; s.scoreValue = 40; s.cost = 10;
+        accountCost(g, s);                     // prime a2c6, bez 0x8822
+        s.st = 0; s.t = 100; s.fr = 0;
         s.recoil = 0; s.animT = 0;
       } else if (s.beh === "boss") {
         // 0xc7bc: po a2c6 se presune na stred a o 288 px dal do urovne,
@@ -1978,25 +3878,37 @@ function step(g) {
         s.st = 0; s.vx = 0; s.vy = -2;   // 0xc80a: +336 = -2.0
         s.hp = 0;                        // a2c6 d3 = 0: behem naletu bez kolize
         s.scoreValue = 0;
-        s.fr = 0; s.bodyFr = 0; s.animT = 0; s.rotorTick = 0;
+        s.fr = 0; s.bodyFrame = 0; s.bodyHidden = true;
+        s.arrived = false;
+        s.unfoldPos = -1; s.unfoldWait = 0;
+        s.rotorTick = 0; s.rotorActive = false;
+        s.hitSpread = false; s.assemblyLeft = 4;
+        s.groupReleased = false;
+        s.timer = 0;                    // 0xc7ce: WORD +280 pred detmi = 0
+        // Parent zaplati 100 hned. Escort a tri body po 10 se uctuji az
+        // pri svem vlastnim a2c6 startu (body tedy po random waitu).
+        s.cost = 100;
+        g.activeCost = (g.activeCost || 0) + s.cost; s.budgeted = true;
         s.parts = spawnBossParts(g, s);
-        s.undocked = s.parts.length;     // 0xc7f2: +276 = 4
       } else if (s.beh === "roto") {
         // 0x9960: NOT.W fp@(138) strida skripty podle poradi aktivace,
         // nikoli podle polohy objektu. Z nuly zacina reverzni 0x9986.
         g.rotoDirectionWord = (~g.rotoDirectionWord) & 0xffff;
-        s.hp = 4; s.scoreValue = 35;
+        s.hp = 4; s.scoreValue = 35; s.cost = 10;
+        accountCost(g, s);                     // prime a2c6, bez 0x8822
         s.sd = (g.rotoDirectionWord & 0x8000) ? -1 : 1;
         s.spin = 4;
         // Dopredny skript 0x996a zacina znovu ROTOBASE#4, ktery uz
         // nainstaloval a2c6. Reverzni 0x9986 zacina rovnou #11.
         s.at = s.sd > 0 ? -2 : 0;
-        s.t = 200 + (Math.random() * 128 | 0); s.fr = 4;
+        const r = random32(g);                 // stejny word pro uhel i wait
+        s.salvoAngle = r & 255; s.t = 200 + (r & 127); s.fr = 4;
       } else if (s.beh === "flame") {
         // 0xab10: otevreni, po 24 ticich svazany plamenovy emitter.
         s.cost = 10; s.hp = 3; s.scoreValue = 40;
         s.fr = 0; s.age = 0; s.emitterSpawned = false;
-        if (!reserveCost(g, s)) s.alive = false;
+        accountCost(g, s);                     // parent nema 0x8822 guard
+        sfxOpening(g, s.x);                    // 0xab36 -> 0x5138
       }
     }
     if (!s.born || !s.alive) continue;
@@ -2006,7 +3918,6 @@ function step(g) {
       if (++s.at >= 2) {                        // 0x9b44: 0..7 / 2 t
         s.at = 0; s.fr = (s.fr + 1) & 7;
       }
-      if (s.sy > 320) { s.alive = false; releaseCost(g, s); }
     } else if (s.beh === "proxmine") {
       if (s.st === 0) {                         // 0xaa1c: 0..5 / 6 t, END
         s.age++;
@@ -2019,23 +3930,25 @@ function step(g) {
           detonateProx(g, s);
         else s.t = 10;
       }
-      if (s.alive && s.sy > 320) { s.alive = false; releaseCost(g, s); }
     } else if (s.beh === "mill") {
       if (s.scrollLocked) s.y += scrollDelta;   // +367 bit4 od sy=24
+      const shotSy = s.y - g.scroll;            // 0x629c resume pred 0x62d2
       s.y += s.vy;
       const sy = s.y - g.scroll;
       if (s.rotorFresh) s.rotorFresh = false;
       else s.rotorTick = (s.rotorTick + 1) & 7;
       // 0x6480 cull se vyhodnoti pred navratem z waitu a pripadnou salvou.
-      if (sy <= -64 || sy >= 320 || s.x <= -64 || s.x >= 384) {
+      if (outsideCullMargin(s.x, sy, -64)) {
         s.alive = false; releaseCost(g, s);
       } else if (s.st === 0 && sy >= 24) {
-        s.st = 1; s.t = 100; s.scrollLocked = true;
+        s.st = 1; s.t = 100;
+        s.scrollLocked = true;
       } else if (s.st === 1 && --s.t <= 0) {
         s.t = 100;
-        const base = (random32() & 16) ? 16 : 0;
+        random32(g);                            // testuje se high word seedu
+        const base = (g.rngState & 0x00100000) ? 16 : 0;
         for (let k = 0; k < 8; k++)
-          fireCannon(g, s.x, sy, (base + 32 * k) & 255, true, false);
+          fireCannon(g, s.x, shotSy, (base + 32 * k) & 255, true, false);
       }
     } else if (s.beh === "train") {
       s.x += s.vx;
@@ -2048,166 +3961,185 @@ function step(g) {
         s.emitterSpawned = true;
         spawnFlameEmitter(g, s);
       }
-      if (s.sy > 320) { s.alive = false; releaseCost(g, s); }
     } else if (s.beh === "popup" && s.sy > -32 && s.sy < 280) {
       // 0xa6e4 pouze pripoji opening animator; coroutine soubezne zacne
       // wait(50). Po vystrelu drzi #8 pet tiku, #7 dalsich 71 tiku a
       // closing 0xa72a nakonec objekt prikazem KILL zrusi.
       stepPopupAnim(s);
-      if (!s.alive) continue;
+      if (!s.alive) { releaseCost(g, s); continue; }
       if (s.st === 0 && --s.t <= 0) {
         attachPopupAnim(s, POPUP_OPEN_FRAMES, false);
         s.st = 2; s.t = 50;
       } else if (s.st === 2 && --s.t <= 0) {
         s.st = 3; s.fr = 8; s.t = 5;
-        if (p.alive) fireHoming(g, s.x + (s.alt ? 6 : -6), s.sy, 64);
-        s.alt = !s.alt;
-      } else if (s.st === 3 && --s.t <= 0) { s.fr = 7; s.st = 4; s.t = 50 + 20; }
+        // 0xa744: NOT.W +276 pred kazdou ranou; TOWN typ=1 da nejprve -6.
+        s.popupShotWord = (~s.popupShotWord) & 0xffff;
+        const dx = (s.popupShotWord & 0x8000) ? -6 : 6;
+        if ((g.players || 0) > 0)
+          fireHoming(g, s.x + dx, s.sy, 64, s.vx || 0, s.vy || 0);
+        s.popupShotsLeft--;
+      } else if (s.st === 3 && --s.t <= 0) {
+        s.fr = 7; s.st = 4;
+        // Kazda dalsi 2P salva nasleduje po vlastnim wait20. Posledni
+        // wait20 a hlavni wait50 lze sloucit bez zmeny 1P casove osy.
+        s.t = s.popupShotsLeft > 0 ? 20 : 50 + 20;
+      }
       else if (s.st === 4 && --s.t <= 0) {
-        s.st = 5;
-        attachPopupAnim(s, POPUP_CLOSE_FRAMES, true);
+        if (s.popupShotsLeft > 0) {
+          s.st = 3; s.fr = 8; s.t = 5;
+          s.popupShotWord = (~s.popupShotWord) & 0xffff;
+          const dx = (s.popupShotWord & 0x8000) ? -6 : 6;
+          if ((g.players || 0) > 0)
+            fireHoming(g, s.x + dx, s.sy, 64, s.vx || 0, s.vy || 0);
+          s.popupShotsLeft--;
+        } else {
+          s.st = 5;
+          attachPopupAnim(s, POPUP_CLOSE_FRAMES, true);
+        }
       }
     } else if (s.beh === "tank") {
+      if (!s.tankSetup && s.tankType === 4 && s.sy >= 288)
+        setupTankMotion(g, s, 4);               // 0x9ac8 raw wait
+      if (!s.tankSetup) continue;
       if (s.st === 1) {                         // jizda 0.5 px/t
-        const v = angVel(s.ang, 0.5);
+        const v = angVel(s.ang, s.tankSpeed || 0);
         s.x += v.vx; s.y += v.vy;
         if (--s.t <= 0) { s.st = 2; s.t = 100; }
       } else if (s.st === 2 && --s.t <= 0) {
         if (--s.drives > 0) { s.st = 1; s.t = 300; } else s.st = 0;
       }
-      // vez (0x9faa + 0xa096): po (12-hraci)*16=176 ticich se VIDITELNE
-      // otaci k hraci po krocich 16 jednotek (22.5°) kazdych 6 tiku;
-      // po zamereni 16 tiku pauza, vystrel v uhlu veze (0x95ca),
-      // 8 tiku, pak stejnym tempem rotace zpet ke korbe
-      if (s.sy > -16 && s.sy < 272 && p.alive) {
-        if (s.tph === 1) {                       // rotace na cil
-          if (++s.tt >= 6) {
-            s.tt = 0; s.tang = turnToward(s.tang, s.twant, 16);
-            if (s.tang === s.twant) { s.tph = 2; s.tt = 16; }
-          }
-        } else if (s.tph === 2) {                // zamereno: pauza + vystrel
-          if (--s.tt <= 0) {
-            fireCannon(g, s.x, s.sy, s.tang);
-            s.tph = 3; s.tt = 8;
-          }
-        } else if (s.tph === 3) {                // kratka pauza po vystrelu
-          if (--s.tt <= 0) { s.tph = 4; s.tt = 0; }
-        } else if (s.tph === 4) {                // rotace zpet ke korbe
-          if (++s.tt >= 6) {
-            s.tt = 0; s.tang = turnToward(s.tang, s.ang, 16);
-            if (s.tang === s.ang) { s.tph = 0; s.gate = 176; }
-          }
-        } else if (--s.gate <= 0) {              // gate: novy cyklus
-          s.tph = 1; s.tt = 0;
-          s.twant = angTo(s.x, s.sy, p.x, p.y - 8);
-        }
-      }
+      // Child cadence ani targeting se nezastavuji mimo viewport ci pri smrti.
+      stepTankTurret(g, s);
     } else if (s.beh === "camogun") {
       // 0xac2a: po 100 ticich vzdy granat uhlem 64 (dolu). Wrapper
       // 0x95c2 vede na 0x95ec: konstantnich 5 px/t, bez mireni/PLOP.
       let fired = false;
       if (!fire && s.st === 0 && s.sy >= -16 && s.sy < 320 && --s.t <= 0) {
         fireCannonStraight(g, s.x, s.sy, 64);
-        // Originalni mapove y: -8 a pak 8x +1. Obrazkove souradnice
-        // jsou opacne, proto skok +8 a osm navratu po -1.
-        s.y += 8; s.recoil = 8; s.st = 1;
+        // 0xac40 SUBQ #8,+324: hlaven odskoči nahoru; 0xac56 ji osmkrat
+        // vrati ADDQ #1 dolu. +324 je primo world-y, zadna inverze osy.
+        s.y -= 8; s.recoil = 8; s.st = 1;
         // 0x62d2 tikne animator pred skutecnym cooperative yieldem,
         // prvni viditelny recoil frame je proto uz CAMOGUN#1.
         s.fr = 1; s.animT = 3; fired = true;
       }
       if (s.st === 1) {
-        s.y -= 1;
+        s.y += 1;
         if (!fired && s.fr === 1 && --s.animT <= 0) s.fr = 0;
         if (--s.recoil <= 0) { s.st = 0; s.t = 100; s.fr = 0; }
       }
-    } else if (s.beh === "boss" && !fire) {
-      // Aktivacni tik se jen presune (0xc7bc); krokovat zacina az dalsi
-      // yield, stejne jako u CAMOGUN.
+    } else if (s.beh === "boss") {
+      // 0xc810 vola 0x62d2 primo po setupu: uz aktivacni tik provede prvni
+      // vlastni pohyb i child scheduler pass.
       s.y += scrollDelta;                       // bit 4: screen-y meni jen vy
-      const bsy = s.y - g.scroll;
+      stepBossParts(g, s, scrollDelta);
+      if (s.st === 0) s.bodyHidden = !s.bodyHidden; // 0xc7fc: bit7 blikani
+      if (s.unfoldPos >= 0 && s.unfoldPos < 6 && --s.unfoldWait <= 0) {
+        s.unfoldPos++;
+        s.bodyFrame = [0, 0, 1, 2, 3, 4, 5][s.unfoldPos];
+        s.unfoldWait = 10;                      // 0xc82e
+      }
+      if (s.rotorActive) s.rotorTick = (s.rotorTick + 1) & 7;
+      let bsy = s.y - g.scroll;
       if (s.st === 0) {                         // nalet zdola az na y 72
-        s.y += s.vy;
-        if (bsy <= 72) {                        // 0xc826: zastavi
-          s.st = 1; s.vy = 0; s.hp = 25;        // 0xc842: +360 = 25, +504 = 34
-          s.animT = 0;                          // 0xc82e: anim od ted
-        }
-      } else if (s.st === 1) {                  // 0xc85e: ceka na +276 == 0
-        s.animT++;
-        if (s.undocked <= 0) {
-          s.st = 2; s.timer = 2000; s.fireT = 10;   // 0xc86c / 0xc872
-          s.vy = 1;                             // 0xc878: +336 = 1
-        }
-      } else if (s.st === 2) {
-        s.animT++;
-        // 0xc882: zrychleni 1536/65536 k hraci, vx orezane na <-2, 1>
-        const ax = 1536 / 65536;
-        if (p.alive) {
-          if (p.x < s.x) { if (s.vx > -2) s.vx -= ax; }
-          else if (s.vx < 1) s.vx += ax;
-        }
-        s.x += s.vx;
-        // 0xc8b2: nad 64 klesa 4 px/t, pod 192 stoupa 0.25, mezi tim drzi
-        if (bsy < 64) s.vy = 4;
-        else if (bsy > 192) s.vy = -0.25;
-        s.y += s.vy;
-        // 0xc8ce: pali jen v horni polovine, kadence (12 - hraci) * 4
-        if (bsy <= 128 && --s.fireT <= 0) {
-          s.fireT = (12 - (g.players || 1)) * 4;
-          fireCannonAimed(g, s.x, bsy);          // 0x95d2
-          fireHoming(g, s.x + 6, bsy, 0);        // 0x8530 (d0 +6, uhel 0)
-          fireHoming(g, s.x - 6, bsy, 128);      // 0x8530 (d0 -6, uhel 128)
-        }
-        if (--s.timer <= 0) {                    // 0xc910: vyprsel cas
-          if (s.hp === 25) dropBossTokens(g, s, 5);  // 0xc91c: nedotceny
-          s.st = 3; s.vy = -4;                   // 0xc926: odlet, sf +538
+        if (s.arrived) {                        // resume po poslednim blink BOBu
+          s.st = 1; s.vy = 0; s.hp = 25;        // nejprve cekani 0xc85e
+          s.bodyHidden = false; s.bodyFrame = 0;
+          s.unfoldPos = 0; s.unfoldWait = 10;
+          s.rotorActive = true; s.rotorTick = 0;// secondary 0x93e2
+        } else {
+          s.y += s.vy;
+          bsy = s.y - g.scroll;
+          if (bsy <= 72) s.arrived = true;       // tento frame jeste ingress
         }
       } else {
-        s.animT++;
-        s.y += s.vy;
-        if (bsy <= -64) { s.alive = false; releaseCost(g, s); }  // cull -64
-      }
-      if (s.st >= 1) {
-        s.bodyFr = BOSS_ANIM[Math.min(6, (s.animT / 10) | 0)];
-        s.rotorTick = (s.rotorTick + 1) & 7;    // 0x93e2 overlay
-      }
-      stepBossParts(g, s);
-      for (const q of s.parts)                  // 0xcae2: GOOSE#8..11 period 8
-        if (q.pod && q.entered && ++q.animT >= 8) {
-          q.animT = 0; q.animFr = 8 + ((q.animFr - 8 + 1) & 3);
+        // 0xc85e: posledni child po counter-- obnovi parent task jeste
+        // v temze scheduler passu. Inicializace proto propadne rovnou do
+        // prvniho combat updatu, neceka dalsi VBL.
+        let enteredCombatThisResume = false;
+        if (s.st === 1 && bossAssembled(s)) {
+          s.st = 2; s.timer = 2000; s.fireT = 10;
+          s.vy = 1;                             // 0xc878
+          enteredCombatThisResume = true;
         }
+        if (s.st === 2) {
+          // Resume po predchozim 0xc902 fieldu zacina na 0xc908 timerem.
+          // Pri underflow uz se do c87e combat update ani palby nevrati.
+          let timedOut = false;
+          if (!enteredCombatThisResume && --s.timer < 0) {
+            if (s.hp === 25) {
+              dropBossTokens(g, s, 5);           // 0xc91c: nedotceny
+              s.timer = 0;                       // c9a0 spotrebuje pocitadlo
+            } else {
+              s.timer = 0xFFFF;                  // skutecny WORD po podteceni
+            }
+            s.st = 3; s.vx = 0; s.vy = -4;       // 0x6d96 + 0xc926
+            timedOut = true;
+          }
+          if (timedOut) {
+            // 0xc926 propadne primo do 0xc930 -> 0x62cc: jediny pohyb
+            // tohoto resume je prvni -4px escape field.
+            s.y += s.vy;
+            if (outsideCullMargin(s.x, s.y - g.scroll, -64)) {
+              s.alive = false; releaseBossGroup(g, s, true);
+            }
+          } else {
+            // 0xc882: zrychleni 1536/65536 k hraci, vx orezane na <-2, 1>
+            const ax = 1536 / 65536;
+            const preMoveX = s.x;               // palba pred 0xc902/0x62d2
+            const targetX = p.alive ? p.x : 160;// 0x7312 death fallback
+            if (targetX < s.x) {
+              // CMP.W cte high word 16.16; hodnota -1.x ma high word -2 a
+              // uz se dale nezmensuje, takze nemuze preletet pod -2.
+              if (Math.floor(s.vx) > -2) s.vx -= ax;
+            } else if (Math.floor(s.vx) < 1) s.vx += ax;
+            s.x += s.vx;
+            // 0xc8b2: nad64 klesa4, pod192 stoupa.25, mezi tim drzi.
+            if (bsy < 64) s.vy = 4;
+            else if (bsy > 192) s.vy = -0.25;
+            s.y += s.vy;
+            // 0xc8ce: pali jen v horni polovine, kadence (12-D)*4.
+            if (bsy <= 128 && --s.fireT <= 0) {
+              s.fireT = (12 - (g.difficulty || 0)) * 4;
+              fireCannonAimed(g, preMoveX, bsy, s.vx, s.vy);
+              fireHoming(g, preMoveX + 6, bsy, 0, s.vx, s.vy);
+              fireHoming(g, preMoveX - 6, bsy, 128, s.vx, s.vy);
+            }
+          }
+        } else if (s.st === 3) {
+          s.y += s.vy;
+          if (outsideCullMargin(s.x, s.y - g.scroll, -64)) {
+            s.alive = false; releaseBossGroup(g, s, true);
+          }
+        }
+      }
     } else if (s.beh === "roto") {
       if (++s.at >= 2) {                        // 0x996a/0x9986: period(2)
         s.at = 0; s.spin += s.sd;
         if (s.spin > 11) s.spin = 4; if (s.spin < 4) s.spin = 11;
         s.fr = s.spin;
       }
-      if (s.sy > -16 && s.sy < 272 && --s.t <= 0) {
-        s.t = 200 + (Math.random() * 128 | 0);
-        const base = Math.random() * 256 | 0;   // salva do krize (0x99b2)
+      if (--s.t <= 0) {                         // wait bezi i mimo viewport
+        const base = s.salvoAngle & 255;        // RNG z pocatku tohoto cyklu
         for (let k = 0; k < 4; k++)
-          fireCannon(g, s.x, s.sy, (base + k * 64) & 255);
+          fireCannon(g, s.x, s.sy, (base + k * 64) & 255, true, false);
+        const r = random32(g);                  // jediny RNG pro dalsi cyklus
+        s.salvoAngle = r & 255; s.t = 200 + (r & 127);
       }
     } else if (s.beh === "unimplemented" || s.beh === "missing-dispatch") {
       // Fail-closed: sprite/overena animace ano, vymyslena palba ne.
     }
+    // 0x6480: bezny +364=-64, pouze FLAME parent jej meni na -8.
+    // TRAIN ma +538 vypnute a MILL/GOOSE culluji ve svych vetvich.
+    if (s.alive && !["train", "mill", "boss"].includes(s.beh)) {
+      const cullMargin = s.beh === "flame" ? -8 : -64;
+      if (outsideCullMargin(s.x, s.y - g.scroll, cullMargin)) {
+        s.alive = false; releaseCost(g, s);
+      }
+    }
   }
 
   stepTokens(g, scrollDelta);
-  // Strela hrace bonus jen prepne (0x9780), dotek hrace ho sebere (0x97c6).
-  // Bonus hrace za zadnych okolnosti nezrani.
-  for (const k of g.tokens) {
-    if (k.dead || !tokenLive(k)) continue;       // behem rozjezdu bez kolizi
-    const ky = k.y - g.scroll;
-    for (const b of g.bullets) {
-      if (b.dead) continue;
-      if (Math.abs(b.x - k.x) < 10 && Math.abs(b.y - ky) < 10) {
-        b.dead = true; shootToken(g, k); break;
-      }
-    }
-    if (p.alive && Math.abs(p.x - k.x) < 16 && Math.abs(p.y - ky) < 16)
-      pickupToken(g, k);
-  }
-
   // animace dosud neprelozenych objektu podle vytezenych skriptu
   for (const s of g.spawns) {
     if (!s.born || !s.alive || !s.anim) continue;
@@ -2217,157 +4149,207 @@ function step(g) {
     }
   }
 
-  // kolize strel hrace s mapovymi objekty
+  // Player projectile updater ma prioritu 0xfffe, tedy az za vsemi beznymi
+  // object tasky a tesne pred resident sweepem 0xffff. Nejprve uvolni sloty,
+  // ktere dostaly collision bit5 v minulem fieldu, a ty uz znovu nepohne.
+  g.bullets = (g.bullets || []).filter(b => !b.collisionConsumed && !b.dead);
+  for (const b of g.bullets) {
+    // HW pool drzi world souradnici bez airborne bit4. Do screen-y se
+    // vedle vlastni rychlosti promita opacna delta kamery i ve spawn VBL.
+    b.x += b.vx ?? 0;
+    b.y += (b.vy ?? -9) - scrollDelta;
+  }
+  g.bullets = g.bullets.filter(b =>
+    b.x >= 0 && b.x < 320 && b.y >= 0 && b.y < 256);
+
+  /* 0x6ec2 nejdriv projde CELY sweep a ORne event bity, teprve pak
+     0x64b6 vola callbacky. Bullet proto muze v jednom VBL zasahnout vice
+     prekryvajicich se targetu; nesmime jej odstranit po prvnim z nich. */
+  const collisionBullets = g.bullets.filter(b => !b.dead);
+  const consumedBullets = new Set();
+  function collectBulletEvent(x, y) {
+    let event = false;
+    for (const b of collisionBullets) {
+      if (!projectileNodeHit(b.x, b.y, x, y)) continue;
+      consumedBullets.add(b); event = true;
+    }
+    return event;
+  }
+
+  const tokenShotEvents = new Set(), tokenPickupEvents = new Set();
+  for (const k of g.tokens) {
+    if (k.dead) continue;
+    const ky = k.y - g.scroll;
+    // Burst vypina callback bit v +508, ne class32 node ani pending +506:
+    // event word se zapise a bolt zanikne, ale 0x64b6 callback neprovede.
+    if (collectBulletEvent(k.x, ky)) tokenShotEvents.add(k);
+    if (p.alive && k.interactive && collisionNodeHit(p.x, p.y, k.x, ky))
+      tokenPickupEvents.add(k);
+  }
+
+  const spawnShotEvents = new Set(), bossShotEvents = new Set();
   for (const s of g.spawns) {
-    if (!s.born || !s.alive) continue;
-    if (s.beh === "unimplemented" || s.beh === "missing-dispatch") continue;
-    if (s.beh === "popup" && s.st === 0) continue; // zavreny pancir pred otevrenim
-    if (s.beh === "boss" && s.st === 0) continue;  // trida 0 az do 0xc854
-    const spr = sprite(s.file, s.beh === "boss" ? s.bodyFr
-                               : (s.fr >= 0 ? s.fr : s.idx));
-    if (!spr) { s.alive = false; continue; }
+    if (!s.born || !s.alive || s.beh === "unimplemented" ||
+        s.beh === "missing-dispatch") continue;
+    // MEDTANK TYP4 je po a2c6 zapocitany, ale raw 0x9ac8 wait do sy=288
+    // jeste nevydal prvni 0x62d2 BOB/collision node. Skryty parent proto
+    // nesmi na sve budouci world pozici pohltit player bolt.
+    if (s.beh === "tank" && !s.tankSetup) continue;
     const sy = s.y - g.scroll;
-    if (sy < -40 || sy > 300) continue;
-    for (const b of g.bullets) {
-      if (b.dead) continue;
-      if (b.x > s.x + spr.ox && b.x < s.x + spr.ox + spr.w &&
-          b.y > sy + spr.oy && b.y < sy + spr.oy + spr.h) {
-        b.dead = true;
-        if (s.beh === "mine") {
-          detonateMine(g, s, true);
-          break;
-        }
-        if (s.beh === "boss") {
-          // 0xc974; body zadne (a2c6 d4 = 0; smycka 0xc950 je kontrolni
-          // soucet programu, ne skore).
-          if (!hitBoss(g, s)) continue;
-          break;
-        }
-        if (--s.hp > 0) { s.flashT = 1; continue; }   // 0xa35a
-        killSpawn(g, s);
-        break;
+    if (s.beh === "boss") {
+      if (s.hp > 0 && collectBulletEvent(s.x, sy)) bossShotEvents.add(s);
+      // HP0 deti nemaji damage callback, class34 ale spotrebuje bullet.
+      for (const q of s.parts || []) {
+        if (!q.entered) continue;
+        const qp = bossPartPosition(s, q, g.scroll);
+        collectBulletEvent(qp.x, qp.y);
       }
-    }
-  }
-  // kolize s letci
-  for (const a of g.air) {
-    if (!a.alive) continue;
-    const ay = a.y - g.scroll;
-    for (const b of g.bullets) {
-      if (b.dead) continue;
-      if (Math.abs(b.x - a.x) < 12 && Math.abs(b.y - ay) < 12) {
-        b.dead = true;
-        if (!damageAir(g, a)) {
-          if (a.kind === "bird") {              // 0x8696: hit recoil + rana
-            a.y -= 6;
-            fireCannon(g, a.x, ay - 6, 56 + (random32() & 15), true, false);
-          }
-          continue;
-        }
-        break;
-      }
+    } else if (s.hp > 0 && collectBulletEvent(s.x, sy)) {
+      spawnShotEvents.add(s);
     }
   }
 
-  // kolize s pohyblivymi castmi min/vlaku; plamen neni znicitelny bolt-em.
+  const airShotEvents = new Set();
+  for (const a of g.air)
+    if (a.alive && collectBulletEvent(a.x, a.y - g.scroll))
+      airShotEvents.add(a);
+
+  const hazardShotEvents = new Set();
   for (const h of g.hazards) {
-    if (!h.alive || h.hp <= 0 || h.pickupT !== undefined) continue;
-    const hy = h.y - g.scroll, fr = h.seq[h.apos];
-    const spr = sprite(h.file, fr);
-    if (!spr || hy < -50 || hy > 306) continue;
-    for (const b of g.bullets) {
-      if (b.dead) continue;
-      if (b.x > h.x + spr.ox && b.x < h.x + spr.ox + spr.w &&
-          b.y > hy + spr.oy && b.y < hy + spr.oy + spr.h) {
-        b.dead = true;
-        // 0x98b4: jadro miny ma vlastni handler - pri nule smart bomba
-        // a teprve pak 0xa36a (30 bodu).
-        if (h.kind === "minecore") {
-          if (--h.hp > 0) { h.flashT = 1; break; }
-          smartBomb(g); killHazard(g, h); break;
-        }
-        damageHazard(g, h);
-        break;
-      }
-    }
+    if (!h.alive) continue;
+    // Consumed core a FLAME emitter stale maji shootable node, ale callback ne.
+    const blocks = h.hp > 0 || h.kind === "flameEmitter" ||
+                   (h.kind === "minecore" && h.consumed);
+    if (!blocks || !collectBulletEvent(h.x, h.y - g.scroll)) continue;
+    if (h.hp > 0 && !h.consumed) hazardShotEvents.add(h);
   }
-  // HOMING (0x8578: a2c6 s tridou 38, 1 HP, 7 bodu) jde sestrelit;
-  // kanonovy granat (trida 6) ne.
-  for (const s of g.shots) {
-    if (s.kind !== "hom" || s.dead) continue;
-    for (const b of g.bullets) {
-      if (b.dead) continue;
-      if (Math.abs(b.x - s.x) < 8 && Math.abs(b.y - s.y) < 8) {
-        b.dead = true; s.dead = true;
-        awardScore(g, 7); spawnBoom(g, s.x, s.y + g.scroll);
-        break;
-      }
-    }
-  }
-  g.shots = g.shots.filter(s => !s.dead);
-  g.bullets = g.bullets.filter(b => !b.dead);
 
-  // Kolize hrace (docs/TOWN-AUDIT.md 2.1). Vrtulnik 0x9410 instaluje svou
-  // smrt 0x9306 jen do udalosti 1/2; ty vyvolavaji objekty s bitem 1 v
-  // kolizni tride (a2c6 d1 = 34/38/6): letci, MILL, GOOSE s castmi,
-  // strepy PROXMINE, granaty a HOMING. Pozemni objekty (trida 36: mina,
-  // PROXMINE, vlak, plamen, POPUP, veze; trida 32: tank, jadro, TOKEN)
-  // vrtulnik nezabiji. Dotek zaroven spusti damage handler objektu
-  // (0xa362 v +514), nezavisle na ochrane hrace.
+  const homingShotEvents = new Set();
+  for (const sh of g.shots)
+    if (!sh.dead && sh.kind === "hom" && collectBulletEvent(sh.x, sh.y))
+      homingShotEvents.add(sh);
+
+  // Player eventy se berou ze stejneho pred-callback snapshotu. Target,
+  // ktery soucasne zabil bolt, proto porad nastavi player death bit1.
+  // 0x9306 je navazan jen na tridy s bitem1 (34/38/6: letci, MILL,
+  // GOOSE, PROXMINE strepy a strely); pozemni tridy 36/32 nejsou lethal.
+  const contactShots = [], contactAir = new Set(), contactBoss = new Set();
+  const contactMill = new Set(), contactFrag = new Set(), contactCore = new Set();
+  const playerAttribution = new Set();
+  let lethalContact = false;
   if (p.alive) {
-    const touches = spr => (sx, sy) =>
-      p.x + 6 > sx + spr.ox && p.x - 6 < sx + spr.ox + spr.w &&
-      p.y + 6 > sy + spr.oy && p.y - 6 < sy + spr.oy + spr.h;
-    let lethal = false;
-    for (const s of g.shots)
-      if (Math.abs(s.x - p.x) < 8 && Math.abs(s.y - p.y) < 8) lethal = true;
+    for (const sh of g.shots) {
+      const overlaps = sh.kind === "can"
+        ? projectileNodeHit(sh.x, sh.y, p.x, p.y)
+        : collisionNodeHit(p.x, p.y, sh.x, sh.y);
+      if (!sh.dead && overlaps) {
+        contactShots.push(sh); playerAttribution.add(sh); lethalContact = true;
+      }
+    }
     for (const a of g.air) {
-      if (!a.alive) continue;
-      const ay = a.y - g.scroll;
-      if (Math.abs(a.x - p.x) < 14 && Math.abs(ay - p.y) < 14) {
-        lethal = true; damageAir(g, a);           // +514 = 0xa362
+      if (a.alive && collisionNodeHit(p.x, p.y, a.x, a.y - g.scroll)) {
+        contactAir.add(a); playerAttribution.add(a); lethalContact = true;
       }
     }
     for (const s of g.spawns) {
       if (!s.born || !s.alive) continue;
-      const sy = s.y - g.scroll;
-      if (s.beh === "mill") {
-        const spr = sprite(s.file, s.fr >= 0 ? s.fr : s.idx);
-        if (spr && touches(spr)(s.x, sy)) {
-          lethal = true;
-          if (--s.hp > 0) s.flashT = 1; else killSpawn(g, s);
+      if (s.beh === "tank" && !s.tankSetup) continue;
+      if (s.beh === "boss") {
+        const sy = s.y - g.scroll;
+        if (s.hp > 0 && collisionNodeHit(p.x, p.y, s.x, sy)) {
+          contactBoss.add(s); lethalContact = true;
         }
-      } else if (s.beh === "boss") {
-        if (bossTouch(g, s, touches)) lethal = true;
+        for (const q of s.parts || []) {
+          if (!q.entered) continue;
+          const qp = bossPartPosition(s, q, g.scroll);
+          if (collisionNodeHit(p.x, p.y, qp.x, qp.y)) lethalContact = true;
+        }
+      } else {
+        const overlap = collisionNodeHit(p.x, p.y, s.x, s.y - g.scroll);
+        if (overlap) playerAttribution.add(s);
+        if (s.beh === "mill" && overlap) {
+          contactMill.add(s); lethalContact = true;
+        }
       }
     }
     for (const h of g.hazards) {
-      if (!h.alive || h.pickupT !== undefined) continue;
-      const hy = h.y - g.scroll, spr = sprite(h.file, h.seq[h.apos]);
-      if (!spr || !touches(spr)(h.x, hy)) continue;
-      if (h.kind === "proxfrag") { lethal = true; damageHazard(g, h); }
-      else if (h.kind === "minecore") {
-        // 0x98c4 (+514 i +522): bez stitu +106 = -1 a jadro po 10
-        // snimcich zmizi; se stitem misto toho smart bomba (0x98ec).
-        if (p.shield === 0) { p.shield = -1; h.pickupT = 10; }
-        else { smartBomb(g); releaseHazard(g, h); }
+      if (!h.alive) continue;
+      const overlap = collisionNodeHit(p.x, p.y, h.x, h.y - g.scroll);
+      if (overlap) playerAttribution.add(h);
+      if (h.kind === "proxfrag" && overlap) {
+        contactFrag.add(h); lethalContact = true;
+      } else if (h.kind === "minecore" && !h.consumed && overlap) {
+        contactCore.add(h);
       }
-    }
-    // 0x9306: ochrana +108 nebo stit +106 smrt blokuje.
-    if (lethal && p.inv === 0 && p.shield === 0) {
-      p.alive = false; p.orb = null;                // orb umira s rodicem (+542)
-      p.respawnT = 100;                             // 0x714e
-      spawnPlayerBurst(g, p.x, p.y + g.scroll, p.ang);
-      snd("BIGEXPL.SND", 8000);
     }
   }
 
-  stepSmartBomb(g);
+  /* Sweep VBL N zde pouze zapise pending event word. Zadny callback ani
+     projectile cleanup se pred renderem N nesmi stat. V N+1 jej spotrebuje
+     resume objektu nahore; player bolt az priority0xfffe updater. */
+  for (const k of tokenShotEvents)
+    queueTownCollisionEvent(k, TOWN_EVENT_PLAYER_SHOT);
+  for (const s of bossShotEvents)
+    queueTownCollisionEvent(s, TOWN_EVENT_PLAYER_SHOT);
+  for (const s of spawnShotEvents)
+    queueTownCollisionEvent(s, TOWN_EVENT_PLAYER_SHOT);
+  for (const a of airShotEvents)
+    queueTownCollisionEvent(a, TOWN_EVENT_PLAYER_SHOT);
+  for (const h of hazardShotEvents)
+    queueTownCollisionEvent(h, TOWN_EVENT_PLAYER_SHOT);
+  for (const sh of homingShotEvents)
+    queueTownCollisionEvent(sh, TOWN_EVENT_PLAYER_SHOT);
+
+  for (const k of tokenPickupEvents)
+    queueTownCollisionEvent(k, TOWN_EVENT_PLAYER_CONTACT);
+  for (const h of contactCore)
+    queueTownCollisionEvent(h, TOWN_EVENT_PLAYER_CONTACT);
+  for (const sh of contactShots)
+    queueTownCollisionEvent(sh, TOWN_EVENT_PLAYER_CONTACT);
+  for (const a of contactAir)
+    queueTownCollisionEvent(a, TOWN_EVENT_PLAYER_CONTACT);
+  for (const s of contactBoss)
+    queueTownCollisionEvent(s, TOWN_EVENT_PLAYER_CONTACT);
+  for (const s of contactMill)
+    queueTownCollisionEvent(s, TOWN_EVENT_PLAYER_CONTACT);
+  for (const h of contactFrag)
+    queueTownCollisionEvent(h, TOWN_EVENT_PLAYER_CONTACT);
+
+  // a36a pri smart callbacku pripise body jen kdyz event word z predchoziho
+  // sweepu uz nese player attribution. Priznak se smaze spolu s +506.
+  const smartCredited = new Set([
+    ...spawnShotEvents, ...airShotEvents, ...hazardShotEvents,
+    ...homingShotEvents, ...playerAttribution,
+  ]);
+  for (const o of smartCredited) o.collisionPlayerCredit = true;
+
+  for (const b of consumedBullets) b.collisionConsumed = true;
+
+  if (p.alive && lethalContact &&
+      !((p.bubbleTimer | 0) || (p.inv | 0))) {
+    queueTownCollisionEvent(p, TOWN_EVENT_PLAYER_CONTACT);
+    p.collisionLethal = true;
+  }
 
   for (const bm of g.booms) bm.t++;
   g.booms = g.booms.filter(bm => bm.t < boomLife(bm));
   for (const ef of g.effects) ef.t++;
   g.effects = g.effects.filter(ef => ef.t < ef.life);
+  // Resume jen tasku, ktere existovaly na zacatku VBL; trigger zalozeny
+  // behem collision callbacku zacne svuj wait50 az od pristiho tiku.
+  let pulseDeadline = false;
+  for (let i = 0; i < pulseTaskCountAtStart; i++) {
+    g.smartPulseTasks[i]--;
+    if (g.smartPulseTasks[i] <= 0) pulseDeadline = true;
+  }
+  g.smartPulseTasks = g.smartPulseTasks.filter(t => t > 0);
+  if (pulseDeadline) g.smartPulse = 0;          // SF fp@(169)
+  else if ((g.smartPulse | 0) > 0 && g.smartPulseTasks.length)
+    g.smartPulse = Math.min(...g.smartPulseTasks);
+  if (g.flash > 0) g.flash--;
+  // 0x1db8: az po dokonceni celeho scheduleru; enemy tasky v tomto VBL
+  // tedy cetly obtiznost vypoctenou na konci predchoziho VBL.
+  updateDifficulty(g);
 }
 
 /* ---- kresleni ---- */
@@ -2384,15 +4366,24 @@ function frame(now) {
     (window.innerWidth - 40) / 320, (window.innerHeight - 160) / 256))) * 1.5;
   cv.style.width = (320 * scale) + "px"; cv.style.height = (256 * scale) + "px";
   ctx.imageSmoothingEnabled = false;
-  const top = Math.round(g.scroll);
+  const top = Math.max(0, Math.min(g.mapH - 256, Math.floor(g.scroll)));
   if (!g.mapFrame)
     g.mapFrame = new ImageData(new Uint8ClampedArray(320 * 256 * 4), 320, 256);
-  colorizeIndexedRows(g.mapIndex, 320, state.mapMeta.height,
-                      state.mapMeta.margin, top, 256,
-                      state.copperChecks, g.mapFrame.data);
+  const composed = composeTownBobs(g, top);
+  colorizeIndexedField(composed.index, 320, 256, state.mapMeta.height,
+                       state.mapMeta.margin, top, state.copperChecks,
+                       g.mapFrame.data, g.fadeBlack, g.fadeWhite);
+  const hudPlane = hudPlaneForGame(g);
+  const highColors = updateRetainedHighColors(g);
+  compositeHudPlane(composed.index, 320, g.mapFrame.data, hudPlane.bytes,
+                    g.tick, highColors, !g.hudCopperPrimed);
+  g.hudCopperPrimed = true;
   ctx.putImageData(g.mapFrame, 0, 0);
   const wpc = palAtImgY(top + 128);       // paleta okna pro letce/strely/hrace
 
+  /* Diagnosticka stara Canvas cesta zustava kratce dostupna pro porovnani,
+     ale produkcni snimek pouziva vyhradne globalni indexovou frontu vyse. */
+  if (g.legacyCanvasOverlay) {
   // mapove objekty
   for (const s of g.spawns) {
     if (!s.born || !s.alive) continue;
@@ -2403,13 +4394,13 @@ function frame(now) {
       // z = 32 (0xc7c8) -> stin (+16,+32); pri naletu blika (0xc7fc:
       // kazdy druhy snimek skryty), po zastaveni anim 0xc82e a rotor
       // overlay 0x93e2 (JEEPHELI#5..8, viditelny kazdy druhy snimek)
-      const body = sprite(s.file, s.bodyFr, pc.pal, pc.ci);
-      if (body && (s.st >= 1 || (g.tick & 1) === 0)) {
+      const body = sprite(s.file, s.bodyFrame, pc.pal, pc.ci);
+      if (body && !s.bodyHidden) {
         const sh = shadowOf(body);
         ctx.globalAlpha = 0.45;
         ctx.drawImage(sh.cv, Math.round(s.x + sh.ox + 16), Math.round(sy + sh.oy + 32));
         ctx.globalAlpha = 1;
-        const bimg = s.flashT > 0 ? whiteOf(body) : body;
+        const bimg = s.hitFlash ? whiteOf(body) : body;
         ctx.drawImage(bimg.cv, Math.round(s.x + bimg.ox), Math.round(sy + bimg.oy));
         if (s.st >= 1 && (s.rotorTick & 1) === 0) {
           const rotor = sprite("JEEPHELI.LIN", 5 + (s.rotorTick >> 1), pc.pal, pc.ci);
@@ -2418,22 +4409,26 @@ function frame(now) {
       }
       for (const q of s.parts) {                // z = 33: nad telem
         if (!q.entered) continue;
-        const pr = sprite(s.file, q.pod ? q.animFr : q.frame, pc.pal, pc.ci);
+        const pr = sprite(s.file, q.frame, pc.pal, pc.ci);
         if (!pr) continue;
-        const qy = q.y - top, sh = shadowOf(pr);
+        const qp = bossPartPosition(s, q, top), sh = shadowOf(pr);
         ctx.globalAlpha = 0.45;
-        ctx.drawImage(sh.cv, Math.round(q.x + sh.ox + 16), Math.round(qy + sh.oy + 33));
+        ctx.drawImage(sh.cv, Math.round(qp.x + sh.ox + 16),
+                      Math.round(qp.y + sh.oy + 33));
         ctx.globalAlpha = 1;
-        ctx.drawImage(pr.cv, Math.round(q.x + pr.ox), Math.round(qy + pr.oy));
+        ctx.drawImage(pr.cv, Math.round(qp.x + pr.ox), Math.round(qp.y + pr.oy));
       }
       continue;
     }
     if (s.beh === "tank") {
+      if (!s.tankSetup) continue;
       const hull = sprite(s.file, s.hullF, pc.pal, pc.ci);
       if (hull) ctx.drawImage(hull.cv, Math.round(s.x + hull.ox), Math.round(sy + hull.oy));
-      const tf = 4 + dir16(s.tang);         // vez: frame 4 + 16 smeru (0xa290)
-      const tur = sprite(s.file, Math.min(19, tf), pc.pal, pc.ci);
-      if (tur) ctx.drawImage(tur.cv, Math.round(s.x + tur.ox), Math.round(sy + tur.oy));
+      if (s.turretTask && s.turretTask.alive) {
+        const tf = 4 + dir16(s.tang);       // vez: frame 4 + 16 smeru (0xa290)
+        const tur = sprite(s.file, Math.min(19, tf), pc.pal, pc.ci);
+        if (tur) ctx.drawImage(tur.cv, Math.round(s.x + tur.ox), Math.round(sy + tur.oy));
+      }
       continue;
     }
     let fr = null;
@@ -2455,7 +4450,7 @@ function frame(now) {
       }
     }
     // 0x79d4: MILL base je nad rotorovou vrstvou, ne pod ni.
-    const simg = s.flashT > 0 ? whiteOf(spr) : spr;   // 0x63a4: hit flash
+    const simg = s.hitFlash ? whiteOf(spr) : spr;     // 0x63a4: hit flash
     ctx.drawImage(simg.cv, Math.round(s.x + spr.ox), Math.round(sy + spr.oy));
   }
   // Jednoduche death/debris snimky (MINE#8 po otevreni plaste).
@@ -2479,7 +4474,7 @@ function frame(now) {
                     Math.round(hy + sh.oy + dz));
       ctx.globalAlpha = 1;
     }
-    const himg = h.flashT > 0 ? whiteOf(spr) : spr;
+    const himg = h.hitFlash ? whiteOf(spr) : spr;
     ctx.drawImage(himg.cv, Math.round(h.x + spr.ox), Math.round(hy + spr.oy));
   }
   // YELLOW letci — pod FODDERA, oba typy maji hloubku +328=32
@@ -2505,7 +4500,7 @@ function frame(now) {
     const spr = sprite(file, idx, wpc.pal, wpc.ci);
     if (spr) ctx.drawImage(spr.cv, Math.round(bm.x + spr.ox), Math.round(bm.y - top + spr.oy));
   }
-  // 0x861e: PLOP#0 jeden tik, potom BULLET#2 jeden tik, pak kill.
+  // Legacy manual stav; produkcni same-VBL child zacina rovnou t=1/#2.
   for (const pl of g.plops) {
     const [file, frame] = PLOP_SEQUENCE[pl.t];
     const spr = sprite(file, frame, wpc.pal, wpc.ci);
@@ -2529,21 +4524,18 @@ function frame(now) {
   }
   // bonusy: strida se ikona typu (tabulka 0x97bc) a TOKEN#0, tedy blika
   for (const k of g.tokens) {
-    // behem rozjezdu drzi ikonu typu (0x9710), blika az smycka 0x9764
-    const tk = sprite("TOKEN.LIN", k.blink && tokenLive(k) ? 0 : TOKEN_ICONS[k.typ],
+    const tk = sprite("TOKEN.LIN", k.blink ? 0 : TOKEN_ICONS[k.typ],
                       wpc.pal, wpc.ci);
     if (tk) ctx.drawImage(tk.cv, Math.round(k.x + tk.ox),
                           Math.round(k.y - top + tk.oy));
   }
 
-  // strely: hracovy dart BULLET#14 (0x8b86), granaty BULLET#24+16smeru,
-  // navadene HOMING#smer; granaty maji dynamickou COLOR17-19 paletu
-  // Hracuv BULLET#14 je HW sprite; tato pozice pred fade/HUD a BOLTPAL
-  // zustava jen explicitni aproximace do prepnuti globalni HW vrstvy.
-  const pbY = sprite("BULLET.LIN", 14, BOLTPAL_Y, "boltY");
-  const pbR = sprite("BULLET.LIN", 14, BOLTPAL_R, "boltR");
+  // Diagnosticka legacy vrstva strel. Produkce player/cannon/PLOP sklada
+  // jednou pres drawTownHardwareSprites; HOMING pres indexovou BOB frontu.
   for (const b of g.bullets) {
-    const pb = b.ball ? pbY : pbR;
+    const bf = b.frame ?? 14;
+    const pb = sprite("BULLET.LIN", bf, b.ball ? BOLTPAL_Y : BOLTPAL_R,
+                      (b.ball ? "boltY:" : "boltR:") + bf);
     if (pb) ctx.drawImage(pb.cv, Math.round(b.x + pb.ox), Math.round(b.y + pb.oy));
     else { ctx.fillStyle = "#fff"; ctx.fillRect(b.x - 1, b.y - 4, 2, 6); }
   }
@@ -2554,24 +4546,19 @@ function frame(now) {
     if (eb) ctx.drawImage(eb.cv, Math.round(s.x + eb.ox), Math.round(s.y + eb.oy));
     else { ctx.fillStyle = "#ffd080"; ctx.fillRect(s.x - 2, s.y - 2, 4, 4); }
   }
-  // hrac 0x9410: JEEPHELI#0..4 period 1 (0x945a), z = 32 -> stin (+16,+32)
+  // Diagnosticka Canvas varianta stejneho HELI BOBu 0x945a.
   const p = g.player;
   if (p.alive) {
-    const body = sprite("JEEPHELI.LIN", g.tick % 5, wpc.pal, wpc.ci);
+    const body = sprite("JEEPHELI.LIN",
+                        HELI_SEQUENCE[(p.heliAnimPos | 0) & 7], wpc.pal, wpc.ci);
     if (body) {
       const sh = shadowOf(body);
       ctx.globalAlpha = 0.45;
-      ctx.drawImage(sh.cv, Math.round(p.x + sh.ox + 16), Math.round(p.y + sh.oy + 32));
+      ctx.drawImage(sh.cv, Math.floor(p.x + sh.ox + 16),
+                    Math.floor(p.y + sh.oy + 32));
       ctx.globalAlpha = 1;
-      // 0x92e4: pri ochrane blika hit-flash stylem 8 tiku / 8 tiku
-      const img = p.flash ? whiteOf(body) : body;
-      ctx.drawImage(img.cv, Math.round(p.x + img.ox), Math.round(p.y + img.oy));
-    }
-    // orb stitu 0x98f2: MINE#9/#10 stridave kazdy tik, na pozici rodice,
-    // bez stinu (bit 0), z se jen pohupuje (vz +-2)
-    if (p.orb) {
-      const ob = sprite("MINE.LIN", 9 + (g.tick & 1), wpc.pal, wpc.ci);
-      if (ob) ctx.drawImage(ob.cv, Math.round(p.x + ob.ox), Math.round(p.y + ob.oy));
+      const img = (p.inv & 8) ? whiteOf(body) : body;
+      ctx.drawImage(img.cv, Math.floor(p.x + img.ox), Math.floor(p.y + img.oy));
     }
   }
   // Fade (0x4a48 k cerne / 0x4a40 k bile) meni copper registry COLOR00-15,
@@ -2588,24 +4575,10 @@ function frame(now) {
     ctx.fillStyle = "rgba(255,255,255," + (g.fadeWhite / 256) + ")";
     ctx.fillRect(0, 0, 320, 256);
   }
-
-  // Granaty jsou HW sprity (COLOR17-19). Barvy se neskaluji, ale original
-  // je pri nenulovem black fade vubec nezaradi; soucasna cesta je vedoma
-  // aproximace, dokud se spolu nepresunou BULLET#14/PLOP#1 a bank allocator.
-  for (const s of g.shots) {
-    if (s.kind === "hom") continue;
-    const eb = sprite("BULLET.LIN", cannonFrameFor(s),
-                      cannonPal(g.tick), "cannon:" + (g.tick & 15));
-    if (eb) ctx.drawImage(eb.cv, Math.round(s.x + eb.ox), Math.round(s.y + eb.oy));
-    else { ctx.fillStyle = "#ffd080"; ctx.fillRect(s.x - 2, s.y - 2, 4, 4); }
   }
 
-  // Docasny Canvas vystup uz pouziva presny nativni obsah/anchory; glyphy
-  // a COLOR16..31 se prepnou az s indexovou BOB/HUD kompozici.
-  ctx.fillStyle = "#aab0ff"; ctx.font = "bold 10px monospace";
-  ctx.textAlign = "left"; ctx.fillText(hudStatusText(g), 8, 12);
-  ctx.textAlign = "right"; ctx.fillText("PRESS FIRE", 312, 12);
-  ctx.textAlign = "left";
+  // Nativni pata bitplane uz je v mapFrame: musi zustat pod COLOR17+
+  // hardwarovymi sprity, ktere se skladaji az nize.
   if (g.over) {
     ctx.fillStyle = "rgba(0,0,20,.55)"; ctx.fillRect(0, 100, 320, 56);
     ctx.fillStyle = "#fff"; ctx.font = "bold 16px monospace";
@@ -2613,6 +4586,11 @@ function frame(now) {
     ctx.font = "10px monospace";
     ctx.fillText("reload to play again \u2014 reconstruction", 58, 142);
   }
+
+  // Jediny 0x3d00/0x3d4e pass pro cannon, PLOP#1 a P1 bolt pool:
+  // 64 records, osm channel listu, banky podle channel pair a HW priorita.
+  drawTownHardwareSprites(ctx, g);
+
   requestAnimationFrame(frame);
 }
 
