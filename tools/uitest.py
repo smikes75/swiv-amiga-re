@@ -1203,8 +1203,14 @@ def main():
               const offscreenCost = g.activeCost;
               stepTokens(g, 0);
               const offscreen = { present: g.tokens.includes(burstK),
-                dead: burstK.dead, activeCost: g.activeCost,
+                dead: burstK.dead, retire: !!burstK.retireAfterField,
+                activeCost: g.activeCost,
                 beforeCost: offscreenCost };
+              // 0x6480 pouze invaliduje prave publikovany field. Skutecny
+              // release cost/tasku probiha az pri priority-100 resume N+1.
+              step(g);
+              const offscreenClean = { present: g.tokens.includes(burstK),
+                dead: burstK.dead, activeCost: g.activeCost };
               // Stejna poloha je behem burstu zamerne bounds-imunni.
               g.tokens = [];
               const savedRandom2 = window.random32; window.random32 = () => 0;
@@ -1274,7 +1280,7 @@ def main():
               eff.harmless = p.alive && kk.dead;
               g.smartPulse = 0; g.fadeWhite = 0; // izolace dalsich main-state testu
               return { burstStart, burst31, burst32, active33,
-                       immediate, offscreen,
+                       immediate, offscreen, offscreenClean,
                        burstBounds,
                        cycle, locked, blocked, unlocked, fromGuard, eff };
             }""")
@@ -1300,17 +1306,21 @@ def main():
                    % (token["burst31"], token["burst32"], token["active33"]))
             expect(token["immediate"] == {
                      "typ": 0, "cycles": 11, "cooldown": 4, "dy": -8} and
-                   token["offscreen"]["present"] is False and
-                   token["offscreen"]["dead"] is True and
+                   token["offscreen"]["present"] is True and
+                   token["offscreen"]["dead"] is False and
+                   token["offscreen"]["retire"] is True and
                    token["offscreen"]["activeCost"] ==
-                     token["offscreen"]["beforeCost"] - 5 and
+                     token["offscreen"]["beforeCost"] and
+                   token["offscreenClean"] == {
+                     "present": False, "dead": True,
+                     "activeCost": token["offscreen"]["beforeCost"] - 5} and
                    token["burstBounds"]["present"] is True and
                    token["burstBounds"]["dead"] is False and
                    token["burstBounds"]["activeCost"] ==
                      token["burstBounds"]["beforeCost"],
-                   "TOKEN nema burst bounds imunitu/active cull: %s / %s / %s"
+                   "TOKEN nema burst bounds imunitu/active N/N+1 cull: %s / %s / %s / %s"
                    % (token["immediate"], token["offscreen"],
-                      token["burstBounds"]))
+                      token["offscreenClean"], token["burstBounds"]))
             expect(token["cycle"] == [1, 2, 3, 0, 1],
                    "strela neprepina typ bonusu po 0x9780: %s" % token["cycle"])
             expect(token["locked"] == {"typ": 4, "cooldown": 12} and
@@ -1377,12 +1387,16 @@ def main():
               });
 
               const g = makeGame(true), core = coreAtPlayer(g);
+              const corePose = h => [h.x,
+                Math.round((h.y - g.scroll) * 1e6) / 1e6, h.apos];
               g.hazards = [core]; g.activeCost = 5;
               step(g);                         // VBL N: pending contact bit3
               const queuedPickup = [g.player.bubbleTimer, core.consumed,
                                     core.collisionEventWord | 0];
               step(g);                         // VBL N+1 callback: +106=-1
-              const pickedPose = [core.x, core.y, core.apos];
+              // Consumed task dale dela +367 bit4 compensation. Ve world-y
+              // se tedy posouva s mapou, ale publikovana screen poloha mrzne.
+              const pickedPose = corePose(core);
               const pickup = { alive: g.player.alive,
                 timer: g.player.bubbleTimer, consumed: core.consumed,
                 child: g.player.bubbleBound, activeCost: g.activeCost,
@@ -1396,7 +1410,7 @@ def main():
                 playerAt: firstOrder.findIndex(r => r.id === 'player-main'),
                 coreVisible: firstOrder.some(r =>
                   r.id === 'hazard-minecore-main'),
-                coreFrozen: [core.x, core.y, core.apos], pickedPose,
+                coreFrozen: corePose(core), pickedPose,
                 bubbleKinds: firstOrder.filter(r =>
                   r.id.startsWith('player-bubble')).map(r => r.kind),
                 sfx: g.sfx.events.map(e => e.kind) };
@@ -1424,7 +1438,7 @@ def main():
               for (let i = 0; i < 7; i++) step(g);
               const wait9 = { alive: core.alive, consumed: core.consumed,
                               activeCost: g.activeCost,
-                              frozen: [core.x, core.y, core.apos] };
+                              frozen: corePose(core) };
               step(g);
               const wait10 = { alive: core.alive,
                 present: g.hazards.includes(core), activeCost: g.activeCost };
@@ -2347,6 +2361,698 @@ def main():
                    [True, True, True, False],
                    "resident LUT 0x6610 nebo high-word cull nesedi: %s" %
                    player_exact)
+
+            # Generalizovany 0x6480 last-field kontrakt: cull ve fieldu N
+            # nesmi odstranit BOB/node ani cost. Pending event se na resume
+            # N+1 odbavi pred cleanupem a task uz nesmi udelat dalsi pohyb.
+            last_field_callbacks = page.evaluate("""() => {
+              const live = state.g;
+              const round3 = value => Math.round(value * 1000) / 1000;
+              function makeGame(playerPatch = {}) {
+                const player = Object.assign({
+                  x: 100, y: 100, ang: 17, alive: false, inv: 0,
+                  bubbleTimer: 0, bubbleBound: null, bubbleFrame: 9,
+                  bubbleZ: 0, bubblePhase: 0, bank: 0, cool: 0,
+                  weapon: 2, tokenCount: 0, mode: 0, reload: 11,
+                  respawnT: 0, rank: 0, heliAnimPos: 0,
+                  heliAnimFresh: true, weaponX: 100, weaponY: 100,
+                  bobOrdinal: 0
+                }, playerPatch);
+                return {
+                  mapH: live.mapH, mapW: 320, mapIndex: live.mapIndex,
+                  tick: 0, scroll: 1000, scrollMul: 1,
+                  over: false, won: false, keys: {}, player,
+                  nextBobOrdinal: 2, bullets: [], shots: [], plops: [],
+                  spawns: [], booms: [], effects: [], tokens: [], air: [],
+                  hazards: [], activeCost: 0, score: 0,
+                  nextLife: 10000, lives: 4, players: 1, difficulty: 0,
+                  levelPhase: 0, rngState: 0, rngVhposWord: 0,
+                  rotoDirectionWord: 0, fadeBlack: 0, fadeWhite: 0,
+                  fadeDir: 0, fadeWhiteStep: 0, smartPulse: 0,
+                  smartPulseTasks: [], tokenSfxTasks: [], flash: 0
+                };
+              }
+              const rendered = (g, id) => composeTownBobs(
+                g, Math.floor(g.scroll)).ordered.some(r => r.id === id);
+
+              function homingShotGame(contact) {
+                const g = makeGame(contact
+                  ? { alive: true, x: 4, y: 100, inv: 4 }
+                  : { alive: false });
+                const shot = { kind: 'hom', x: 3, y: 100, ang: 128,
+                  spd: 3, lead: 7, corr: 12, ct: 0,
+                  cost: 5, budgeted: true, dead: false, bobOrdinal: 1 };
+                g.shots = [shot]; g.activeCost = 5;
+                if (!contact)
+                  g.bullets = [{ x: 0, y: 109, vx: 0, vy: -9, frame: 14 }];
+                step(g);                       // N: x 3 -> 0, cull + sweep
+                const field = {
+                  x: round3(shot.x), lead: shot.lead,
+                  retire: !!shot.retireAfterField, dead: !!shot.dead,
+                  event: shot.collisionEventWord | 0,
+                  credited: !!shot.collisionPlayerCredit,
+                  shots: g.shots.length, bullets: g.bullets.length,
+                  cost: g.activeCost, score: g.score,
+                  bob: rendered(g, 'homing-main'),
+                  player: [g.player.alive, g.player.inv]
+                };
+                step(g);                       // N+1: callback, pak cleanup
+                const resumed = {
+                  x: round3(shot.x), lead: shot.lead,
+                  dead: !!shot.dead, event: shot.collisionEventWord | 0,
+                  shots: g.shots.length, bullets: g.bullets.length,
+                  cost: g.activeCost, score: g.score, booms: g.booms.length,
+                  bob: rendered(g, 'homing-main'),
+                  player: [g.player.alive, g.player.inv]
+                };
+                return { field, resumed };
+              }
+
+              // Synteticky stav presne na hranici dvou fieldu umozni
+              // oddelit poradi +367 compensation -> bit3 callback -> kill.
+              const tg = makeGame({ alive: true, inv: 0 });
+              const token = { x: 100, y: 1100, vx: 0, vy: .5,
+                typ: 3, cycles: 12, blink: false, hitCooldown: -1,
+                phase: 'active', interactive: true, activeHalf: 0,
+                dead: false, cost: 5, budgeted: true, bobOrdinal: 1,
+                retireAfterField: true, collisionEventWord: 8 };
+              tg.tokens = [token]; tg.activeCost = 5;
+              const tokenField = {
+                tokens: tg.tokens.length, dead: token.dead,
+                pending: token.collisionEventWord | 0,
+                retire: !!token.retireAfterField, y: token.y,
+                half: token.activeHalf, blink: token.blink,
+                cost: tg.activeCost, bob: rendered(tg, 'token-main')
+              };
+              step(tg);
+              const tokenResumed = {
+                tokens: tg.tokens.length, dead: token.dead,
+                pending: token.collisionEventWord | 0,
+                y: round3(token.y), half: token.activeHalf,
+                blink: token.blink, picked: tg.tokensPickedUp || 0,
+                count: tg.player.tokenCount, inv: tg.player.inv,
+                score: tg.score, cost: tg.activeCost,
+                audio: tg.sfx.events.filter(e => e.kind === 'token-pickup')
+                  .map(e => [e.tick, e.accepted, e.period]),
+                soundTasks: tg.tokenSfxTasks.length,
+                bob: rendered(tg, 'token-main')
+              };
+              return {
+                homingHit: homingShotGame(false),
+                homingContact: homingShotGame(true),
+                token: { field: tokenField, resumed: tokenResumed }
+              };
+            }""")
+            expect(last_field_callbacks["homingHit"] == {
+                     "field": {"x": 0, "lead": 6, "retire": True,
+                       "dead": False, "event": 1, "credited": True,
+                       "shots": 1, "bullets": 1, "cost": 5, "score": 0,
+                       "bob": True, "player": [False, 0]},
+                     "resumed": {"x": 0, "lead": 6, "dead": True,
+                       "event": 0, "shots": 0, "bullets": 0, "cost": 0,
+                       "score": 7, "booms": 1, "bob": False,
+                       "player": [False, 0]}},
+                   "HOMING last field neudrzel N sweep/BOB/cost nebo N+1 callback: %s"
+                   % last_field_callbacks["homingHit"])
+            expect(last_field_callbacks["homingContact"] == {
+                     "field": {"x": 0, "lead": 6, "retire": True,
+                       "dead": False, "event": 8, "credited": True,
+                       "shots": 1, "bullets": 0, "cost": 5, "score": 0,
+                       "bob": True, "player": [True, 3]},
+                     "resumed": {"x": 0, "lead": 6, "dead": True,
+                       "event": 0, "shots": 0, "bullets": 0, "cost": 0,
+                       "score": 7, "booms": 1, "bob": False,
+                       "player": [True, 2]}},
+                   "chranena HELI/HOMING bit3 se neodbavil pred cull cleanupem: %s"
+                   % last_field_callbacks["homingContact"])
+            expect(last_field_callbacks["token"] == {
+                     "field": {"tokens": 1, "dead": False, "pending": 8,
+                       "retire": True, "y": 1100, "half": 0,
+                       "blink": False, "cost": 5, "bob": True},
+                     "resumed": {"tokens": 0, "dead": True, "pending": 0,
+                       "y": 1099.75, "half": 0, "blink": False,
+                       "picked": 1, "count": 1, "inv": 500, "score": 500,
+                       "cost": 0, "audio": [[1, True, 159]],
+                       "soundTasks": 1, "bob": False}},
+                   "TOKEN bit3 efekt/audio nepredbehl cleanup nebo pokracoval v animaci: %s"
+                   % last_field_callbacks["token"])
+
+            # Reprezentativni bounds matrix pro vsechny kontejnery, ktere
+            # pouzivaji 0x6480. Stav N musi zustat vykreslitelny a budgeted;
+            # N+1 smi jen kompenzovat bit4 a uklidit, nikoli pokracovat.
+            last_field_matrix = page.evaluate("""() => {
+              const live = state.g;
+              const round2 = value => Math.round(value * 100) / 100;
+              const makeGame = () => ({
+                mapH: live.mapH, mapW: 320, mapIndex: live.mapIndex,
+                tick: 0, scroll: 1000, scrollMul: 1,
+                over: false, won: false, keys: {},
+                player: { x: 100, y: 100, ang: 17, alive: false, inv: 0,
+                  bubbleTimer: 0, bubbleBound: null, bank: 0, cool: 0,
+                  weapon: 2, tokenCount: 0, mode: 0, reload: 11,
+                  respawnT: 0, rank: 0, heliAnimPos: 0,
+                  heliAnimFresh: true, weaponX: 100, weaponY: 100,
+                  bobOrdinal: 0 },
+                nextBobOrdinal: 2, bullets: [], shots: [], plops: [],
+                spawns: [], booms: [], effects: [], tokens: [], air: [],
+                hazards: [], activeCost: 0, score: 0,
+                nextLife: 10000, lives: 4, players: 1, difficulty: 0,
+                levelPhase: 0, rngState: 0, rngVhposWord: 0,
+                rotoDirectionWord: 0, fadeBlack: 0, fadeWhite: 0,
+                fadeDir: 0, fadeWhiteStep: 0, smartPulse: 0,
+                smartPulseTasks: [], tokenSfxTasks: [], flash: 0
+              });
+              const hasBob = (g, id) => composeTownBobs(
+                g, Math.floor(g.scroll)).ordered.some(r => r.id === id);
+              function pair(g, object, present, bobId, stateOf) {
+                step(g);
+                const field = { present: present(), alive: !!object.alive,
+                  dead: !!object.dead,
+                  retire: !!object.retireAfterField, cost: g.activeCost,
+                  bob: hasBob(g, bobId), state: stateOf() };
+                step(g);
+                const cleanup = { present: present(), alive: !!object.alive,
+                  dead: !!object.dead, cost: g.activeCost,
+                  bob: hasBob(g, bobId), state: stateOf() };
+                return { field, cleanup };
+              }
+
+              const ag = makeGame();
+              const air = { kind: 'bird', x: -63, y: 1100, vx: -1, vy: 0,
+                alive: true, pending: false, dead: false,
+                cost: 10, budgeted: true, hp: 2, scoreValue: 55,
+                seq: [0, 1], per: 4, apos: 0, at: 0,
+                animFresh: false, bobOrdinal: 1 };
+              ag.air = [air]; ag.activeCost = 10;
+              const airLife = pair(ag, air, () => ag.air.includes(air),
+                'air-bird-main', () => [round2(air.x), round2(air.y),
+                                        air.apos, air.at]);
+
+              const pg = makeGame();
+              const prox = { kind: 'proxfrag', file: 'PROXMINE.LIN',
+                x: 1, y: 1100, vx: -1, vy: 0, alive: true, dead: false,
+                cost: 5, budgeted: true, hp: 1, scoreValue: 5,
+                seq: [6, 7], per: 2, apos: 0, at: 0, bobOrdinal: 1 };
+              pg.hazards = [prox]; pg.activeCost = 5;
+              const proxLife = pair(pg, prox,
+                () => pg.hazards.includes(prox), 'hazard-proxfrag-main',
+                () => [round2(prox.x), round2(prox.y), prox.apos, prox.at]);
+
+              const cg = makeGame();
+              const core = { kind: 'minecore', file: 'MINE.LIN',
+                x: -64, y: 1100, vx: 0, vy: 0, scrollLocked: true,
+                alive: true, dead: false, cost: 5, budgeted: true,
+                hp: 10, scoreValue: 30, seq: [9, 10], per: 1,
+                apos: 0, at: 0, consumed: 0, bobOrdinal: 1 };
+              cg.hazards = [core]; cg.activeCost = 5;
+              const coreLife = pair(cg, core,
+                () => cg.hazards.includes(core), 'hazard-minecore-main',
+                () => [round2(core.x), round2(core.y), core.apos, core.at]);
+
+              const fg = makeGame();
+              const flame = { born: true, taskStarted: true, armed: true,
+                alive: true, beh: 'flame', file: 'FLAME.LIN', idx: 0,
+                x: -8, y: 1100, typ: 0, fr: 0, at: 0, anim: null,
+                age: 0, emitterSpawned: false, hp: 3, scoreValue: 40,
+                cost: 10, budgeted: true, bobOrdinal: 1 };
+              fg.spawns = [flame]; fg.activeCost = 10;
+              const flameLife = pair(fg, flame,
+                () => fg.spawns.includes(flame), 'spawn-main',
+                () => [round2(flame.x), round2(flame.y), flame.age, flame.fr]);
+
+              const sg = makeGame();
+              const spawn = { born: true, taskStarted: true, armed: true,
+                alive: true, beh: 'mine', file: 'MINE.LIN', idx: 0,
+                x: -64, y: 1100, typ: 0, fr: 0, at: 0, anim: null,
+                hp: 10, scoreValue: 25, cost: 7, budgeted: true,
+                bobOrdinal: 1 };
+              sg.spawns = [spawn]; sg.activeCost = 7;
+              const spawnLife = pair(sg, spawn,
+                () => sg.spawns.includes(spawn), 'spawn-main',
+                () => [round2(spawn.x), round2(spawn.y), spawn.fr, spawn.at]);
+
+              const kg = makeGame();
+              const token = { x: -64, y: 1100, vx: 0, vy: .5,
+                typ: 0, cycles: 12, blink: false, hitCooldown: -1,
+                phase: 'active', interactive: true, activeHalf: 0,
+                dead: false, cost: 5, budgeted: true, bobOrdinal: 1 };
+              kg.tokens = [token]; kg.activeCost = 5;
+              const tokenLife = pair(kg, token,
+                () => kg.tokens.includes(token), 'token-main',
+                () => [round2(token.x), round2(token.y), token.activeHalf,
+                       token.blink, token.hitCooldown]);
+
+              // ROTO/MILL/GOOSE mohou mit dalsi coroutine praci za waitem.
+              // Flag z N ji musi v N+1 preskocit, vcetne salvy a -4 pohybu.
+              const rg = makeGame();
+              const roto = { born: true, taskStarted: true, armed: true,
+                alive: true, beh: 'roto', file: 'ROTOBASE.LIN', idx: 4,
+                x: -64, y: 1100, typ: 0, fr: 4, at: 0, anim: null,
+                hp: 4, scoreValue: 35, cost: 10, budgeted: true,
+                sd: 1, spin: 4, salvoAngle: 0, t: 50, bobOrdinal: 1 };
+              rg.spawns = [roto]; rg.activeCost = 10;
+              const rotoLife = pair(rg, roto,
+                () => rg.spawns.includes(roto), 'spawn-main',
+                () => [roto.spin, roto.fr, roto.at, roto.t,
+                       rg.shots.length]);
+
+              const mg = makeGame();
+              const mill = { born: true, taskStarted: true, armed: true,
+                alive: true, beh: 'mill', file: 'MILL.LIN', idx: 0,
+                x: -64, y: 1100, typ: 0, fr: 0, at: 0, anim: null,
+                hp: 10, scoreValue: 70, cost: 15, budgeted: true,
+                vy: 0, scrollLocked: true, st: 1, t: 1,
+                rotorTick: 0, rotorFresh: false, bobOrdinal: 1 };
+              mg.spawns = [mill]; mg.activeCost = 15;
+              const millLife = pair(mg, mill,
+                () => mg.spawns.includes(mill), 'mill-main',
+                () => [round2(mill.y), mill.rotorTick, mill.t,
+                       mg.shots.length]);
+
+              const gg = makeGame();
+              const goose = { born: true, taskStarted: true, armed: true,
+                alive: true, beh: 'boss', file: 'GOOSE.LIN', idx: 0,
+                x: 160, y: 940, typ: 0, fr: 0, at: 0, anim: null,
+                hp: 25, scoreValue: 0, cost: 100, budgeted: true,
+                scrollLocked: true, st: 3, vx: 0, vy: -4, timer: 0,
+                bodyFrame: 0, bodyHidden: false, rotorActive: false,
+                rotorTick: 0, unfoldPos: -1, unfoldWait: 0,
+                hitSpread: false, parts: [], assemblyLeft: 0,
+                groupReleased: false, bobOrdinal: 1 };
+              gg.spawns = [goose]; gg.activeCost = 100;
+              const gooseLife = pair(gg, goose,
+                () => gg.spawns.includes(goose), 'boss-main-main',
+                () => [round2(goose.y), goose.st, goose.groupReleased,
+                       gg.shots.length]);
+
+              // PLOP publikuje prvni BULLET#2 uz ve spawn fieldu; margin0
+              // jej pouze oznaci. Burst TOKEN a horizontalni TRAIN cull
+              // naopak zamerne nemaji.
+              const plg = makeGame(); spawnPlop(plg, 0, 100);
+              const plop = plg.plops[0];
+              const plopField = { present: !!plop,
+                retire: !!plop.retireAfterField, dead: !!plop.dead,
+                t: plop.t, cost: plg.activeCost,
+                hw: townHwCandidates(plg).some(r => r.kind === 'plop') };
+              step(plg);
+              const plopCleanup = { present: plg.plops.includes(plop),
+                dead: !!plop.dead, t: plop.t, cost: plg.activeCost,
+                hw: townHwCandidates(plg).some(r => r.kind === 'plop') };
+
+              const bg = makeGame();
+              const burst = { x: -100, y: 1100, vx: -1, vy: 0,
+                typ: 3, cycles: 12, blink: false, hitCooldown: 0,
+                burst: 5, phase: 'burst', interactive: false,
+                activeHalf: 0, dead: false, cost: 5, budgeted: true,
+                bobOrdinal: 1 };
+              bg.tokens = [burst]; bg.activeCost = 5;
+              step(bg); const burst1 = [round2(burst.x), round2(burst.y),
+                burst.burst, !!burst.retireAfterField, burst.dead,
+                bg.activeCost];
+              step(bg); const burst2 = [round2(burst.x), round2(burst.y),
+                burst.burst, !!burst.retireAfterField, burst.dead,
+                bg.activeCost];
+
+              const trg = makeGame();
+              const train = { born: true, taskStarted: true, armed: true,
+                alive: true, beh: 'train', file: 'TRAIN.LIN', idx: 0,
+                x: -100, y: 1100, vx: -1, vxRaw: -65536,
+                typ: 0, fr: 0, at: 0, anim: null, hp: 10,
+                scoreValue: 75, cost: 15, budgeted: true, bobOrdinal: 1 };
+              trg.spawns = [train]; trg.activeCost = 15;
+              step(trg); const train1 = [round2(train.x), train.alive,
+                !!train.retireAfterField, trg.activeCost];
+              step(trg); const train2 = [round2(train.x), train.alive,
+                !!train.retireAfterField, trg.activeCost];
+
+              return { lifecycle: { air: airLife, prox: proxLife,
+                core: coreLife, flame: flameLife, spawn: spawnLife,
+                token: tokenLife, roto: rotoLife, mill: millLife,
+                goose: gooseLife },
+                plop: { field: plopField, cleanup: plopCleanup },
+                negative: { burst1, burst2, train1, train2 } };
+            }""")
+            lifecycle_costs = {"air": 10, "prox": 5, "core": 5,
+                               "flame": 10, "spawn": 7, "token": 5,
+                               "roto": 10, "mill": 15, "goose": 100}
+            for name, cost in lifecycle_costs.items():
+                life = last_field_matrix["lifecycle"][name]
+                expect(life["field"]["present"] is True and
+                       (name == "token" or life["field"]["alive"] is True) and
+                       life["field"]["dead"] is False and
+                       life["field"]["retire"] is True and
+                       life["field"]["cost"] == cost and
+                       life["field"]["bob"] is True and
+                       life["cleanup"]["alive"] is False and
+                       life["cleanup"]["cost"] == 0 and
+                       life["cleanup"]["bob"] is False,
+                       "%s nema last-field alive/render/cost -> cleanup: %s"
+                       % (name, life))
+            expected_states = {
+                "air": [[-64, 1099.75, 0, 1], [-64, 1099.5, 0, 1]],
+                "prox": [[0, 1100, 0, 1], [0, 1100, 0, 1]],
+                "core": [[-64, 1099.75, 1, 0], [-64, 1099.5, 1, 0]],
+                "flame": [[-8, 1100, 1, 0], [-8, 1100, 1, 0]],
+                "spawn": [[-64, 1100, 0, 1], [-64, 1100, 0, 1]],
+                "token": [[-64, 1100.25, 1, False, -2],
+                          [-64, 1100, 1, False, -2]],
+                "roto": [[4, 4, 1, 49, 0], [4, 4, 1, 49, 0]],
+                "mill": [[1099.75, 1, 1, 0], [1099.5, 1, 1, 0]],
+                "goose": [[935.75, 3, False, 0],
+                          [935.5, 3, True, 0]],
+            }
+            for name, states in expected_states.items():
+                life = last_field_matrix["lifecycle"][name]
+                expect([life["field"]["state"], life["cleanup"]["state"]]
+                       == states,
+                       "%s pokracoval po invalidaci nebo nema bit4 poradi: %s"
+                       % (name, life))
+            expect(last_field_matrix["plop"] == {
+                     "field": {"present": True, "retire": True,
+                       "dead": False, "t": 1, "cost": 1, "hw": True},
+                     "cleanup": {"present": False, "dead": True,
+                       "t": 1, "cost": 0, "hw": False}},
+                   "PLOP margin0 nema prvni HW field a resume cleanup: %s"
+                   % last_field_matrix["plop"])
+            expect(last_field_matrix["negative"] == {
+                     "burst1": [-101, 1099.75, 4, False, False, 5],
+                     "burst2": [-102, 1099.5, 3, False, False, 5],
+                     "train1": [-101, True, False, 15],
+                     "train2": [-102, True, False, 15]},
+                   "TOKEN burst nebo TRAIN dostal zakazany bounds cull: %s"
+                   % last_field_matrix["negative"])
+
+            # Child zalozeny az v continuation mapoveho/hazard tasku je v
+            # nativnim priority-100 FIFO stale splatny jeste v temze VBL.
+            # Musi proto stihnout prvni motion/anim/0x6480 i publikaci; pri
+            # cullu jej az nasledujici resume uklidi bez druheho pohybu.
+            fresh_hazard_fields = page.evaluate("""() => {
+              const live = state.g;
+              const round6 = value => Math.round(value * 1000000) / 1000000;
+              const makeGame = (player = null) => ({
+                mapH: live.mapH, mapW: 320, mapIndex: live.mapIndex,
+                tick: 0, scroll: 1000, scrollMul: 1,
+                over: false, won: false, keys: {},
+                player: player || { x: 160, y: 192, ang: 17, alive: false,
+                  inv: 0, bubbleTimer: 0, bubbleBound: null, bank: 0,
+                  cool: 0, weapon: 2, tokenCount: 0, mode: 0, reload: 11,
+                  respawnT: 0, rank: 0, heliAnimPos: 0,
+                  heliAnimFresh: true, weaponX: 160, weaponY: 192,
+                  bobOrdinal: 0 },
+                nextBobOrdinal: 2, bullets: [], shots: [], plops: [],
+                spawns: [], booms: [], effects: [], tokens: [], air: [],
+                hazards: [], activeCost: 0, score: 0,
+                nextLife: 10000, lives: 4, players: 1, difficulty: 1,
+                levelPhase: 0, rngState: 0, rngVhposWord: 0,
+                rotoDirectionWord: 0, fadeBlack: 0, fadeWhite: 0,
+                fadeDir: 0, fadeWhiteStep: 0, smartPulse: 0,
+                smartPulseTasks: [], tokenSfxTasks: [], flash: 0
+              });
+              const bobCount = (g, id) => composeTownBobs(
+                g, Math.floor(g.scroll)).ordered.filter(r => r.id === id).length;
+
+              // PROXMINE parent detonuje az ve sve mapove continuation.
+              // Strepy tedy pri vstupu do step() jeste v hazards[] nejsou.
+              const pg = makeGame({ x: 100, y: 100, ang: 17, alive: true,
+                inv: 1000, bubbleTimer: 0, bubbleBound: null, bank: 0,
+                cool: 0, weapon: 2, tokenCount: 0, mode: 0, reload: 11,
+                respawnT: 0, rank: 0, heliAnimPos: 0,
+                heliAnimFresh: true, weaponX: 100, weaponY: 100,
+                bobOrdinal: 0 });
+              const proxParent = { born: true, taskStarted: true, armed: true,
+                alive: true, beh: 'proxmine', file: 'PROXMINE.LIN', idx: 0,
+                x: 0, y: 1100, typ: 0, fr: 5, at: 0, anim: null,
+                hp: 4, scoreValue: 30, cost: 10, budgeted: true,
+                st: 2, t: 1, bobOrdinal: 1 };
+              pg.spawns = [proxParent]; pg.activeCost = 10;
+              step(pg);
+              const fragments = pg.hazards.filter(h => h.kind === 'proxfrag');
+              const culled = fragments.filter(h => h.retireAfterField);
+              const frag = culled[0];
+              const proxField = {
+                parentAlive: proxParent.alive, count: fragments.length,
+                retired: culled.length, cost: pg.activeCost,
+                bob: bobCount(pg, 'hazard-proxfrag-main'),
+                selected: frag && {
+                  pos: [round6(frag.x), round6(frag.y)],
+                  moved: [round6(frag.x - proxParent.x),
+                          round6(frag.y - proxParent.y)],
+                  velocity: [round6(frag.vx), round6(frag.vy)],
+                  apos: frag.apos, at: frag.at, alive: frag.alive,
+                  dead: frag.dead, retire: !!frag.retireAfterField,
+                  present: pg.hazards.includes(frag)
+                }
+              };
+              const proxFrozen = frag && [round6(frag.x), round6(frag.y)];
+              step(pg);
+              const proxCleanup = {
+                alive: frag && frag.alive, dead: frag && frag.dead,
+                present: frag && pg.hazards.includes(frag),
+                pos: frag && [round6(frag.x), round6(frag.y)],
+                frozen: proxFrozen, cost: pg.activeCost,
+                remaining: pg.hazards.filter(h => h.kind === 'proxfrag').length
+              };
+
+              // FLAME parent pripoji emitter na age=24. I tento pozdne
+              // zalozeny child musi v N snizit t, tiknout anim a cullnout.
+              const eg = makeGame();
+              const flame = { born: true, taskStarted: true, armed: true,
+                alive: true, beh: 'flame', file: 'FLAME.LIN', idx: 0,
+                x: -76, y: 1100, typ: 0, fr: 3, at: 0, anim: null,
+                age: 23, emitterSpawned: false, hp: 3, scoreValue: 40,
+                cost: 10, budgeted: true, bobOrdinal: 1 };
+              eg.spawns = [flame]; eg.activeCost = 10;
+              step(eg);
+              const emitter = eg.hazards.find(h => h.kind === 'flameEmitter');
+              const emitterField = {
+                count: eg.hazards.length, parentRetire: !!flame.retireAfterField,
+                x: emitter && round6(emitter.x), y: emitter && round6(emitter.y),
+                t: emitter && emitter.t, apos: emitter && emitter.apos,
+                at: emitter && emitter.at, alive: emitter && emitter.alive,
+                dead: emitter && emitter.dead,
+                retire: emitter && !!emitter.retireAfterField,
+                cost: eg.activeCost,
+                bob: bobCount(eg, 'hazard-flameEmitter-main')
+              };
+              const emitterFrozen = emitter &&
+                [round6(emitter.x), round6(emitter.y), emitter.t,
+                 emitter.apos, emitter.at];
+              step(eg);
+              const emitterCleanup = {
+                alive: emitter && emitter.alive, dead: emitter && emitter.dead,
+                present: emitter && eg.hazards.includes(emitter),
+                state: emitter && [round6(emitter.x), round6(emitter.y),
+                  emitter.t, emitter.apos, emitter.at],
+                frozen: emitterFrozen, cost: eg.activeCost,
+                bob: bobCount(eg, 'hazard-flameEmitter-main')
+              };
+
+              // Puff vznika uvnitr prvniho fieldu existujiciho emitteru;
+              // dynamicky pripojeny task tedy potrebuje stejny FIFO dobeh.
+              const fg = makeGame();
+              const flameParent = { alive: true, x: -79, y: 1100 };
+              spawnFlameEmitter(fg, flameParent);
+              const sourceEmitter = fg.hazards[0];
+              sourceEmitter.t = 1;
+              step(fg);
+              const puff = fg.hazards.find(h => h.kind === 'flamePuff');
+              const puffField = {
+                count: fg.hazards.length,
+                emitterRetire: !!sourceEmitter.retireAfterField,
+                x: puff && round6(puff.x), y: puff && round6(puff.y),
+                life: puff && puff.life, apos: puff && puff.apos,
+                at: puff && puff.at, alive: puff && puff.alive,
+                dead: puff && puff.dead, retire: puff && !!puff.retireAfterField,
+                cost: fg.activeCost,
+                bob: bobCount(fg, 'hazard-flamePuff-main')
+              };
+              const puffFrozen = puff &&
+                [round6(puff.x), round6(puff.y), puff.life, puff.apos, puff.at];
+              step(fg);
+              const puffCleanup = {
+                alive: puff && puff.alive, dead: puff && puff.dead,
+                present: puff && fg.hazards.includes(puff),
+                state: puff && [round6(puff.x), round6(puff.y),
+                  puff.life, puff.apos, puff.at],
+                frozen: puffFrozen, cost: fg.activeCost,
+                bob: bobCount(fg, 'hazard-flamePuff-main')
+              };
+
+              // Wait35 konci navratem po poslednim publikovanem fieldu.
+              // life=1 proto jeste provede pohyb/anim N a teprve resume
+              // N+1 uvolni task; nesmi vzniknout o pole kratsi plamen.
+              const xg = makeGame();
+              const expiringPuff = { kind: 'flamePuff', file: 'FLAME.LIN',
+                x: 100, y: 1100, vx: 2.5, vy: 0,
+                alive: true, dead: false, cost: 10, budgeted: true,
+                hp: 0, scoreValue: 0, seq: [5, 6, 7, 8, 9, 10, 11],
+                per: 5, apos: 0, at: 0, animFresh: false, life: 1,
+                bobOrdinal: 1 };
+              xg.hazards = [expiringPuff]; xg.activeCost = 10;
+              step(xg);
+              const expiryField = {
+                x: round6(expiringPuff.x), life: expiringPuff.life,
+                apos: expiringPuff.apos, at: expiringPuff.at,
+                alive: expiringPuff.alive, dead: expiringPuff.dead,
+                retire: !!expiringPuff.retireAfterField,
+                present: xg.hazards.includes(expiringPuff),
+                cost: xg.activeCost,
+                bob: bobCount(xg, 'hazard-flamePuff-main')
+              };
+              const expiryFrozen = [round6(expiringPuff.x),
+                expiringPuff.life, expiringPuff.apos, expiringPuff.at];
+              step(xg);
+              const expiryCleanup = {
+                x: round6(expiringPuff.x), life: expiringPuff.life,
+                apos: expiringPuff.apos, at: expiringPuff.at,
+                frozen: expiryFrozen,
+                alive: expiringPuff.alive, dead: expiringPuff.dead,
+                present: xg.hazards.includes(expiringPuff),
+                cost: xg.activeCost,
+                bob: bobCount(xg, 'hazard-flamePuff-main')
+              };
+
+              // TRAIN vagony jsou take zalozeny az aktivacni continuation;
+              // horizontalni cull nemaji, ale prvni +vx field musi byt N.
+              const tg = makeGame();
+              const train = { born: false, taskStarted: true, armed: true,
+                alive: true, beh: 'train', file: 'TRAIN.LIN', idx: 0,
+                x: 0, y: 1100, typ: 2, fr: -1, at: 0, anim: null };
+              tg.spawns = [train];
+              step(tg);
+              const trainField = {
+                parentX: round6(train.x),
+                cars: tg.hazards.map(h => round6(h.x)),
+                cost: tg.activeCost, bob: bobCount(tg, 'hazard-traincar-main')
+              };
+              step(tg);
+              const trainNext = {
+                parentX: round6(train.x),
+                cars: tg.hazards.map(h => round6(h.x)),
+                cost: tg.activeCost, bob: bobCount(tg, 'hazard-traincar-main')
+              };
+
+              // Dolni TRAIN exit se testuje az pri resume z predchoziho
+              // 0x62d2. Field N na sy=272 tedy zustane publikovany a cost
+              // se uvolni v N+1 drive, nez by vagon provedl dalsi x += vx.
+              const bg = makeGame();
+              const trainParent = { alive: true, vx: 1, vxRaw: 65536 };
+              const boundaryCar = { kind: 'traincar', file: 'TRAIN.LIN',
+                frame: 1, x: 100, y: 1271.75, vx: 1, vxRaw: 65536,
+                parent: trainParent, alive: true, dead: false,
+                cost: 15, budgeted: true, hp: 2, scoreValue: 50,
+                seq: [1], per: 1, apos: 0, at: 0, animFresh: false,
+                bobOrdinal: 1 };
+              bg.hazards = [boundaryCar]; bg.activeCost = 15;
+              step(bg);
+              const trainBoundaryField = {
+                x: round6(boundaryCar.x),
+                sy: round6(boundaryCar.y - bg.scroll),
+                alive: boundaryCar.alive, dead: boundaryCar.dead,
+                retire: !!boundaryCar.retireAfterField,
+                present: bg.hazards.includes(boundaryCar),
+                cost: bg.activeCost,
+                bob: bobCount(bg, 'hazard-traincar-main')
+              };
+              const trainBoundaryFrozenX = round6(boundaryCar.x);
+              step(bg);
+              const trainBoundaryCleanup = {
+                x: round6(boundaryCar.x), frozenX: trainBoundaryFrozenX,
+                alive: boundaryCar.alive, dead: boundaryCar.dead,
+                present: bg.hazards.includes(boundaryCar),
+                cost: bg.activeCost,
+                bob: bobCount(bg, 'hazard-traincar-main')
+              };
+
+              return {
+                prox: { field: proxField, cleanup: proxCleanup },
+                emitter: { field: emitterField, cleanup: emitterCleanup },
+                puff: { field: puffField, cleanup: puffCleanup },
+                puffExpiry: { field: expiryField, cleanup: expiryCleanup },
+                train: { field: trainField, next: trainNext },
+                trainBoundary: { field: trainBoundaryField,
+                                 cleanup: trainBoundaryCleanup }
+              };
+            }""")
+            prox_fresh = fresh_hazard_fields["prox"]
+            expect(prox_fresh["field"]["parentAlive"] is False and
+                   prox_fresh["field"]["count"] == 6 and
+                   prox_fresh["field"]["retired"] > 0 and
+                   prox_fresh["field"]["cost"] == 30 and
+                   prox_fresh["field"]["bob"] == 6 and
+                   prox_fresh["field"]["selected"]["moved"] ==
+                   prox_fresh["field"]["selected"]["velocity"] and
+                   prox_fresh["field"]["selected"]["apos"] == 0 and
+                   prox_fresh["field"]["selected"]["at"] == 0 and
+                   prox_fresh["field"]["selected"]["alive"] is True and
+                   prox_fresh["field"]["selected"]["dead"] is False and
+                   prox_fresh["field"]["selected"]["retire"] is True and
+                   prox_fresh["field"]["selected"]["present"] is True,
+                   "fresh PROXMINE child nema prvni same-VBL field: %s" %
+                   prox_fresh)
+            expect(prox_fresh["cleanup"]["alive"] is False and
+                   prox_fresh["cleanup"]["dead"] is True and
+                   prox_fresh["cleanup"]["present"] is False and
+                   prox_fresh["cleanup"]["pos"] ==
+                   prox_fresh["cleanup"]["frozen"] and
+                   prox_fresh["cleanup"]["remaining"] ==
+                   6 - prox_fresh["field"]["retired"] and
+                   prox_fresh["cleanup"]["cost"] ==
+                   5 * prox_fresh["cleanup"]["remaining"],
+                   "fresh PROXMINE cull nema N+1 cleanup bez pohybu: %s" %
+                   prox_fresh)
+
+            expect(fresh_hazard_fields["emitter"] == {
+                     "field": {"count": 1, "parentRetire": True,
+                       "x": -64, "y": 1100, "t": 99, "apos": 0,
+                       "at": 0, "alive": True, "dead": False,
+                       "retire": True, "cost": 11, "bob": 1},
+                     "cleanup": {"alive": False, "dead": True,
+                       "present": False,
+                       "state": [-64, 1100, 99, 0, 0],
+                       "frozen": [-64, 1100, 99, 0, 0],
+                       "cost": 0, "bob": 0}},
+                   "fresh FLAME emitter nema N field -> N+1 cleanup: %s" %
+                   fresh_hazard_fields["emitter"])
+            expect(fresh_hazard_fields["puff"] == {
+                     "field": {"count": 2, "emitterRetire": True,
+                       "x": -64.5, "y": 1100, "life": 34, "apos": 0,
+                       "at": 0, "alive": True, "dead": False,
+                       "retire": True, "cost": 11, "bob": 1},
+                     "cleanup": {"alive": False, "dead": True,
+                       "present": False,
+                       "state": [-64.5, 1100, 34, 0, 0],
+                       "frozen": [-64.5, 1100, 34, 0, 0],
+                       "cost": 0, "bob": 0}},
+                   "fresh FLAME puff nema N field -> N+1 cleanup: %s" %
+                   fresh_hazard_fields["puff"])
+            expect(fresh_hazard_fields["puffExpiry"] == {
+                     "field": {"x": 102.5, "life": 0, "apos": 0,
+                       "at": 1, "alive": True, "dead": False,
+                       "retire": True, "present": True,
+                       "cost": 10, "bob": 1},
+                     "cleanup": {"x": 102.5, "life": 0, "apos": 0,
+                       "at": 1, "frozen": [102.5, 0, 0, 1],
+                       "alive": False, "dead": True, "present": False,
+                       "cost": 0, "bob": 0}},
+                   "FLAME puff life=1 nema posledni N field/N+1 cleanup: %s"
+                   % fresh_hazard_fields["puffExpiry"])
+            expect(fresh_hazard_fields["train"] == {
+                     "field": {"parentX": -47, "cars": [-94, -141],
+                       "cost": 45, "bob": 2},
+                     "next": {"parentX": -46, "cars": [-93, -140],
+                       "cost": 45, "bob": 2}},
+                   "fresh TRAIN vagony vynechaly aktivacni same-VBL pohyb: %s"
+                   % fresh_hazard_fields["train"])
+            expect(fresh_hazard_fields["trainBoundary"] == {
+                     "field": {"x": 101, "sy": 272, "alive": True,
+                       "dead": False, "retire": True, "present": True,
+                       "cost": 15, "bob": 1},
+                     "cleanup": {"x": 101, "frozenX": 101,
+                       "alive": False, "dead": True, "present": False,
+                       "cost": 0, "bob": 0}},
+                   "TRAIN sy=272 nema posledni N field a N+1 frozen cleanup: %s"
+                   % fresh_hazard_fields["trainBoundary"])
 
             summary = page.evaluate("""() => ({
               dispatch: state.behaviorDispatch.size,

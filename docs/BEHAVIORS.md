@@ -13,6 +13,23 @@ tick. A terrain-checked mover exists at `0x9322`: velocity ×2 is
 added, a background-collision probe runs, and the move is undone on
 hit (used by ground vehicles).
 
+### Vstupni margin neni cull margin
+
+`a2c6` d2 urcuje pouze obrazovkovy prah aktivace. Nezapisuje se do `+364`:
+alokace objektu tam nezavisle dava vychozi cull margin −64. FLAME parent jej
+meni na −8; cannon, HOMING, PLOP a PROXMINE strepy na 0. TOKEN ma `+538`
+behem radialniho burstu vypnuty a v aktivni fazi znovu pouziva −64. GOOSE
+parent zapina cull jen pri escape a vsechny jeho children jej maji vypnuty.
+TRAIN generic cull nepouziva; `screenY >= 272` je primy terminator korutiny,
+nikoli callback `0x6480`. Test ale lezi az za navratem z `0x62d2`, takze
+prave publikovany field zustane a terminator se provede pri dalsim resume.
+
+Pri obycejnem `0x6480` cullu VBL N provede pohyb, zneplatni task a presto jej
+jeste publikuje/renderuje i collision-sweepuje. Pri resume N+1 dobehne bit4
+scroll compensation, clear hit flash, orphan, SMART a event callbacky a az
+potom se zaznam a cost uklidi. Tento kontrakt plati pro generalizovane
+air/hazard/spawn/TOKEN nody stejne jako pro margin-0 pomocne objekty.
+
 ## FODDERA — the air wave (`0x8008` spawner, `0x8066` member)
 
 The wave generator we previously guessed is real, and works like
@@ -213,6 +230,8 @@ kde `n=(tick&255)<128 ? tick&255 : 255-(tick&255)`.
   ma 1 HP/5 bodu/cost5 a pouziva bud sekvenci #6..11 period2, nebo
   #12..15 period3. Kazdy child bez noveho RNG testuje bit31 aktualniho
   globalniho seedu; vsech sest cost5 tasku je bez 160-guardu
+- nove children se jeste v creation VBL pohnou, publikuji prvni animacni
+  snimek a vyhodnoti margin-0 cull; pripadny cleanup prijde az pri N+1 resume
 - bolt strepu spusti default damage/5 bodu; kontakt s HELI ma vlastni
   `+514=0x6db4` a strepu pouze odstrani bez bodu, exploze a zvuku
 - zniceni parenta ctyrmi bolty je bez proximity salvy a da 30 bodu
@@ -225,8 +244,11 @@ kde `n=(tick&255)<128 ? tick&255 : 255-(tick&255)`.
 - vagony jsou po 48 px za predkem, nahodne `TRAIN#1/#2`, kazdy
   2 HP/50 bodu/cost15; bit14 SET znamena #1, clear #2. Lokomotiva i
   vagony se uctuji bez 160-guardu; po ztrate parentu zpomaluji `vx*=15/16`
-- horizontalni offscreen se zamerne neculluje; souprava konci pri
-  `screenY>=272`. Osiřely vagon kazdy VBL zpomaluje signed 16.16 operaci
+- creation FIFO odvozuje kazdy dalsi vagon az od uz pohnuteho predchudce;
+  pri levem vjezdu je prvni field lokomotiva `x=-47`, vagony `-94,-141,…`
+- horizontalni offscreen se zamerne neculluje; souprava konci primym
+  coroutine testem `screenY>=272`, nikoli deferred `0x6480` callbackem.
+  Osiřely vagon kazdy VBL zpomaluje signed 16.16 operaci
   `rawVx -= rawVx>>4`; zlomky shozené aritmetickym shiftem se neuchovavaji
 
 ### MILL (0x0058 → 0x79d4)
@@ -247,7 +269,9 @@ kde `n=(tick&255)<128 ? tick&255 : 255-(tick&255)`.
   `12,13,12,14,12,13,14,13,12,13,12,13,14,13`
 - po 100 lok. ticich a potom kazdych 100 vypusti unlinked puff;
   ten leti doprava 2.5 px/t, animuje #5..11 period5 a po 35 ticich
-  (87.5 px) zanika
+  (87.5 px) zanika; 35. field se jeste publikuje, cleanup prijde v N+1
+- emitter i puff dostanou prvni pohyb/animacni publikaci uz v creation VBL;
+  `0x6c88` v nem ukaze `seq[0]` a plnou periodu pocita az od dalsiho resume
 - smrt parentu ukonci linked emitter, uz vypustene puffy dojedou
 - parent, emitter cost1 i kazdy puff cost10 vznikaji bez 160-guardu
 
@@ -393,7 +417,7 @@ uroven primo a hned ji zase smazou (`0xc12e` = 64 pri zasahu bosse)
 ### TOWN boss GOOSE (dispatch `0x0017` → `0xc78a`)
 
 - **rodic je nosic**: pin TOKEN.LIN (`0xc78e`),
-  `a2c6(GOOSE#0, coll 0, margin 0, hp 0, body 0, cost 100)` a `st +534`
+  `a2c6(GOOSE#0, coll 0, vstupni margin 0, hp 0, body 0, cost 100)` a `st +534`
   (imunita vuci smart bombe). Behem naletu nema HP ani kolizi
 - flag bit 4 (`0xc7b6`) odpoji scroll; `0xc7bc` prenese objekt na
   `x = 160` a `mapY += 288`, takze naleti **zespodu** rychlosti
@@ -467,7 +491,7 @@ uroven primo a hned ji zase smazou (`0xc12e` = 64 pri zasahu bosse)
 
 TOKEN neni v dispatchi — zaklada ho kod, v TOWN jedine boss.
 
-- `a2c6(TOKEN#0, coll 32, margin −16, hp 0, body 0, cost 5)`, flag bity
+- `a2c6(TOKEN#0, coll 32, vstupni margin −16, hp 0, body 0, cost 5)`, flag bity
   0 a 4, `st +534` (imunni vuci smart bombe), `st +538` (bez cullu);
   cost5 se uctuje bez 160-guardu
 - **rozjezd**: po a2c6 vypne sebrani i zasah (`0x65a4`, `0x658a`), rodi

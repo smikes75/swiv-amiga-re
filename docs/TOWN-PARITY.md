@@ -29,7 +29,7 @@ specialni audio call-sites.
 | P1 | poradi kresleni | jedna unsigned depth fronta podle `0x481a`, vcetne child ordinalu, equal-z stability a specialnich BOB operaci | regrese sklada prekryvajici se realne `.LIN` snimky a hlida poradi/hash | proti originalu zbyva checkpoint capture slozitych krizeni |
 | P1 | stiny | indexovy subtractive shadow s projekci `(x+z/2,y+z)` a skutecnym per-object z | `0x6364..0x638c`; zadna RGBA alpha aproximace v produkcni ceste | proti originalu zbyva checkpoint capture |
 | P2 | animace TOWN | podporovane TOWN tasky maji adresove overene sekvence, periody i resume hranice | tabulka nize a `tools/uitest.py` | rozsirit pouze pri nalezu nove odchylky z originalniho capture |
-| P3 | zbyvajici chovani | 155/155 hlavnich rout; GOOSE/TOKEN/core/HOMING/POPUP, terrain-mask respawn, dynamic difficulty, cost accounting a N+1 collision hranice jsou prepsane | map reader nema per-record yield; zbyva obecne prokladani priority100 continuation bodu, last-field cull beznych nodu a GOOSE per-child orphan resume | pending event masky, callbacky a spawn/RNG interleaving sedi s nativnim schedulerem |
+| P3 | zbyvajici chovani | 155/155 hlavnich rout; GOOSE/TOKEN/core/HOMING/POPUP, terrain-mask respawn, dynamic difficulty, cost accounting, N+1 collision hranice a generalized ordinary last-field cull jsou prepsane | map reader nema per-record yield; zbyva plne priority100 FIFO, SMART/event arbitration pres invalidaci, GOOSE per-child orphan/explosion poradi, TOKEN sound child FIFO a GOOSE/TRAIN checksum cost-delay tails | pending event masky, callbacky a spawn/RNG interleaving sedi s nativnim schedulerem |
 | P4 | hudba a zvuk | bezi 4voice Paula/CIAB model; hlavni TOWN bojove efekty, `SMART.SND`, bound MINE shield, TOKEN pickup i GOOSE hit/death jsou napojene a collision zvuky respektuji N+1 | chybi zbyvajici special/player-transition call-sites a taskove FIFO poradi TOKEN/GOOSE explosion child efektu; viz [SOUND](SOUND.md) | cely TOWN od startu po bosse ma vsechny efekty, priority a RNG poradi z originalu; gameplay hudba je zdrojove ticho |
 
 ### Stav zakladu rendereru (2026-08-29)
@@ -98,6 +98,26 @@ TOWN jeste neni zvukove uzavren: zbyvajici special/player-transition
 call-sites (zejmena extra-life `0x5600`) zustavaji otevrene. Collision-driven
 zvuky uz zacinaji az s prislusnym callbackem v N+1. Samostatna gameplay hudba se
 nedoplnuje, protoze original po titulku modul uvolnil a ve hre pouziva efekty.
+
+### Stav last-field lifecycle (2026-08-31)
+
+`a2c6` d2 je vstupni/activation margin, nikoli cull `+364`; ten alokator
+inicializuje samostatne na −64. FLAME parent pouziva −8,
+cannon/HOMING/PLOP/PROXMINE fragment 0, aktivni TOKEN −64 (burst ma cull
+vypnuty), GOOSE parent zapina cull jen pri escape a jeho children jej maji
+vypnuty. TRAIN konci primym testem `screenY >= 272`, ne callbackem `0x6480`;
+test je ale az za navratem z posledniho publikovaneho `0x62d2` fieldu.
+
+Producing VBL N provede pohyb a cull invalidaci, ale jeste publikuje a
+collision-sweepuje posledni field. Resume N+1 zachovava poradi bit4 scroll
+compensation, clear flash, orphan, SMART a event callbacku a az potom uvolni
+zaznam i cost. Fresh PROXMINE/FLAME/TRAIN children pritom dostanou prvni
+movement a `seq[0]` animacni publikaci uz v creation VBL; generic-cull childy
+v nem vyhodnoti i bounds, TRAIN az na dalsim resume.
+Generalized ordinary last-field mezera je uzavrena regresi;
+otevrene zustava plne priority100 FIFO, presna SMART/event arbitration pres
+invalidovanou generaci, GOOSE child orphan/explosion tasky, TOKEN sound child
+FIFO a checksum cost-delay tails GOOSE parentu a TRAIN lokomotivy.
 
 ## Audit animaci TOWN
 

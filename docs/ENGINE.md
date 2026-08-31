@@ -14,7 +14,7 @@ yield. Skutecny cooperative yield vede pres `0x5f0a` na
 
 | routine | meaning |
 |---|---|
-| `0x62d2` | movement, cull a publikace BOB/collision node, pak `0x5f0a` yield; po resume scroll/flash/orphan/smart/event housekeeping (inherits parent via `+308`, flag bit 3 of `+367`) |
+| `0x62d2` | movement, cull a publikace BOB/collision node, pak `0x5f0a` yield; po resume bit4 scroll compensation, clear flash, orphan, SMART a event callbacky (inherits parent via `+308`, flag bit 3 of `+367`) |
 | `0x62cc` | yield until "alive" tick |
 | `0x629c` | wait `d0` frames (against the global tick `fp@(-66)`) |
 | `0x62b8` | wait `d0` yields |
@@ -29,9 +29,11 @@ transcribe to make behaviours identical.
 
 Cull callback behem `0x62d2` nefunguje jako okamzity `return`: default
 `0x6db4` zneplatni generaci tasku, ale bezici aktivace jeste projde
-animatorem, enqueue `0x640c` a yieldem. Posledni hranični field tedy zustava
-viditelny a kolizni; objekt i jeho cost zmizi az pri pokusu o resume v
-nasledujicim VBL.
+animatorem, enqueue `0x640c` a yieldem. VBL N tedy udela pohyb, cull
+invalidation a jeste publikuje BOB/HW i collision node. Pri resume v N+1
+nasleduje bit4 scroll compensation, smazani jednopolickoveho hit flash,
+orphan, SMART a event callback; teprve potom se zaznam i jeho cost uklidi.
+Posledni hranicni field proto zustava viditelny a kolizni.
 
 ## The object
 
@@ -52,7 +54,7 @@ defaults at `0x61f4+`). Known fields:
 | +362 | score value installed by `0xa2c6` from d4 |
 | +368 | loaded graphic/file handle from `0xa2c6` d0 |
 | +370 | active-budget cost installed by `0xa2c6` from d5 |
-| +364 | off-screen cull margin (−64 default): `0x6486` uses inclusive high-word comparisons and invokes `+538` when `sx <= m`, `sx >= 320−m`, `sy <= m` or `sy >= 256−m`; objects override it (`0x820c` −90, `clrw` = 0) |
+| +364 | off-screen cull margin, initialized by object allocation to −64; **neni to `a2c6` d2**. `0x6486` uses inclusive high-word comparisons and invokes `+538` when `sx <= m`, `sx >= 320−m`, `sy <= m` or `sy >= 256−m`; individual behaviours may override it |
 | +367 | flag bits (bit 3 = follow parent; bit 4 = compensate camera-scroll delta) |
 | +376 | death-effect coroutine template spawned by `0xa36a` (default `0x894a` = small EXPL1 puff with panned sound) |
 | +397 | flags (bit 0 inherited on spawn) |
@@ -65,7 +67,7 @@ defaults at `0x61f4+`). Known fields:
 
 | addr | calls | role |
 |---|---|---|
-| `0xa2c6` | 122 | visual/collision init: d0 graphic, d1 class flags, d2 vstupni margin, d3 HP, d4 score, d5 cost; **blocks until threshold** |
+| `0xa2c6` | 122 | visual/collision init: d0 graphic, d1 class flags, d2 **vstupni/activation margin**, d3 HP, d4 score, d5 cost; blocks until the d2 threshold but d2 does not overwrite cull `+364` |
 | `0x629c` | 112 | wait N frames |
 | `0x6c88` | 89 | attach animation sequencer |
 | `0x883c` | 73 | random |
@@ -76,6 +78,17 @@ defaults at `0x61f4+`). Known fields:
 it allocates `d2-1` children and the original coroutine becomes the last
 member. Thus BIRD/FODDERA `d2=4` means four objects total, and YELLOW
 `d2=6` means six, not one extra parent.
+
+Cull policy in the TOWN transcription follows the independently initialized
+`+364`: ordinary allocations keep −64, including TOKEN after its radial
+burst. FLAME changes only its parent to −8; cannon, HOMING, PLOP and
+PROXMINE fragments use 0. TOKEN disables culling during the burst and
+re-enables the original −64 for its active phase. The GOOSE parent enables
+its cull only during escape, while all four children keep it disabled. TRAIN
+also keeps the generic callback disabled: its direct `screenY >= 272`
+terminator is behaviour code, not `0x6480`. Because that test follows the
+return from `0x62d2`, the field just published still survives and cleanup is
+observed on the following resume.
 
 Airborne flag bit 4 is applied in housekeeping at `0x6434–0x644e`.
 The camera y is saved before a yield and its delta is added back to object
@@ -157,13 +170,20 @@ N+1; `0x62d2` has already published the normal N frame. Events coalesce as a
 The browser now keeps that boundary: the producing step only records pending
 bits and projectile consumption, while the next step clears the old hit flag,
 checks the current SMART pulse and dispatches the saved event before the
-object's next movement. The player resumes before input; consumed player
-bolts are removed by the relocated `0xfffe` updater immediately before the
+object's next movement. A cull-invalidated ordinary node likewise keeps its
+N publication/sweep, passes the saved N+1 bit4/flash/orphan/SMART/event
+housekeeping, and is cleaned up only afterwards. The player resumes before
+input; consumed player bolts are removed by the relocated `0xfffe` updater
+immediately before the
 next sweep. Creation-order snapshots keep children spawned by an N+1 callback
 out of housekeeping until their own following resume, while still allowing
-their first field in the current scheduler pass. The remaining limitation is
-full callback/continuation interleaving across every priority-100 task, as
-tracked in `GAPS.md`.
+their first field in the current scheduler pass. The same creation-VBL drain
+now covers fresh PROXMINE fragments, FLAME emitter/puffs and TRAIN cars; an
+attached animator publishes `seq[0]` before starting its full period. The
+remaining limitation is
+full callback/continuation interleaving across every priority-100 task and the
+exact SMART/event arbitration across an invalidated generation, as tracked in
+`GAPS.md`.
 
 ## Aiming: angle → sprite frame
 

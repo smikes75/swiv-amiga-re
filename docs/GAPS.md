@@ -127,7 +127,7 @@ je tim cely v `game.html`; zbyle mechanicke parity jsou vypsane dale.
 Lokalni stavy TOKEN/core, GOOSE i hrace a jejich N+1 callback hranice jsou
 timto zdrojove popsane.
 
-## 4. Scheduler kolizi — N+1 HRANICE UZAVRENA 2026-08-31
+## 4. Scheduler kolizi a last-field cull — POZOROVATELNA HRANICE UZAVRENA 2026-08-31
 
 Original radi bezne objektove tasky na prioritu 100, updater hracskych
 HW projektilu na `0xfffe` a resident collision sweep `0x6ec2` na `0xffff`.
@@ -152,6 +152,25 @@ callbackem dostane jen jeden prvni pohyb, a ze GOOSE timeout propadne do
 prvniho `-4 px` escape fieldu bez mezery. Tim je uzavrena pozorovatelna
 N/N+1 hranice pro prepsane TOWN nody i jejich collision-driven audio.
 
+Generalizovan je take obycejny `0x6480` last-field lifecycle. `a2c6` d2 je
+pouze vstupni/activation margin; cull `+364` dostane pri alokaci vlastni
+vychozi hodnotu −64. FLAME parent ji meni na −8, cannon/HOMING/PLOP a
+PROXMINE strepy na 0. TOKEN ma cull behem 32tikoveho burstu vypnuty a po
+aktivaci znovu pouziva −64. GOOSE ho zapina jen parentu pri escape, jeho
+ctyri children jej maji vypnuty. TRAIN `screenY >= 272` je prime ukonceni
+korutiny, nikoli `0x6480`; test ale nasleduje az po navratu z publikovaneho
+fieldu, takze jeho zaznam take zmizi az pri dalsim resume.
+
+Pro bezny cull se ve VBL N nejprve provede pohyb a invalidace, ale objekt se
+jeste vykresli a vstoupi do collision sweepu. V N+1 dobehne bit4 scroll
+compensation, clear hit flash, orphan, SMART a event callbacky; zaznam a cost
+se uklidi az potom. Fixture pokryvaji ordinary air/hazard/spawn, aktivni i
+burst TOKEN a margin-0 projektil/pomocne nody. Drive obecna mezera, kdy se tyto
+nody filtrovaly pred poslednim renderem a sweepem, je tim uzavrena. Fresh
+PROXMINE fragment, FLAME emitter/puff i TRAIN vagon navic v creation VBL
+provedou prvni pohyb a `seq[0]` publikaci; `0x6480` childy v nem vyhodnoti i
+bounds, zatimco TRAIN prime `screenY` vetveni ceka na dalsi resume.
+
 Stale nejde o obecny emulator 68k coroutine scheduleru: po housekeeping
 passu browser pokracuje kategoriemi `shots/air/hazards/spawns/tokens`, ne
 jednim prokladanym FIFO seznamem vsech continuation bodu. Geometrie,
@@ -161,15 +180,20 @@ RNG nebo audio hlas uvnitr stejneho VBL, zustava k porovnani s raw trace.
 
 Konkretni dusledky, ktere zustavaji dalsim mechanickym blokem:
 
-- cannon/HOMING uz drzi nativni posledni cull field, ale bezne
-  air/hazard/spawn/TOKEN nody se pri cullu stale filtruji pred renderem a
-  sweepem; potrebuji stejny `retireAfterField`/cleanup-on-resume kontrakt;
+- presne prokladani vsech priority100 callbacku a continuation bodu jednim
+  FIFO seznamem, vcetne overeni SMART a event callbacku pres invalidovanou
+  generaci; browser zachovava pozorovatelny N/N+1 last-field kontrakt, ale
+  tento vzacny same-VBL arbitration detail jeste nema raw trace;
 - GOOSE death parent vznika v N+1 spravne, ale unlink child skupiny,
   escort orphan callback a dva BIGEXPL child tasky se zatim provedou inline
   misto na jejich vlastnich FIFO resume bodech;
 - TOKEN pickup zvuk ma spravne noty i rozestupy 0/5/10/15 VBL, prvni note a
   dalsi resume se ale jeste neradi jako samostatny priority100 child mezi
-  ostatni tasky stejneho VBL.
+  ostatni tasky stejneho VBL;
+- GOOSE parent po smrti prochazi checksum tail s priblizne 107 yieldy a TRAIN
+  lokomotiva analogicky priblizne 53 yieldy (vagony ne). Browser zatim drzi
+  jejich budget/cost-release delay jen jako aproximaci; tento casovy tail
+  neni soucasti vizualniho last-field uzavreni.
 
 ## 5. Map-reader a hardwarovy RNG — PORADI JE JEN HRUBE PRESNE
 

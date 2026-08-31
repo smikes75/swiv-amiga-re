@@ -2173,9 +2173,13 @@ function spawnPlop(g, x, y, parentVx = 0, parentVy = 0) {
   const p = { x: x + parentVx, y: y + parentVy,
               vx: parentVx, vy: parentVy,
               t: 1, bornTick: g.tick | 0,
-              cost: 1, budgeted: true };
+              cost: 1, budgeted: true, dead: false };
   g.activeCost = (g.activeCost || 0) + p.cost;  // bez 0x8822 guardu
   assignBobOrdinal(g, p); g.plops.push(p);
+  // 0x85f0 -> 0x861e -> 0x62d2/0x6480: child dobehne prvni
+  // same-VBL publikaci BULLET#2 i tehdy, kdyz je uz za marginem 0.
+  // Loader jej pouze oznaci; cost/task se uvolni az pri resume N+1.
+  if (outsideCullMargin(p.x, p.y, 0)) p.retireAfterField = true;
 }
 function releaseEnemyShot(g, s) { releaseCost(g, s); s.dead = true; }
 function clearEnemyShots(g) {
@@ -2355,7 +2359,7 @@ function releaseCost(g, o) {
   o.budgeted = false;
 }
 /* ---- TOWN boss GOOSE (0xc78a), docs/TOWN-AUDIT.md sekce 4 ----
-   Rodic je a2c6(GOOSE#0, coll0, margin0, hp0, body0, cost100), ma +534
+   Rodic je a2c6(GOOSE#0, coll0, vstup0, hp0, body0, cost100), ma +534
    imunitu vuci smart bombe a bit4 jej odpojuje od scrollu. Nese tri dilce
    tela a ctvrteho doprovodneho potomka. Vsechny
    deti nejprve leti jako samostatne BOB objekty z horniho okraje, 75 tiku
@@ -2604,7 +2608,8 @@ function releaseToken(g, k) {
    (+278 = -1), proto lze typ prepnout nejvys jednou za dva tiky. */
 function stepTokens(g, scrollDelta) {
   for (const k of g.tokens) {
-    k.y += scrollDelta;                          // bit 4: odpojeny scroll
+    // +367 bit4 compensation existujiciho tasku probehla pred callbacky.
+    // Same-VBL burst child se do resume snapshotu spravne nedostane.
     if (k.phase === "burst") {
       k.x += k.vx; k.y += k.vy;
       if (--k.burst <= 0) {
@@ -2637,8 +2642,8 @@ function stepTokens(g, scrollDelta) {
   for (const k of g.tokens) {
     if (k.dead || k.phase !== "active") continue;
     const sy = k.y - g.scroll;
-    if (outsideCullMargin(k.x, sy, -64))
-      releaseToken(g, k);
+    // 0x975c obnovi 0x6480 az pro active fazi; burst bounds nema.
+    if (outsideCullMargin(k.x, sy, -64)) k.retireAfterField = true;
   }
   g.tokens = g.tokens.filter(k => !k.dead);
 }
@@ -2954,7 +2959,7 @@ function spawnMineCore(g, s) {                 // 0x9860: MINE#9/#10
               scrollLocked: true,
               cost: 5, budgeted: false, hp: 10, scoreValue: 30,
               seq: [9, 10], per: 1, apos: 0, at: 0,
-              consumed: 0, harmless: true };
+              animFresh: true, consumed: 0, harmless: true };
   // Prime a2c6 cost5 bez nasledneho 0x8822 guardu: core se zalozi i
   // nad limitem160, stejne jako TOKEN a bound bubble.
   h.budgeted = true;
@@ -3011,7 +3016,8 @@ function spawnProxFragment(g, s, ang) {           // 0xaa9c
   const h = { kind: "proxfrag", file: "PROXMINE.LIN", x: s.x, y: s.y,
               vx: v.vx, vy: v.vy, ang, alive: true, dead: false,
               cost: 5, budgeted: false, hp: 1, scoreValue: 5,
-              seq, per: alternate ? 3 : 2, apos: 0, at: 0 };
+              seq, per: alternate ? 3 : 2, apos: 0, at: 0,
+              animFresh: true };
   accountCost(g, h);                            // prime a2c6, bez 0x8822
   assignBobOrdinal(g, h); g.hazards.push(h);
 }
@@ -3022,7 +3028,7 @@ function spawnFlameEmitter(g, parent) {        // 0xab78, svazany s rodicem
               hp: 0, scoreValue: 0,
               seq: [12, 13, 12, 14, 12, 13, 14, 13,
                     12, 13, 12, 13, 14, 13],
-              per: 2, apos: 0, at: 0, t: 100 };
+              per: 2, apos: 0, at: 0, animFresh: true, t: 100 };
   accountCost(g, h);                            // prime a2c6, bez 0x8822
   assignBobOrdinal(g, h); g.hazards.push(h);
 }
@@ -3035,7 +3041,7 @@ function spawnFlamePuff(g, emitter) {          // 0xabd2
               alive: true, dead: false, cost: 10, budgeted: false,
               hp: 0, scoreValue: 0,
               seq: [5, 6, 7, 8, 9, 10, 11],
-              per: 5, apos: 0, at: 0, life: 35 };
+              per: 5, apos: 0, at: 0, animFresh: true, life: 35 };
   accountCost(g, h);                            // prime a2c6, bez 0x8822
   assignBobOrdinal(g, h); g.hazards.push(h);
 }
@@ -3050,7 +3056,7 @@ function spawnTrainCars(g, loco, count) {       // 0x9c16, linked chain
                   Math.trunc(parent.vx * 65536), vy: 0, parent,
                 alive: true, dead: false, cost: 15, budgeted: false,
                 hp: 2, scoreValue: 50, seq: [frame], per: 1,
-                apos: 0, at: 0 };
+                apos: 0, at: 0, animFresh: true };
     accountCost(g, h);                          // prime a2c6, bez 0x8822
     assignBobOrdinal(g, h); g.hazards.push(h); parent = h;
   }
@@ -3064,6 +3070,54 @@ function decayTrainVelocity(h) {
     ? h.vxRaw | 0 : Math.trunc((h.vx || 0) * 65536) | 0;
   raw = (raw - (raw >> 4)) | 0;
   h.vxRaw = raw; h.vx = raw / 65536;
+}
+
+/* Jeden 0x62d2 field hazard tasku bez resume housekeeping. Je oddeleny
+   proto, ze child zalozeny pozdeji stejnou priority-100 taskou musi jeste
+   v creation VBL udelat prvni pohyb/animaci/cull a publikovat BOB/node.
+   Bit4 compensation se na takovy fresh child poprve pouzije az v N+1. */
+function advanceTownHazardField(g, h) {
+  if (!h.alive) return;
+  const freshField = !!h.animFresh;
+  if (h.kind === "minecore" && h.consumed > 0) {
+    if ((h.consumedTick | 0) === (g.tick | 0)) return;
+    if (--h.consumed <= 0) releaseHazard(g, h);
+    return;                                    // wait10: bez BOB/motion/anim
+  }
+  if (h.kind === "flameEmitter") {
+    if (!h.parent.alive) { releaseHazard(g, h); return; }
+    h.x = h.parent.x + 12; h.y = h.parent.y;
+    if (--h.t <= 0) { h.t = 100; spawnFlamePuff(g, h); }
+  } else if (h.kind === "traincar") {
+    if (h.parent.alive) {
+      h.vx = h.parent.vx;
+      h.vxRaw = h.parent.vxRaw ?? Math.trunc(h.vx * 65536);
+      // 0x9c32 child zacina az po parentove prvnim fieldu. U rekurzivniho
+      // retezu se proto kazdy fresh vagon odrazi od uz pohnuteho predchudce.
+      if (freshField)
+        h.x = h.parent.x - 48 * Math.sign(h.vx);
+    } else decayTrainVelocity(h);
+    h.x += h.vx;
+  } else {
+    h.x += h.vx || 0; h.y += h.vy || 0;
+    // Wait35 skonci az pri resume po 35. publikovanem fieldu.
+    if (h.kind === "flamePuff" && --h.life <= 0)
+      h.retireAfterField = true;
+  }
+  // 0x6c88 attach countdown1 v creation fieldu teprve publikuje seq[0];
+  // plna perioda se odmeri az od nasledujiciho resume.
+  if (h.animFresh) h.animFresh = false;
+  else if (++h.at >= h.per) {
+    h.at = 0; h.apos = (h.apos + 1) % h.seq.length;
+  }
+  const sy = h.y - g.scroll;
+  const margin = h.kind === "proxfrag" ? 0 : -64;
+  if (h.kind === "traincar" && Math.floor(sy) >= 272)
+    // 0x9c78 testuje az po navratu z prave publikovaneho 0x62d2 fieldu.
+    h.retireAfterField = true;
+  else if (h.kind !== "traincar" && outsideCullMargin(h.x, sy, margin))
+    // PROXMINE 0xaaec ma margin0; ostatni 0x6480 zde pouzivaji -64.
+    h.retireAfterField = true;
 }
 
 /* MEDTANK parent 0x9eca a samostatny turret child 0x9faa. Child nema
@@ -3308,6 +3362,7 @@ function townCollisionResumeTasks(g) {
   for (const h of g.hazards || []) if (h.alive) add("hazard", h);
   for (const s of g.spawns || []) if (s.born && s.alive) add("spawn", s);
   for (const k of g.tokens || []) if (!k.dead) add("token", k);
+  for (const pl of g.plops || []) if (!pl.dead) add("plop", pl);
   tasks.sort((a, b) => a.ordinal - b.ordinal || a.fallback - b.fallback);
   return tasks;
 }
@@ -3391,6 +3446,39 @@ function resumeTownObjectHousekeeping(g, task) {
 
   o.collisionEventWord = 0;                    // 0x6538 CLR.W +506
   o.collisionPlayerCredit = false;
+}
+
+/* +367 bit4 se aplikuje na zacatku 0x643a resume, tedy jeste pred
+   0x6452/0x6468/0x64b6 housekeepingem. Dela to pouze task, ktery uz
+   cekal na zacatku priority-100 sweepu; novy same-VBL child se sem
+   nedostane. Cannon/HOMING drzi v JS screen-space projekci vlastni cestou. */
+function compensateTownTaskScrollOnResume(task, scrollDelta) {
+  const { kind, o } = task;
+  if (kind === "air" || kind === "token") o.y += scrollDelta;
+  else if ((kind === "hazard" || kind === "spawn") && o.scrollLocked)
+    o.y += scrollDelta;
+}
+
+/* 0x6480 nevola destructor uprostred publikovaneho fieldu. Nastavi
+   invalidaci tasku a teprve jeho pristi 0x643a resume po callbacku N+1
+   skonci pres type-specific +514/ldr_obj_kill cestu. Stejny JS priznak
+   nese i TRAIN terminator, jehoz primy test lezi az za navratem z 0x62d2. */
+function retireTownTaskAfterField(g, task) {
+  const { kind, o } = task;
+  if (!o.retireAfterField) return false;
+  if (kind === "shot") releaseEnemyShot(g, o);
+  else if (kind === "air") releaseAirMember(g, o);
+  else if (kind === "hazard") releaseHazard(g, o);
+  else if (kind === "token") releaseToken(g, o);
+  else if (kind === "plop") {
+    releaseCost(g, o); o.dead = true;
+  } else if (kind === "spawn" && o.beh === "boss") {
+    // 0xc930 -> 0x62cc/0x6480: pouze unikajici GOOSE pouziva bounds.
+    o.alive = false; releaseBossGroup(g, o, true);
+  } else if (kind === "spawn") {
+    o.alive = false; releaseCost(g, o);
+  }
+  return true;
 }
 
 function resumePlayerCollision(g) {
@@ -3536,12 +3624,6 @@ function step(g) {
   advanceTownSfxClock(g);                      // CIAB IRQ 0x4abc pred schedulerem
   g.tick++;
   advanceTokenSfxTasks(g);                     // 0x564c: dalsi nota po 5 VBL
-  // 0x6480 vola default +514=0x6db4 uprostred 0x62d2. Loader tim pouze
-  // zneplatni task: aktualni aktivace jeste publikuje posledni BOB/HW a
-  // collision node a skonci az pri pokusu o resume v pristim VBL.
-  for (const s of g.shots || [])
-    if (s.retireAfterField) releaseEnemyShot(g, s);
-  g.shots = (g.shots || []).filter(s => !s.dead);
   stepFade(g);
   const oldScroll = g.scroll;
   g.scroll -= SCROLL * TICK * (g.scrollMul || 1);   // scroll nahoru
@@ -3653,10 +3735,20 @@ function step(g) {
   // Ostatni tasky, ktere minuly VBL skoncily na 0x643a, provedou pred svym
   // dalsim coroutine krokem orphan/smart/event housekeeping. Snapshot brani
   // tomu, aby child zalozeny prave callbackem preskocil svuj prvni field.
-  for (const task of collisionResumeTasks)
+  for (const task of collisionResumeTasks) {
+    // 0x6434..0x644e: bit4 compensation je soucasti resume konkretniho
+    // priority-100 tasku a musi predchazet SMART i collision callbackum.
+    compensateTownTaskScrollOnResume(task, scrollDelta);
     resumeTownObjectHousekeeping(g, task);
+    // Callbacky z fieldu N jsou zamerne drive nez invalidacni cleanup.
+    // Flagged task uz ale nesmi provest continuation/motion fieldu N+1.
+    retireTownTaskAfterField(g, task);
+  }
   g.shots = (g.shots || []).filter(s => !s.dead);
+  g.air = (g.air || []).filter(a => !a.dead && (a.pending || a.alive));
+  g.hazards = (g.hazards || []).filter(h => !h.dead && h.alive);
   g.tokens = (g.tokens || []).filter(k => !k.dead);
+  g.plops = (g.plops || []).filter(pl => !pl.dead);
 
   // strely nepratel: kanonove granaty rotuji/akceleruji, navadene koriguji kurz
   for (const s of g.shots) {
@@ -3679,17 +3771,16 @@ function step(g) {
   }
   for (const pl of g.plops)
     if (pl.t >= PLOP_SEQUENCE.length) releaseCost(g, pl);
-  g.plops = g.plops.filter(pl => pl.t < PLOP_SEQUENCE.length);
+  g.plops = g.plops.filter(pl => !pl.dead && pl.t < PLOP_SEQUENCE.length);
 
   // FODDERA/YELLOW jsou world-space objekty. Kazdy klon sam ceka na
-  // a2c6 margin -48; zadny wall-clock delay mezi cleny tu neni.
+  // a2c6 vstupni prah -48; zadny wall-clock delay mezi cleny tu neni.
   for (const a of g.air) {
     if (a.dead) continue;
     const activated = activateAirMember(g, a, p);
     if (!a.alive) continue;
-    // Flag +367 bit4 (0x6434..0x644e) pricte deltu kamery zpet do
-    // world-y. Aktivni letci se tedy na obrazovce hybou jen vlastni vy.
-    if (!activated) a.y += scrollDelta;
+    // +367 bit4 compensation probehla pro existujici task uz v jeho
+    // priority/bobOrdinal resume. Prave aktivovany a2c6 child ji nema.
     if (a.kind === "fod") {
       const sy = a.y - g.scroll;
       // SUB.W #1,+276; BCC skip: vystreli az pri podteceni 0 -> $ffff.
@@ -3722,44 +3813,20 @@ function step(g) {
   for (const a of g.air) {
     if (!a.alive) continue;
     const sy = a.y - g.scroll;
-    if (outsideCullMargin(a.x, sy, -64))
-      releaseAirMember(g, a);
+    // FODDERA 0x80c8 / YELLOW 0x8716 / BIRD 0x868a -> 0x6480:
+    // posledni BOB+node zustane ve fieldu N, release prijde az v N+1.
+    if (outsideCullMargin(a.x, sy, -64)) a.retireAfterField = true;
   }
   g.air = g.air.filter(a => !a.dead && (a.pending || a.alive));
 
-  // MINE core/PROXMINE strepy a svazane casti FLAME.
+  // MINE core/PROXMINE strepy a svazane casti FLAME. Set drzi tasky,
+  // ktere uz v tomto VBL dostaly svuj 0x62d2 field; child vytvorene az
+  // v pozdejsi mapove continuation odrainujeme pred TOKEN tasky nize.
+  const advancedHazardsThisField = new Set();
   for (const h of g.hazards.slice()) {
-    if (!h.alive) continue;
-    if (h.kind === "minecore" && h.consumed > 0) {
-      if ((h.consumedTick | 0) === (g.tick | 0)) continue;
-      if (--h.consumed <= 0) releaseHazard(g, h);
-      continue;                                  // wait10: bez BOB/motion/anim
-    }
-    if (h.scrollLocked) h.y += scrollDelta;
-    if (h.kind === "flameEmitter") {
-      if (!h.parent.alive) { releaseHazard(g, h); continue; }
-      h.x = h.parent.x + 12; h.y = h.parent.y;
-      if (--h.t <= 0) { h.t = 100; spawnFlamePuff(g, h); }
-    } else if (h.kind === "traincar") {
-      if (h.parent.alive) {
-        h.vx = h.parent.vx;
-        h.vxRaw = h.parent.vxRaw ?? Math.trunc(h.vx * 65536);
-      } else decayTrainVelocity(h);
-      h.x += h.vx;
-    } else {
-      h.x += h.vx || 0; h.y += h.vy || 0;
-      if (h.kind === "flamePuff" && --h.life <= 0) {
-        releaseHazard(g, h); continue;
-      }
-    }
-    if (++h.at >= h.per) {
-      h.at = 0; h.apos = (h.apos + 1) % h.seq.length;
-    }
-    const sy = h.y - g.scroll;
-    const margin = h.kind === "proxfrag" ? 0 : -64;
-    if (h.kind === "traincar" ? Math.floor(sy) >= 272
-        : outsideCullMargin(h.x, sy, margin))
-      releaseHazard(g, h);
+    advancedHazardsThisField.add(h);
+    // +367 bit4 compensation existujiciho tasku uz probehla v resume loopu.
+    advanceTownHazardField(g, h);
   }
   g.hazards = g.hazards.filter(h => !h.dead && h.alive);
 
@@ -3931,7 +3998,7 @@ function step(g) {
         else s.t = 10;
       }
     } else if (s.beh === "mill") {
-      if (s.scrollLocked) s.y += scrollDelta;   // +367 bit4 od sy=24
+      // +367 bit4 od sy=24 se provedl na zacatku taskova resume.
       const shotSy = s.y - g.scroll;            // 0x629c resume pred 0x62d2
       s.y += s.vy;
       const sy = s.y - g.scroll;
@@ -3939,7 +4006,7 @@ function step(g) {
       else s.rotorTick = (s.rotorTick + 1) & 7;
       // 0x6480 cull se vyhodnoti pred navratem z waitu a pripadnou salvou.
       if (outsideCullMargin(s.x, sy, -64)) {
-        s.alive = false; releaseCost(g, s);
+        s.retireAfterField = true;
       } else if (s.st === 0 && sy >= 24) {
         s.st = 1; s.t = 100;
         s.scrollLocked = true;
@@ -3952,8 +4019,9 @@ function step(g) {
       }
     } else if (s.beh === "train") {
       s.x += s.vx;
-      // Original vypina horizontalni auto-cull; cela souprava konci dole.
-      if (s.sy >= 272) { s.alive = false; releaseCost(g, s); }
+      // Horizontalni auto-cull je vypnuty. Test sy>=272 je az za navratem
+      // z tohoto 0x62d2 fieldu, proto posledni field prezije do N+1 resume.
+      if (s.sy >= 272) s.retireAfterField = true;
     } else if (s.beh === "flame") {
       s.age++;
       s.fr = Math.min(4, Math.floor((s.age - 1) / 6));
@@ -4031,7 +4099,6 @@ function step(g) {
     } else if (s.beh === "boss") {
       // 0xc810 vola 0x62d2 primo po setupu: uz aktivacni tik provede prvni
       // vlastni pohyb i child scheduler pass.
-      s.y += scrollDelta;                       // bit 4: screen-y meni jen vy
       stepBossParts(g, s, scrollDelta);
       if (s.st === 0) s.bodyHidden = !s.bodyHidden; // 0xc7fc: bit7 blikani
       if (s.unfoldPos >= 0 && s.unfoldPos < 6 && --s.unfoldWait <= 0) {
@@ -4080,9 +4147,8 @@ function step(g) {
             // 0xc926 propadne primo do 0xc930 -> 0x62cc: jediny pohyb
             // tohoto resume je prvni -4px escape field.
             s.y += s.vy;
-            if (outsideCullMargin(s.x, s.y - g.scroll, -64)) {
-              s.alive = false; releaseBossGroup(g, s, true);
-            }
+            if (outsideCullMargin(s.x, s.y - g.scroll, -64))
+              s.retireAfterField = true;
           } else {
             // 0xc882: zrychleni 1536/65536 k hraci, vx orezane na <-2, 1>
             const ax = 1536 / 65536;
@@ -4108,9 +4174,8 @@ function step(g) {
           }
         } else if (s.st === 3) {
           s.y += s.vy;
-          if (outsideCullMargin(s.x, s.y - g.scroll, -64)) {
-            s.alive = false; releaseBossGroup(g, s, true);
-          }
+          if (outsideCullMargin(s.x, s.y - g.scroll, -64))
+            s.retireAfterField = true;
         }
       }
     } else if (s.beh === "roto") {
@@ -4133,11 +4198,21 @@ function step(g) {
     // TRAIN ma +538 vypnute a MILL/GOOSE culluji ve svych vetvich.
     if (s.alive && !["train", "mill", "boss"].includes(s.beh)) {
       const cullMargin = s.beh === "flame" ? -8 : -64;
-      if (outsideCullMargin(s.x, s.y - g.scroll, cullMargin)) {
-        s.alive = false; releaseCost(g, s);
-      }
+      if (outsideCullMargin(s.x, s.y - g.scroll, cullMargin))
+        s.retireAfterField = true;
     }
   }
+
+  // Equal-priority child z PROXMINE/FLAME/TRAIN se po zalozeni zaradi za
+  // bezici parent a jeste v tomtez VBL udela prvni 0x62d2 field. Smycka je
+  // dynamicka: fresh emitter muze pri deadline zalozit fresh puff.
+  for (let i = 0; i < g.hazards.length; i++) {
+    const h = g.hazards[i];
+    if (advancedHazardsThisField.has(h)) continue;
+    advancedHazardsThisField.add(h);
+    advanceTownHazardField(g, h);
+  }
+  g.hazards = g.hazards.filter(h => !h.dead && h.alive);
 
   stepTokens(g, scrollDelta);
   // animace dosud neprelozenych objektu podle vytezenych skriptu
