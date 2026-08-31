@@ -166,10 +166,32 @@ celeho prikazoveho formatu.
 Kanonicky vstup je `SWIVFIX.ADF` se SHA-256 uvedenym v README. Pro stare H.264
 zaznamy je pripustna tolerantni korelace/SSIM; komprese a snimani plochy
 znemoznuji pixelovou shodu. Presny kontrakt zacina az raw framebufferem z
-headless emulace. Aktualni `VAHeadless` opakovane vraci bitove shodny raw
-RGB24 framebuffer 716x285, ale s `SWIVFIX.ADF` skonci na Kickstart obrazovce;
-jiny kontrolni SWIV ADF ve stejne konfiguraci bootuje. Nastroj je tedy
-deterministicky, kanonicky boot/crop vsak zatim neni vyreseny.
+headless emulace.
+
+**Baseline UZAVREN (2026-08-31, `tools/baseline.sh`)**: kanonicky
+`SWIVFIX.ADF` v headless vAmize (v5.0b1,
+`/Users/mik/claude46/Amiga/reference/tools-bin/VAHeadless`, A500 OCS 1MB,
+KS 1.3, warp ~15x) **bootuje** — drivejsi „skonci na Kickstart obrazovce"
+bylo cracktro The Company, ktere ceka na klik mysi. Deterministicka
+vstupni sekvence (emulovane sekundy od zapnuti):
+
+| t | vstup | obrazovka pred nim |
+|---:|---|---|
+| 32 | `mouse1 press left` | cracktro (text The Company) |
+| 40 | `mouse1 press left` | MEGA TRAINER (vychozi NO/NO/NO/NO, autofire 1 = cista hra) |
+| 85 | `joystick2 press 1` + `unpress 1` | attract (kredity/hi-score/COVER) |
+| ~101 | — | **start urovne TOWN** (fade z cerne; fire+17 uz bezi) |
+
+Overene detaily: `mouse1 press` je press+release, `joystick2 press 1`
+tlacitko **drzi** (uvolneni je `unpress 1`); smery jsou `pull
+left/right/up/down` + `release x/y`, takze jde skriptovat cely input
+tape. `wait N` je v emulovanych sekundach; `std::exception`, ktere
+regression rezim u `wait` vypisuje, je kosmeticke — ceka se spravne.
+`screenshot save` ulozi raw RGB24 716x285 a proces ukonci (jeden beh =
+jeden snimek; determinismus dava serie opakovanym behem). Prvni snimky:
+start ma velkou budovu vlevo nahore a diagonalni silnici; HUD originalu
+po spawnu ukazuje **3 zivoty** (spotreba jednoho pri spawnu, `0x70a0`),
+ne 4; bile blikani spawn ochrany 8/8 je na snimcich videt.
 
 Plan jednoho checkpointu:
 
