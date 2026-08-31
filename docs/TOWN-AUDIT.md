@@ -3,11 +3,18 @@
 Hloubkovy pruzkum k hlaseni z hrani: „chovani objektu, hlavniho
 nepritele a ochrannych bublin neni jako v originale". Nic z toho neni
 odhad: kazda polozka nese adresu v `AMPROG.OBJ` (`work/prog.txt`) a
-byla prectena z kodu. Polozky oznacene **[odvozeno]** jsou vyvozene z
-vice mist v kodu, ale sama rutina, ktera by je potvrdila, lezi mimo
-`AMPROG.OBJ` (v resident loaderu) a neni prectena.
+byla prectena z kodu.
 
-Zadny kod se v ramci auditu nemenil. Poradi prace je v sekci 8.
+**Stav 2026-08-31**: cely P0 (sekce 6, body 1–6) je prepsany, plus
+rozjezd TOKENu z `0x96d8`. Renderer, HUD, zvukovy model a N+1 kolizni
+scheduler doplnil `a1bfaa5` (Codex); zbyle mezery vede `GAPS.md`.
+Kolizni jadro bylo docteno — sweep `0x6ec2` v `AMPROG.OBJ` (bezi jako
+task s prioritou `0xffff`): **event word objektu = OR koliznich trid
+vseho, ceho se dotkl**; zadna parovaci tabulka neexistuje. Sekce 2.1
+tim prestava byt odvozena; jedina oprava je, ze vrtulnik posloucha jen
+udalost 1 (`0x654c` instaluje pouze `+518`; `0x654a` je vedlejsi vstup,
+ktery pridava i `+526` — ten hrac nevola). Na tabulku „kdo zabije
+vrtulnik" to nema vliv.
 
 ## 1. Odpovedi na tri hlaseni z hrani
 
@@ -71,7 +78,7 @@ Nejvetsi merene rozdily (podrobne v sekci 3 a 6):
 `+16`). Bity tridy rozhoduji, ktere handlery `a2c6` nainstaluje
 (`0xa2fe`–`0xa31e`) — **jen kdyz HP ≠ 0**:
 
-| bit tridy | a2c6 instaluje | udalost (slot) | vyznam **[odvozeno]** |
+| bit tridy | a2c6 instaluje | udalost (slot) | vyznam (potvrzeno sweep `0x6ec2`) |
 |---|---|---|---|
 | 5 (32) | `0xa362` do `+510` | bit 0 | sestrelitelne strelou hrace |
 | 1 (2) | `0xa362` do `+514` | bit 3 | vzdusny objekt: kontakt s vrtulnikem |
@@ -111,12 +118,17 @@ instaluje smrt `0x9306` do udalosti 1 i 2 (`0x654c`); jeep do udalosti
 | PLOP `0x8600` | 0x8000 | 0 | 0 | 1 | ne |
 | TOKEN `0x96e6` | 32 | 0 | 0 | 5 | ne (sebrani `+514`) |
 
-Sloupec „zabije vrtulnik" plyne z bitu 1 tridy + z toho, ze vrtulnik
-sam instaluje svou smrt jen do udalosti 1/2. Samotne parovani
-trid ↔ udalosti dela kolizni jadro, ktere v `AMPROG.OBJ` neni
-(zapisy do `+506` v nem nejsou; seznam zaznamu `fp@(11078)` se tam jen
-plni na `0x6dee` a uvolnuje na `0x6e3a`). Proto **[odvozeno]** — ale
-vsechna a2c6 mista a oba hracske kody s tim souhlasi.
+Sloupec „zabije vrtulnik" je potvrzeny sweep rutinou `0x6ec2`
+(seznam serazeny podle x, zaznamy `+488`: `+8/+10` pozice, `+12/+14`
+pulrozmery, `+16` trida, `+18` event word): pro kazdou dvojici
+prekryvajicich se zaznamu se **trida jednoho ORne do event wordu
+druheho** (`orw d7,a1@(18)` / `orw a1@(16),d6`); zaporna trida
+(`0x8000`) dvojici nezaklada. Udalost = trida protejsku: vrtulnik
+(trida `0x48`) posloucha bit 1 (`0x654c` → `+518`), jeep bit 2
+(`0x6558` → `+526`), pri skoku bit 1; nepratele posluchaji bit 0
+(strela hrace), bit 3 (trida vrtulniku) a bit 4 (trida jeepu); bity
+6/7 nesou identitu hrace pro pripis bodu (`0xa36a`). Vyhodnoceni je
+odlozene do VBL N+1 — viz `GAPS.md` sekce 4.
 
 ### 2.2 Tri slotove ukazatele `+534` / `+538` / `+542`
 
@@ -364,9 +376,9 @@ jen pri `z ≠ 0` na `(x + z/2, y + z)` s klicem −1 (pod vsim).
 
 ## 9. Co zustava otevrene
 
-- kolizni jadro (parovani trid ↔ udalosti) je v resident loaderu —
-  jedina cast auditu oznacena **[odvozeno]**; kdyz se precte, bud
-  potvrdi sekci 2.1, nebo ji upresni
+- ~~kolizni jadro~~ — docteno 2026-08-31: sweep `0x6ec2` (v `AMPROG`,
+  ne v loaderu) potvrzuje sekci 2.1; event = OR trid protejsku,
+  vyhodnoceni v N+1 (`GAPS.md` sekce 4)
 - vyznam bitu 7 kreslicich flagu (`0x416a`; „blikani" GOOSE a rotoru
   predpoklada „nekreslit", stejne jako dnesni rotor MILL v prepisu)
 - kompenzace kontrolniho souctu v `SWIVFIX` (2.7)

@@ -530,8 +530,9 @@ sebrani jadra s uz aktivnim stitem (`0x98ec`).
 
 - pin JEEPHELI, `z = 32` (`0x941a`) → stin `(x+16, y+32)` (`0x6364`)
 - `+108 = 200` tiku ochrany po spawnu (`0x9424`); kolizni zaznam `0x0048`
-  (P1) / `0x0088` (P2); bit 4 v `+367`; smrt `0x9306` v udalostech 1 i 2
-  (`0x654c`)
+  (P1) / `0x0088` (P2); bit 4 v `+367`; smrt `0x9306` v **udalosti 1**
+  (`0x654c` instaluje jen `+518`) — event = trida protejsku (sweep
+  `0x6ec2`), takze vrtulnik zabiji prave objekty s bitem 1 tridy
 - zbran je potomek `0x939c`: uhel 192, pali na bit 5 vstupu pres `0x8aa0`
 - anim `JEEPHELI#0..4` period 1 (`0x945a`), nezavisle na smeru
 - rychlost `+356 = 768` = **3 px/t** (`0x9476`); smer z tabulky `0x959e`
