@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""End-to-end a behavior regrese hry v realnem Chromiu.
+"""End-to-end attract, renderer, audio a behavior regrese v realnem Chromiu.
 
-Projde tok vlozeni ADF -> intro -> vyber TOWN, overi puvodni dispatch
+Projde tok vlozeni ADF -> nativni attract -> fire -> TOWN, overi puvodni dispatch
 tabulku, palety, formace, miny, vlak, plamenomet, animace ROTOBASE/POPUP
 a cyklus CAMOGUN.
 Pri chybe nebo nesplnene podmince skonci nenulovym navratovym kodem.
@@ -36,16 +36,390 @@ def main():
             page.wait_for_selector("#titlewrap", state="visible")
             expect(page.is_visible("#titlewrap"), "po vlozeni ADF chybi titulka")
 
-            page.keyboard.press(" ")
-            page.wait_for_selector("#levelpick", state="visible")
-            expect(page.is_visible("#levelpick"), "po stisku fire chybi vyber urovne")
-
-            # Pred startem zastavime RAF; logiku pak tikame rucne a deterministicky.
+            # Zastavime wall-clock RAF a attract i hru pak overujeme ciste
+            # po jednotlivych 50Hz krocich.
             page.evaluate("window.requestAnimationFrame = () => 0")
+            intro_core = page.evaluate("""() => {
+              const fnv1a = bytes => {
+                let h = 0x811C9DC5;
+                for (const value of bytes)
+                  h = Math.imul((h ^ value) >>> 0, 0x01000193) >>> 0;
+                return h.toString(16).padStart(8, '0');
+              };
+              const rawNames = [
+                'COVER.RAW', 'MUSHROOM.RAW', 'FACES.RAW',
+                'HELIBP1.RAW', 'HELIBP2.RAW',
+                'JEEPBP1.RAW', 'JEEPBP2.RAW'
+              ];
+              const rawHashes = Object.fromEntries(rawNames.map(name =>
+                [name, fnv1a(introRaw(name).pixels)]));
+              const blueprintIndex8 = Object.fromEntries(
+                rawNames.slice(3).map(name => [name,
+                  Array.from(introRaw(name).pixels).filter(v => v === 8).length]));
+
+              const streamCases = [
+                [0x15F4, 180, 86], [0x16A2, 180, 137],
+                [0x17B4, 180, 86], [0x1856, 180, 137],
+                [0x1906, 16, 196]
+              ];
+              const streamEnds = [], streamEndVbls = [];
+              for (const [offset, x, y] of streamCases) {
+                const pixels = new Uint8Array(320 * 256);
+                const mask = new Uint8Array(320 * 256);
+                const task = createBlueprintTextTask(
+                  state.prog, offset, x, y, pixels, mask);
+                let guard = 4000, vbl = 0;
+                while (!task.done && guard-- > 0) {
+                  resumeBlueprintTextTask(task);
+                  if (!task.done) vbl++;
+                }
+                streamEnds.push(task.done ? task.end + 1 : -1);
+                streamEndVbls.push(task.done ? vbl : -1);
+              }
+
+              const pal0 = blueprintPaletteAt(state.prog, 0);
+              const pal8 = blueprintPaletteAt(state.prog, 8);
+              const pal48 = blueprintPaletteAt(state.prog, 48);
+              const pal78 = blueprintPaletteAt(state.prog, 78);
+              const highScoreCounts = [];
+              for (let i = 1; i <= 16; i++)
+                highScoreCounts.push(parseHighScoreNames(
+                  introFileBytes('HS' + i + '.TXT')).length);
+
+              const live = state.attract;
+              const blueprintTiming = index => {
+                prepareAttractScene(live, index);
+                const scene = live.scene, phases = {};
+                let activation = 0, allTextDoneAt = null,
+                    revealedAt = null, taskStartedAt = null,
+                    firstTaskOffsets = null, guard = 1000;
+                while (live.scene === scene && guard-- > 0) {
+                  const phase = live.phase;
+                  phases[phase] = (phases[phase] || 0) + 1;
+                  stepAttract(live);
+                  if (revealedAt === null && live.blueprintRevealed)
+                    revealedAt = activation + 1;
+                  if (taskStartedAt === null && live.blueprintTaskStarted) {
+                    taskStartedAt = activation + 1;
+                    firstTaskOffsets = live.blueprintTasks.map(
+                      task => task.p - task.start);
+                  }
+                  if (allTextDoneAt === null && live.blueprintTasks &&
+                      live.blueprintTasks.every(task => task.done))
+                    allTextDoneAt = activation;
+                  activation++;
+                }
+                return { phases, allTextDoneAt, next: live.scene,
+                         nextPhase: live.phase, activations: activation,
+                         revealedAt, taskStartedAt, firstTaskOffsets };
+              };
+              const blueprintTimings = [blueprintTiming(2), blueprintTiming(4)];
+              const repeatedHeliTiming = blueprintTiming(2);
+              prepareAttractScene(live, 0); live.vbl = 0;
+              live.phase = 'hold'; live.phaseTick = 0; renderAttract(live);
+              return {
+                order: Array.from(ATTRACT_SCENE_ORDER),
+                holds: Object.assign({}, ATTRACT_HOLD_VBLS),
+                fades: Array.from(ATTRACT_FADE_LEVELS),
+                colorStarts: Array.from(BLUEPRINT_COLOR_STARTS),
+                rawHashes, blueprintIndex8, streamEnds, streamEndVbls,
+                highScoreCounts,
+                highScoreFiles: [
+                  introHighScoreFile('heli', 0), introHighScoreFile('heli', 7),
+                  introHighScoreFile('jeep', 0), introHighScoreFile('jeep', 7)
+                ],
+                hud: [0, 127, 128, 255, 256].map(attractHudTexts),
+                paletteCheckpoints: {
+                  zero: [pal0[1], pal0[9]],
+                  eight: [pal8[2], pal8[10]],
+                  fortyEight: [pal48[7], pal48[15]],
+                  seventyEight: [pal78[1], pal78[8], pal78[15]]
+                },
+                copperCounts: {
+                  cover: introCopperEvents('cover').length,
+                  sales: introCopperEvents('sales').length,
+                  faces: introCopperEvents('faces').length,
+                  scores: introCopperEvents('heliScores').length
+                },
+                salesGradient: decodeIntroCopperTable(
+                  state.prog, 0x2BFF, 48).map(e =>
+                    [e.line, e.color, e.word]),
+                sales: programCString(state.prog, 0x2400),
+                faces: programCString(state.prog, 0x2232),
+                blueprintTimings,
+                repeatedHeliTiming,
+                blueprintScoreBlack: attractPaletteAndFade({
+                  scene: 'heliBlueprint', phase: 'blueprintScoreBlack',
+                  phaseTick: 0, vehicle: 'heli'
+                }).black,
+                blueprintFadeLevels: {
+                  finalWhite: [
+                    blueprintFinalWhiteLevel('heli', 0),
+                    blueprintFinalWhiteLevel('heli', 12),
+                    blueprintFinalWhiteLevel('heli', 13),
+                    blueprintFinalWhiteLevel('jeep', 0),
+                    blueprintFinalWhiteLevel('jeep', 11),
+                    blueprintFinalWhiteLevel('jeep', 12),
+                  ],
+                  scoreBlack: [
+                    blueprintScoreFadeBlack('heli', 0),
+                    blueprintScoreFadeBlack('heli', 1),
+                    blueprintScoreFadeBlack('heli', 12),
+                    blueprintScoreFadeBlack('heli', 13),
+                    blueprintScoreFadeBlack('jeep', 0),
+                    blueprintScoreFadeBlack('jeep', 1),
+                    blueprintScoreFadeBlack('jeep', 16),
+                  ],
+                },
+                rendered: live.lastRender,
+              };
+            }""")
+            expect(intro_core["order"] == [
+                "cover", "sales", "heliBlueprint", "heliScores",
+                "jeepBlueprint", "jeepScores", "faces"],
+                "attract ma spatne poradi obrazovek")
+            expect(intro_core["holds"] == {
+                "cover": 600, "sales": 400, "heliScores": 250,
+                "jeepScores": 250, "faces": 600},
+                "attract ma spatne nativni hold casy")
+            expect(intro_core["fades"] == list(range(0, 257, 16)),
+                "black/white fade nema 17 nativnich endpointu")
+            expect(intro_core["colorStarts"] == [0, 8, 16, 24, 32, 40, 48],
+                "blueprint color tasky nemaji nativni rozestupy")
+            expect(intro_core["rawHashes"] == {
+                "COVER.RAW": "5fde4656", "MUSHROOM.RAW": "71275df0",
+                "FACES.RAW": "b030d83b", "HELIBP1.RAW": "13ca9754",
+                "HELIBP2.RAW": "50b837b1", "JEEPBP1.RAW": "b7ebb0aa",
+                "JEEPBP2.RAW": "adc91ca6"},
+                "indexed RAW decoder zmenil nektery intro asset")
+            expect(all(v == 0 for v in intro_core["blueprintIndex8"].values()),
+                "blueprint RAW pouziva rezervovany textovy index 8")
+            expect(intro_core["streamEnds"] == [
+                0x16A2, 0x1757, 0x1856, 0x1906, 0x192B],
+                "blueprint parser neskoncil na presnych hranicich streamu")
+            expect(intro_core["streamEndVbls"] == [144, 176, 96, 176, 0],
+                "blueprint typewriter nema nativni wait/resume casovani: %r" %
+                intro_core["streamEndVbls"])
+            expect(intro_core["highScoreCounts"] == [7] * 16,
+                "nektery nativni high-score soubor nema sedm jmen")
+            expect(intro_core["highScoreFiles"] == [
+                "HS1.TXT", "HS8.TXT", "HS9.TXT", "HS16.TXT"],
+                "HELI/JEEP high-score RNG saha mimo nativni skupinu")
+            expect(intro_core["hud"] == [
+                ["PRESS FIRE", "PRESS FIRE"],
+                ["PRESS FIRE", "PRESS FIRE"],
+                ["HELI 0[ 2* 0000000", "JEEP 0[ 2* 0000000"],
+                ["HELI 0[ 2* 0000000", "JEEP 0[ 2* 0000000"],
+                ["PRESS FIRE", "PRESS FIRE"]],
+                "attract HUD se neprepina na hranici VBL bitu 7")
+            expect(intro_core["paletteCheckpoints"] == {
+                "zero": [0x777, 0xFFF], "eight": [0x777, 0xFFF],
+                "fortyEight": [0x777, 0xFFF],
+                "seventyEight": [0x051, 0xCCE, 0x0A3]},
+                "blueprint palette tasky nemaji nativni prubeh: %r" %
+                intro_core["paletteCheckpoints"])
+            expected_blueprint_tail = {
+                "blueprintColor": 79, "blueprintWhite": 2,
+                "blueprintMerge": 9, "blueprintFinalFade": 17,
+                "blueprintHold": 50, "blueprintFadeOut": 17,
+            }
+            expect(intro_core["blueprintScoreBlack"] == 256,
+                   "score-loader copy tail znovu odkryl blueprint")
+            expect(intro_core["blueprintFadeLevels"] == {
+                     "finalWhite": [96, 96, 0, 96, 96, 0],
+                     "scoreBlack": [0, 224, 224, 256, 0, 256, 256]},
+                   "blueprint publish/fade paleta neni z dense native frames: %r" %
+                   intro_core["blueprintFadeLevels"])
+            for timing, load_vbls, score_load_vbls, black_vbls, activations, \
+                    reveal, task_start, text_done, first_offsets, next_scene in zip(
+                    intro_core["blueprintTimings"], [100, 96], [100, 58],
+                    [8, 7], [382, 335], [51, 45], [63, 57], [238, 232],
+                    [[37, 21, 7], [37, 21, 7]],
+                    ["heliScores", "jeepScores"]):
+                phases = dict(expected_blueprint_tail)
+                phases["blueprintLoad"] = load_vbls
+                phases["blueprintScoreLoad"] = score_load_vbls
+                phases["blueprintScoreBlack"] = black_vbls
+                expect(timing["phases"] == phases and
+                       timing["allTextDoneAt"] == text_done and
+                       timing["next"] == next_scene and
+                       timing["nextPhase"] == "hold" and
+                       timing["revealedAt"] == reveal and
+                       timing["taskStartedAt"] == task_start and
+                       timing["firstTaskOffsets"] == first_offsets and
+                       timing["activations"] == activations == sum(phases.values()),
+                       "blueprint loader/tail timing nesedi: %r" % timing)
+            repeated_heli = intro_core["repeatedHeliTiming"]
+            repeated_phases = dict(expected_blueprint_tail)
+            repeated_phases.update({"blueprintLoad": 100,
+                                    "blueprintScoreLoad": 58,
+                                    "blueprintScoreBlack": 7})
+            expect(repeated_heli["phases"] == repeated_phases and
+                   repeated_heli["allTextDoneAt"] == 238 and
+                   repeated_heli["next"] == "heliScores" and
+                   repeated_heli["nextPhase"] == "hold" and
+                   repeated_heli["revealedAt"] == 51 and
+                   repeated_heli["taskStartedAt"] == 63 and
+                   repeated_heli["firstTaskOffsets"] == [37, 21, 7] and
+                   repeated_heli["activations"] == 339,
+                   "opakovana HELI stranka znovu nacita oba HS seznamy: %r" %
+                   repeated_heli)
+            expect(intro_core["copperCounts"] == {
+                "cover": 0, "sales": 45, "faces": 80, "scores": 84},
+                "intro nema presny pocet scanline Copper udalosti")
+            expect(intro_core["salesGradient"] == [
+                [48, 15, 0xF6D], [49, 15, 0xF9E], [50, 15, 0xFCF],
+                [53, 15, 0xF9E], [54, 15, 0xF6D]],
+                "sales COLOR15 gradient neni precteny z AMPROG tabulky")
+            expect("PUBLISHED BY THE SALES CURVE LTD" in intro_core["sales"] and
+                   "PRESS FIRE TO START GAME." in intro_core["sales"],
+                "chybi embedded sales text")
+            expect("Ronald Pieket" in intro_core["faces"] and
+                   "Ned Langman" in intro_core["faces"],
+                "chybi embedded FACES credits")
+            expect(intro_core["rendered"]["scene"] == "cover" and
+                   intro_core["rendered"]["black"] == 0,
+                "COVER se nevykreslil nativni indexed cestou")
+
+            mod_core = page.evaluate("""() => {
+              const census = name => {
+                const bytes = introFileBytes(name);
+                const positions = bytes.subarray(952, 1080);
+                let patterns = 0;
+                for (const value of positions) patterns = Math.max(patterns, value + 1);
+                const counts = { e001: 0, e200: 0, e400: 0,
+                                 slide2: 0, vibrato4: 0 };
+                for (let o = 1084; o < 1084 + patterns * 1024; o += 4) {
+                  const effect = bytes[o + 2] & 15, arg = bytes[o + 3];
+                  if (effect === 0 && arg === 1) counts.e001++;
+                  if (effect === 2) { counts.slide2++; if (arg === 0) counts.e200++; }
+                  if (effect === 4) { counts.vibrato4++; if (arg === 0) counts.e400++; }
+                }
+                return counts;
+              };
+
+              const synthetic = new Uint8Array(1084 + 1024);
+              synthetic[950] = 1; synthetic[952] = 0;
+              const cell = (row, period, effect, arg) => {
+                const o = 1084 + row * 16;
+                synthetic[o] = (period >> 8) & 15;
+                synthetic[o + 1] = period & 255;
+                synthetic[o + 2] = effect & 15;
+                synthetic[o + 3] = arg;
+                return row * 16;
+              };
+              const vib481 = cell(0, 428, 4, 0x81);
+              const vib402 = cell(1, 0, 4, 0x02);
+              const vib430 = cell(2, 0, 4, 0x30);
+              const slide201 = cell(3, 600, 2, 0x01);
+              const slide200 = cell(4, 0, 2, 0x00);
+              const regular = cell(5, 508, 0, 0);
+              const player = ModPlayer(synthetic);
+              const C = player.channels[0];
+              player.debug.note(0, vib481);
+              const memories = [[C.vibspeed, C.vibdepth]];
+              player.debug.note(0, vib402);
+              memories.push([C.vibspeed, C.vibdepth]);
+              player.debug.note(0, vib430);
+              memories.push([C.vibspeed, C.vibdepth]);
+              C.vibpos = 17; player.debug.note(0, regular);
+              const retriggerPhase = C.vibpos;
+              player.debug.note(0, slide201); player.debug.tickFx();
+              const after201 = C.period;
+              player.debug.note(0, slide200); player.debug.tickFx();
+              const after200 = C.period;
+
+              C.period = 428; C.eff = 4; C.vibspeed = 6; C.vibdepth = 2;
+              C.vibpos = 0; C.fxperiod = 999; player.state.tick = 1;
+              player.debug.trackerTick();
+              const vibratoFirst = [C.fxperiod, C.vibpos];
+              player.debug.trackerTick();
+              const vibratoSecond = [C.fxperiod, C.vibpos];
+
+              let processor;
+              const fakeContext = {
+                sampleRate: 48000, destination: {},
+                createScriptProcessor: () => processor = {
+                  connect() {}, disconnect() {}, onaudioprocess: null
+                },
+                createGain: () => ({ gain: { value: 0 }, connect() {}, disconnect() {} })
+              };
+              const timing = ModPlayer(synthetic);
+              timing.start(fakeContext, 1);
+              const left = new Float32Array(1921), right = new Float32Array(1921);
+              processor.onaudioprocess({ outputBuffer: {
+                getChannelData: channel => channel ? right : left
+              }});
+              const trackerTicks = timing.state.tick;
+              timing.stop();
+
+              let stereoProcessor;
+              const stereoContext = {
+                sampleRate: 48000, destination: {},
+                createScriptProcessor: () => stereoProcessor = {
+                  connect() {}, disconnect() {}, onaudioprocess: null
+                },
+                createGain: () => ({ gain: { value: 0 }, connect() {}, disconnect() {} })
+              };
+              const stereo = ModPlayer(synthetic);
+              stereo.start(stereoContext, 1);
+              Object.assign(stereo.channels[0], {
+                s: { data: new Uint8Array([64]), len: 1, ls: 0, ll: 0 },
+                pos: 0, period: 428, vol: 64, playing: true
+              });
+              const hardLeft = new Float32Array(1), silentRight = new Float32Array(1);
+              stereoProcessor.onaudioprocess({ outputBuffer: {
+                getChannelData: channel => channel ? silentRight : hardLeft
+              }});
+              stereo.stop();
+
+              return {
+                amt: census('AMTITUNE.MOD'), amh: census('AMHITUNE.MOD'),
+                arp: [proTrackerArpeggioPeriod(856, 0),
+                      proTrackerArpeggioPeriod(856, 1),
+                      proTrackerArpeggioPeriod(856, 12)],
+                vibTable: [proTrackerVibratoPeriod(428, 0, 2),
+                           proTrackerVibratoPeriod(428, 16, 2),
+                           proTrackerVibratoPeriod(428, 48, 2)],
+                memories, retriggerPhase, after201, after200,
+                vibratoFirst, vibratoSecond, trackerTicks,
+                stereo: [hardLeft[0], silentRight[0]]
+              };
+            }""")
+            expect(mod_core["amt"] == {
+                "e001": 3, "e200": 3, "e400": 1,
+                "slide2": 163, "vibrato4": 46},
+                "AMTITUNE effect census se zmenil")
+            expect(mod_core["amh"] == {
+                "e001": 0, "e200": 0, "e400": 0,
+                "slide2": 4, "vibrato4": 87},
+                "AMHITUNE effect census se zmenil")
+            expect(mod_core["arp"] == [856, 808, 428],
+                "arpeggio nepouziva finetune-0 ProTracker period table")
+            expect(mod_core["vibTable"] == [428, 431, 425],
+                "vibrato nema nativni 32-entry sine/sign")
+            expect(mod_core["memories"] == [[8, 1], [8, 2], [3, 2]],
+                "4xy si nepamatuje speed/depth po nibblech")
+            expect(mod_core["retriggerPhase"] == 0,
+                "nova nota neresetovala vibrato phase")
+            expect(mod_core["after201"] == 601 and mod_core["after200"] == 601,
+                "2xx ma chybne parameter memory; PT 200 musi byt no-op")
+            expect(mod_core["vibratoFirst"] == [428, 6] and
+                   mod_core["vibratoSecond"] == [430, 12],
+                "vibrato posunuje fazi pred vypoctem nebo leakuje periodu")
+            expect(mod_core["trackerTicks"] == 3,
+                "48kHz tracker tick ma off-by-one delku")
+            expect(abs(mod_core["stereo"][0] - 0.5) < 1e-7 and
+                   mod_core["stereo"][1] == 0,
+                "Paula LRRL mix stale pridava umele stereo preslechy")
+
             started = time.time()
-            page.click("#levelbtns a:first-child")
+            page.keyboard.press(" ")
             page.wait_for_selector("#gamewrap", state="visible")
-            expect(page.is_visible("#gamewrap"), "po vyberu TOWN chybi herni canvas")
+            expect(page.is_visible("#gamewrap"),
+                "fire z attractu nespustil primo TOWN")
+            expect(not page.is_visible("#levelpick"),
+                "nativni fire omylem otevrel vyvojarsky level picker")
 
             # Indexovy renderer je viditelnou cestou statickeho pozadi;
             # zaroven overujeme jeho ciste bloky nad skutecnymi TOWN/.LIN daty.
@@ -133,6 +507,17 @@ def main():
                 initialTop * width, (initialTop + 256) * width);
               const initialRgb = colorRows(initialTop, 256);
 
+              const color07Ticks = [0, 3, 4, 28, 31, 32, 35, 36,
+                                    60, 63, 64]
+                .map(tick => townObjectColor07Word(tick));
+              const color07Direct = colorizeIndexedField(
+                new Uint8Array([7]), 1, 1, 1, 0, 0,
+                state.copperChecks, undefined, 0, 128,
+                townObjectColor07Word(28));
+              const color07BlackFade = colorizeIndexedField(
+                new Uint8Array([7]), 1, 1, 1, 0, 0,
+                state.copperChecks, undefined, 128, 0);
+
               // Toto okno skutecne protina tile pres checkpoint y=2127.
               // Stary RGBA vystup musi v kroku B zustat jiny; indexova cesta
               // uz ale musi dat spravnou scanline paletu pro dalsi krok.
@@ -218,6 +603,15 @@ def main():
               return {
                 town: {
                   name: pamName, height: parsed.height,
+                  lead: parsed.lead, startScroll: state.g.scroll,
+                  objectColors: Array.from(
+                    state.copperChecks[0].pal.slice(0, 10)),
+                  allObjectColors: state.copperChecks.every(c =>
+                    c.pal.slice(0, 10).every((word, i) =>
+                      word === TOWN_OBJECT_COLORS[i])),
+                  color07Ticks,
+                  color07Direct: Array.from(color07Direct),
+                  color07BlackFade: Array.from(color07BlackFade),
                   checks: parsed.checks.map(c => c.y),
                   boundaries: [
                     [65, parsed.height + margin - (top + 65),
@@ -281,8 +675,25 @@ def main():
               };
             }""")
             expect(renderer_core["town"]["name"] == "TOWN.PAM" and
-                   renderer_core["town"]["height"] == 3441,
+                   renderer_core["town"]["height"] == 3441 and
+                   renderer_core["town"]["lead"] == 96 and
+                   renderer_core["town"]["startScroll"] == 3249,
                    "Copper fixture nenacetla skutecnou mapu TOWN")
+            expect(renderer_core["town"]["objectColors"] ==
+                   [0x000, 0x333, 0x465, 0x598, 0x765,
+                    0x666, 0x9A9, 0x800, 0xED6, 0xEEE],
+                   "TOWN nema zmerenou COLOR00-09 objektovou paletu: %s" %
+                   renderer_core["town"]["objectColors"])
+            expect(renderer_core["town"]["allObjectColors"] is True and
+                   renderer_core["town"]["color07Ticks"] ==
+                   [0x800, 0x800, 0x900, 0xF00, 0xF00, 0xF00,
+                    0xF00, 0xE00, 0x800, 0x800, 0x800] and
+                   renderer_core["town"]["color07Direct"] ==
+                   [236, 0, 0, 255] and
+                   renderer_core["town"]["color07BlackFade"] ==
+                   [68, 0, 0, 255],
+                   "TOWN COLOR07 nema nativni 8..15..8 trojuhelnik/fade: %s" %
+                   renderer_core["town"])
             expect(renderer_core["town"]["checks"] ==
                    [96, 104, 191, 383, 578, 734, 929, 1272, 1352,
                     1621, 2127, 2601, 2769],
@@ -324,19 +735,18 @@ def main():
                    },
                    "BOB depth/shadow/clear fixture nesedi s 0x481a/0x6364: %s" %
                    renderer_core["bob"])
-            # RGB hodnoty zahrnuji zmerene COLOR00-09 (pixel-fit proti
-            # baseline snimkum originalu; budova na startu je 333/666/9a9,
-            # ne 888/fff z uvodni davky PAM) - proto se korektni cesta
-            # lisi od legacy na 772 pixelech, ne 21.
+            # RGB hodnoty zahrnuji zmerene COLOR00-09 drzené pres vsechny
+            # TOWN checkpointy. Legacy varianta naopak propusti pozdejsi PAM
+            # prepis indexu a na kontrolnich 21 radcich se lisi 21 pixely.
             expect(renderer_core["mapIndex"] == {
                      "size": [320, 3761],
                      "full": "3d426f35", "initial": "5870b220",
-                     "initialRgb": "b4254f7a",
-                     "legacyRgba": "b6e13bf7",
+                     "initialRgb": "d0f33b44",
+                     "legacyRgba": "ccfec5ff",
                      "differing": {
                        "top": 1454, "rows": 21,
-                       "correct": "69aac980", "legacy": "2813671f",
-                       "pixels": 772
+                       "correct": "9390eae6", "legacy": "ef98f632",
+                       "pixels": 21
                      }
                    },
                    "TOWN mapIndex/Copper RGB nema presny obsah: %s" %
@@ -347,7 +757,7 @@ def main():
                    colorizer["rejected"] == 3,
                    "indexovy colorizer nema bezpecne horni/dolni hranice: %s" %
                    colorizer)
-            expect(colorizer["runtime"] == "69aac980" and
+            expect(colorizer["runtime"] == "9390eae6" and
                    colorizer["runtimeMismatches"] == 0,
                    "viditelny runtime nepouziva presnou scanline paletu: %s" %
                    colorizer)
@@ -384,8 +794,7 @@ def main():
                       (0x80 >> (x & 7))) {
                     const o = ((HUD_SCREEN_Y + row) * 320 + x) * 4;
                     effectiveRows[row].add(
-                      ((rgba[o] / 17) << 8) | ((rgba[o + 1] / 17) << 4) |
-                      (rgba[o + 2] / 17));
+                      `${rgba[o]},${rgba[o + 1]},${rgba[o + 2]}`);
                   }
               const retainedGame = { tick: 15, fadeBlack: 0,
                                      spriteColorFlash: false };
@@ -431,11 +840,13 @@ def main():
                    "COLOR17..31 se nezachovaji behem black fade: %s" %
                    native_hud["retained"])
             expect(native_hud["firstPixel"][0] == 0 and
-                   native_hud["firstPixel"][2:] == [136,136,221,255],
+                   native_hud["firstPixel"][2:] == [106,106,197,255],
                    "HUD maska nema steady COLOR16 na prvnim tahu: %s" %
                    native_hud["firstPixel"])
             expect(native_hud["effectiveRows"] ==
-                   [[0x88D],[0xAAE],[0xCCF],[0xCCF],[0xCCF],[0xAAE],[0x88D]],
+                   [["106,106,197"],["141,141,216"],
+                    ["178,178,236"],["178,178,236"],["178,178,236"],
+                    ["141,141,216"],["106,106,197"]],
                    "HUD nesmi zdedit lower4 ani blikajici sprite banky: %s" %
                    native_hud["effectiveRows"])
 
@@ -581,10 +992,10 @@ def main():
                    hw_allocator["pool"] == [1,1,False,30],
                    "HW source/geometry/30-slot pool nesedi: %s" % hw_allocator)
             expected_hw_banks = [
-                [[255,255,255],[153,153,153],[204,0,0]],
-                [[255,255,255],[153,153,153],[255,255,0]],
-                [[255,255,255],[153,153,153],[255,204,0]],
-                [[255,255,255],[153,153,153],[136,0,0]]]
+                [[236,236,236],[123,123,123],[178,0,0]],
+                [[236,236,236],[123,123,123],[236,236,0]],
+                [[236,236,236],[123,123,123],[236,178,0]],
+                [[236,236,236],[123,123,123],[106,0,0]]]
             expect(hw_allocator["banks"] == expected_hw_banks and
                    hw_allocator["whiteBanks"] == expected_hw_banks and
                    hw_allocator["layering"] ==
@@ -671,9 +1082,9 @@ def main():
               };
             }""")
             expect(set(cannon_palette["frame28"]) ==
-                   {"255,255,255", "153,153,153", "204,0,0"} and
+                   {"236,236,236", "123,123,123", "178,0,0"} and
                    set(cannon_palette["frame44"]) ==
-                   {"255,255,255", "153,153,153"},
+                   {"236,236,236", "123,123,123"},
                    "kanonovy granat nema bilou/sedou HW-sprite paletu")
             expect(cannon_palette["accents"] ==
                    [0xC00, 0xFF0, 0xFC0, 0x800, 0xF80, 0xF00, 0xC00, 0xFF0,
@@ -914,23 +1325,53 @@ def main():
                 const escort2 = Math.abs(eq.ox - e2.vx) < 1e-12 &&
                   Math.abs(eq.oy - (e2.vy + 12)) < 1e-12;
 
-                const orphanGame = { activeCost: 140, scroll: 100,
-                                     booms: [], nextBobOrdinal: 1 };
-                const orphanBoss = { x: 160, y: 200, cost: 100,
-                  budgeted: true, groupReleased: false, parts: [
-                    { kind: 'escort', entered: true, linked: true,
-                      ox: 0, oy: 24, cost: 10, budgeted: true },
-                    { kind: 'body', entered: true, linked: true,
-                      ox: -16, oy: -12, cost: 10, budgeted: true },
-                    { kind: 'body', entered: true, linked: true,
-                      ox: 16, oy: -12, cost: 10, budgeted: true },
-                    { kind: 'body', entered: true, linked: true,
-                      ox: 0, oy: -44, cost: 10, budgeted: true }
-                  ] };
-                releaseBossGroup(orphanGame, orphanBoss, true);
-                releaseBossGroup(orphanGame, orphanBoss, true);
-                const orphan = { cost: orphanGame.activeCost,
-                  booms: orphanGame.booms.map(b => [b.x, b.y, b.z]) };
+                // Parentuv pohyb je 16.16, ale c818/c887/c8b2/c8ce
+                // porovnavaji pouze high WORD. Zlomky .75 proto patri do
+                // stejne vetve jako cela 72/64/128/192, nikoli za hranici.
+                function gooseWordBoundary(st, bsy, patch = {}) {
+                  const bg = Object.assign({}, g, {
+                    tick: 0, scroll: 1000, scrollMul: 0.000001,
+                    over: false, won: false, keys: {},
+                    player: Object.assign({}, g.player, {
+                      x: patch.targetX ?? 100.25, y: 240, alive: true,
+                      inv: 30000, bubbleTimer: 0, bubbleBound: null,
+                      cool: 0, bobOrdinal: 0
+                    }),
+                    spawns: [], air: [], hazards: [], shots: [], bullets: [],
+                    plops: [], tokens: [], booms: [], effects: [],
+                    activeCost: 0, smartPulse: 0, smartPulseTasks: [],
+                    smartPulseTaskOrdinals: [], tokenSfxTasks: [],
+                    townExplosionTasks: [], nextBobOrdinal: 2,
+                    sfx: createTownSfxState()
+                  });
+                  const bs = Object.assign({}, s, {
+                    born: true, alive: true, st, hp: 25,
+                    x: patch.x ?? 100.75, y: bg.scroll + bsy,
+                    vx: patch.vx ?? 0, vy: patch.vy ?? 0,
+                    arrived: patch.arrived ?? false,
+                    timer: patch.timer ?? 100, fireT: patch.fireT ?? 100,
+                    parts: [], assemblyLeft: 0, bodyHidden: false,
+                    unfoldPos: -1, rotorActive: false, hitSpread: false,
+                    groupReleased: false, retireAfterField: false,
+                    collisionEventWord: 0, collisionPlayerCredit: false,
+                    budgeted: false, cost: 0, bobOrdinal: 1,
+                    scrollLocked: true
+                  });
+                  bg.spawns = [bs]; step(bg);
+                  return { boss: bs, game: bg };
+                }
+                const wbIngress = gooseWordBoundary(0, 74.75, { vy: -2 });
+                const wbTarget = gooseWordBoundary(2, 100);
+                const wbLow = gooseWordBoundary(2, 64.75);
+                const wbHigh = gooseWordBoundary(2, 192.75);
+                const wbFire = gooseWordBoundary(2, 128.75, { fireT: 1 });
+                const wordBoundaries = {
+                  ingress: [wbIngress.boss.arrived,
+                    positionWord(wbIngress.boss.y - wbIngress.game.scroll)],
+                  targetVx: wbTarget.boss.vx,
+                  vertical: [wbLow.boss.vy, wbHigh.boss.vy],
+                  fire: wbFire.game.shots.map(q => q.kind).sort()
+                };
 
                 // Letalni GOOSE zasah musi ve fieldu N pouze zapsat bit0.
                 // Death synth, BIGEXPL, unlink i dva TOKENy pro timer>500
@@ -948,7 +1389,9 @@ def main():
                 });
                 const deathBoss = Object.assign({}, s, {
                   born: true, alive: true, hp: 1, timer: 503, fireT: 100,
-                  vx: 0, hitSpread: false, groupReleased: false,
+                  st: 2, x: 160, y: deathGame.scroll + 100,
+                  vx: 0, vy: 0, scrollLocked: true,
+                  hitSpread: false, groupReleased: false,
                   budgeted: true, collisionEventWord: 0,
                   collisionPlayerCredit: false,
                   parts: s.parts.map(q => Object.assign({}, q, {
@@ -989,6 +1432,44 @@ def main():
                   timeoutGame.sfx.events.filter(e =>
                     e.kind === 'cannon' || e.kind === 'homing').length];
 
+                // Po timeoutu unikajici parent skonci na -64 poslednim
+                // fieldem N. N+1 orphan callback vyhodi pouze eskortu a
+                // uvolni child cost40; parent cost100 drzi checksum tail
+                // az do resume N+108.
+                let timeoutCullGuard = 0;
+                while (!timeoutBoss.retireAfterField &&
+                       timeoutCullGuard++ < 100) step(timeoutGame);
+                const timeoutCullN = {
+                  guard: timeoutCullGuard,
+                  alive: timeoutBoss.alive,
+                  retire: !!timeoutBoss.retireAfterField,
+                  sy: Math.floor(timeoutBoss.y - timeoutGame.scroll),
+                  cost: timeoutGame.activeCost,
+                  booms: timeoutGame.booms.length,
+                  tokens: timeoutGame.tokens.length
+                };
+                step(timeoutGame);              // cull N+1: orphan + tail start
+                const timeoutCullN1 = {
+                  present: timeoutGame.spawns.includes(timeoutBoss),
+                  alive: timeoutBoss.alive,
+                  cost: timeoutGame.activeCost,
+                  booms: timeoutGame.booms.map(b => [b.source, b.z]),
+                  bigexpl: timeoutGame.sfx.events.filter(e =>
+                    e.kind === 'bigexpl').length
+                };
+                for (let i = 0; i < 106; i++) step(timeoutGame);
+                const timeoutCullN107 = {
+                  present: timeoutGame.spawns.includes(timeoutBoss),
+                  cost: timeoutGame.activeCost,
+                  parentBudgeted: !!timeoutBoss.budgeted
+                };
+                step(timeoutGame);
+                const timeoutCullN108 = {
+                  present: timeoutGame.spawns.includes(timeoutBoss),
+                  cost: timeoutGame.activeCost,
+                  parentBudgeted: !!timeoutBoss.budgeted
+                };
+
                 deathGame.spawns = [deathBoss];
                 deathGame.bullets = [{ x: deathBoss.x,
                   y: deathBoss.y - deathGame.scroll + 9 }];
@@ -1022,7 +1503,7 @@ def main():
                   bullets: deathGame.bullets.length,
                   sounds: deathGame.sfx.events.map(e =>
                     [e.kind, e.accepted, e.tick]),
-                  booms: deathGame.booms.map(b => [b.t, b.z]),
+                  booms: deathGame.booms.map(b => [b.source, b.t, b.z]),
                   activeCost: deathGame.activeCost,
                   released: deathBoss.groupReleased,
                   bossBob: composeTownBobs(deathGame,
@@ -1031,6 +1512,73 @@ def main():
                   boltHw: townHwCandidates(deathGame)
                     .filter(r => r.kind === 'player-bolt').length
                 };
+                for (let i = 0; i < 106; i++) step(deathGame);
+                const deathN107 = {
+                  present: deathGame.spawns.includes(deathBoss),
+                  cost: deathGame.activeCost,
+                  parentBudgeted: !!deathBoss.budgeted
+                };
+                step(deathGame);
+                const deathN108 = {
+                  present: deathGame.spawns.includes(deathBoss),
+                  cost: deathGame.activeCost,
+                  parentBudgeted: !!deathBoss.budgeted
+                };
+
+                // HP1 + oba residentni bity: chranena HELI zachova bit3.
+                // 0x64b6 musi po prvni lethal bit0 smrti pokracovat bitem3:
+                // prvni callback dropne kruh2, vynuluje timer a druhy proto
+                // dropne kruh3. Parent vybuchne dvakrat, orphan eskorta 1x.
+                const bothGame = Object.assign({}, deathGame, {
+                  tick: 0, player: Object.assign({}, deathGame.player, {
+                    x: 160, y: 100, alive: true, inv: 30000,
+                    bubbleTimer: 0, bubbleBound: null
+                  }),
+                  spawns: [], air: [], hazards: [], shots: [], bullets: [],
+                  plops: [], tokens: [], booms: [], effects: [],
+                  activeCost: 140, score: 0, smartPulse: 0,
+                  smartPulseTasks: [], tokenSfxTasks: [],
+                  sfx: createTownSfxState(), nextBobOrdinal: 100
+                });
+                const bothBoss = Object.assign({}, deathBoss, {
+                  born: true, alive: true, hp: 1, timer: 503,
+                  x: 160, y: bothGame.scroll + 100,
+                  groupReleased: false, budgeted: true,
+                  retireAfterField: false, checksumReleaseTick: null,
+                  checksumDone: false,
+                  collisionEventWord: 0, collisionPlayerCredit: false,
+                  parts: s.parts.map(q => Object.assign({}, q, {
+                    alive: true, dead: false, entered: true, linked: true,
+                    orphanPending: false, budgeted: true
+                  }))
+                });
+                bothGame.spawns = [bothBoss];
+                bothGame.bullets = [{ x: bothBoss.x,
+                  y: bothBoss.y - bothGame.scroll + 9 }];
+                step(bothGame);                 // N: bit0 | bit3
+                const bothQueued = {
+                  hp: bothBoss.hp,
+                  pending: bothBoss.collisionEventWord | 0,
+                  player: [bothGame.player.alive, bothGame.player.inv],
+                  tokens: bothGame.tokens.length,
+                  booms: bothGame.booms.length,
+                  cost: bothGame.activeCost
+                };
+                bothGame.player.x = 100; bothGame.player.y = 220;
+                step(bothGame);                 // N+1: dva death callbacky
+                const bothDeath = {
+                  hp: bothBoss.hp,
+                  pending: bothBoss.collisionEventWord | 0,
+                  tokens: bothGame.tokens.map(k => [k.typ, k.ang, k.burst]),
+                  boomOrder: bothGame.booms.map(b => [b.source, b.z]),
+                  synth: bothGame.sfx.events.filter(e =>
+                    e.kind.startsWith('goose-death')).map(e => e.kind),
+                  bigexpl: bothGame.sfx.events.filter(e =>
+                    e.kind === 'bigexpl').length,
+                  cost: bothGame.activeCost,
+                  parentBudgeted: !!bothBoss.budgeted,
+                  childBudgeted: bothBoss.parts.filter(q => q.budgeted).length
+                };
 
                 g.tokens = [];
                 dropBossTokens(g, s, 2);
@@ -1038,8 +1586,12 @@ def main():
                 return { born, dock, assembled, salvo, spreadQueued,
                          spread, returning,
                          bothEvents, childOnly, overshoot, snapped,
-                         escortReplace: escort1 && escort2, orphan,
-                         timeoutEscape, deathQueued, death, ring,
+                         escortReplace: escort1 && escort2,
+                         wordBoundaries,
+                         timeoutEscape, timeoutCullN, timeoutCullN1,
+                         timeoutCullN107, timeoutCullN108,
+                         deathQueued, death, deathN107, deathN108,
+                         bothQueued, bothDeath, ring,
                          tokenTypes: g.tokens.map(k => k.typ) };
               } finally {
                 window.random32 = saved.random32; g.spawns = saved.spawns;
@@ -1094,6 +1646,13 @@ def main():
             expect(boss["salvo"] == ["can", "hom", "hom"],
                    "salva bosse ma byt mireny granat + dve navadene: %s"
                    % boss["salvo"])
+            expect(boss["wordBoundaries"] == {
+                     "ingress": [True, 72],
+                     "targetVx": 1536 / 65536,
+                     "vertical": [0, 0],
+                     "fire": ["can", "hom", "hom"]},
+                   "GOOSE nepouziva high-WORD hranice pohybu/palby: %s" %
+                   boss["wordBoundaries"])
             expect(boss["spreadQueued"] == {
                      "hp": boss["spread"]["hp0"], "flag": False,
                      "bulletsLeft": 2, "pending": 1},
@@ -1126,14 +1685,29 @@ def main():
                    boss["escortReplace"] is True,
                    "GOOSE child overshoot/snap nebo escort replacement nesedi: %s / %s"
                    % (boss["overshoot"], boss["snapped"]))
-            expect(boss["orphan"] == {"cost": 0, "booms": [[160, 224, 34]]},
-                   "GOOSE timeout nema idempotentni escort orphan explozi: %s" %
-                   boss["orphan"])
             expect(boss["timeoutEscape"] ==
                      [3, 160, 96, -4, 0, 5, [31, 31, 31, 31, 31],
                       [0, 1.25, -1], 0, 165, 0],
                    "GOOSE timeout nepropadl do prvniho -4px escape fieldu: %s" %
                    boss["timeoutEscape"])
+            expect(boss["timeoutCullN"] == {
+                     "guard": 40, "alive": True, "retire": True,
+                     "sy": -64, "cost": 165, "booms": 0, "tokens": 5},
+                   "unikajici GOOSE nema posledni cull field N: %s" %
+                   boss["timeoutCullN"])
+            expect(boss["timeoutCullN1"] == {
+                     "present": True, "alive": False, "cost": 125,
+                     "booms": [["boss-escort", 34]], "bigexpl": 2},
+                   "timeout cull nema v N+1 pouze escort orphan explozi: %s" %
+                   boss["timeoutCullN1"])
+            expect(boss["timeoutCullN107"] == {
+                     "present": True, "cost": 125,
+                     "parentBudgeted": True} and
+                   boss["timeoutCullN108"] == {
+                     "present": True, "cost": 25,
+                     "parentBudgeted": False},
+                   "timeout GOOSE neuvolnil parent cost presne v N+108: %s / %s"
+                   % (boss["timeoutCullN107"], boss["timeoutCullN108"]))
             expect(boss["deathQueued"] == {
                      "alive": True, "hp": 1, "timer": 502,
                      "tokens": 0, "booms": 0, "bullets": 1,
@@ -1153,17 +1727,546 @@ def main():
                        ["goose-death-l", True, 2],
                        ["bigexpl", True, 2], ["bigexpl", True, 2],
                        ["bigexpl", False, 2], ["bigexpl", False, 2]],
-                     "booms": [[0, 33], [0, 34]],
-                     "activeCost": 10, "released": True,
+                     "booms": [["boss-parent", 0, 33],
+                               ["boss-escort", 0, 34]],
+                     "activeCost": 110, "released": True,
                      "bossBob": False, "boltHw": 0},
                    "GOOSE death callback/TOKEN childy nejsou presne v N+1: %s" %
                    boss["death"])
+            expect(boss["deathN107"] == {
+                     "present": True, "cost": 110,
+                     "parentBudgeted": True} and
+                   boss["deathN108"] == {
+                     "present": True, "cost": 10,
+                     "parentBudgeted": False},
+                   "GOOSE checksum tail neuvolnil parent cost presne v N+108: %s / %s"
+                   % (boss["deathN107"], boss["deathN108"]))
+            expect(boss["bothQueued"] == {
+                     "hp": 1, "pending": 9, "player": [True, 29999],
+                     "tokens": 0, "booms": 0, "cost": 140},
+                   "GOOSE HP1 neudrzel bit0|bit3 do N+1: %s" %
+                   boss["bothQueued"])
+            expect(boss["bothDeath"] == {
+                     "hp": -1, "pending": 0,
+                     "tokens": [[3, 0, 31], [3, 128, 31],
+                                [3, 0, 31], [3, 85, 31], [3, 170, 31]],
+                     "boomOrder": [["boss-parent", 33],
+                                   ["boss-parent", 33],
+                                   ["boss-escort", 34]],
+                     "synth": ["goose-death-r", "goose-death-l",
+                               "goose-death-r", "goose-death-l"],
+                     "bigexpl": 6, "cost": 125,
+                     "parentBudgeted": True, "childBudgeted": 0},
+                   "GOOSE HP1 bit0|bit3 neprovedl dva death callbacky 2+3: %s" %
+                   boss["bothDeath"])
             expect(len(boss["ring"]) == 2 and
                    (boss["ring"][1] - boss["ring"][0]) % 256 == 128,
                    "kruh bonusu nema krok 256/pocet: %s" % boss["ring"])
             expect(boss["tokenTypes"] == [3, 3],
                    "GOOSE bonusy nezacinaji typem ochrany 3: %s"
                    % boss["tokenTypes"])
+
+            # Loader kill pouze zneplatni generation word. SMART callback
+            # proto nesmi potlacit pozdejsi bit0/bit3 callbacky ze stejneho
+            # ulozeneho wordu; fyzicky cost/task cleanup prijde jen jednou.
+            scheduler_callbacks = page.evaluate("""() => {
+              const live = state.g;
+              function makeGame(playerPatch = {}) {
+                const player = Object.assign({
+                  x: 20, y: 220, ang: 17, alive: true, inv: 100,
+                  bubbleTimer: 0, bubbleBound: null, bubbleFrame: 9,
+                  bubbleZ: 0, bubblePhase: 0, bank: 0, cool: 0,
+                  weapon: 2, tokenCount: 0, mode: 0, reload: 11,
+                  respawnT: 0, rank: 0, heliAnimPos: 0,
+                  heliAnimFresh: true, weaponX: 20, weaponY: 220,
+                  bobOrdinal: 0
+                }, playerPatch);
+                return {
+                  mapH: live.mapH, mapW: 320, mapIndex: live.mapIndex,
+                  tick: 0, scroll: 1000, scrollMul: 0.000001,
+                  over: false, won: false, keys: {}, player,
+                  nextBobOrdinal: 20, bullets: [], shots: [], plops: [],
+                  spawns: [], booms: [], effects: [], tokens: [], air: [],
+                  hazards: [], activeCost: 0, score: 0,
+                  nextLife: 10000, lives: 4, players: 1, difficulty: 0,
+                  levelPhase: 0, rngState: 0, rngVhposWord: 0,
+                  rotoDirectionWord: 0, fadeBlack: 0, fadeWhite: 0,
+                  fadeDir: 0, fadeWhiteStep: 0, smartPulse: 0,
+                  smartPulseTasks: [], tokenSfxTasks: [], flash: 0,
+                  sfx: createTownSfxState()
+                };
+              }
+              const eventKinds = g => g.sfx.events.map(e => e.kind);
+
+              const hg = makeGame();
+              const hom = { kind: 'hom', x: 160, y: 100, ang: 0,
+                spd: 3, lead: 20, corr: 12, ct: 0,
+                cost: 5, budgeted: true, dead: false, bobOrdinal: 1,
+                collisionEventWord: 9, collisionPlayerCredit: true };
+              hg.shots = [hom]; hg.activeCost = 5;
+              hg.smartPulse = 20; hg.smartPulseTasks = [20];
+              step(hg);
+              const homing = {
+                score: hg.score, booms: hg.booms.length,
+                bigexpl: eventKinds(hg).filter(k => k === 'bigexpl').length,
+                shots: hg.shots.length, dead: !!hom.dead,
+                pending: hom.collisionEventWord | 0, cost: hg.activeCost
+              };
+
+              const ag = makeGame();
+              const air = { kind: 'fod', x: 160, y: ag.scroll + 100,
+                vx: 0, vy: 0, ax: 0, ay: 0,
+                alive: true, pending: false, dead: false,
+                cost: 10, budgeted: true, hp: 1, scoreValue: 12,
+                shooter: false, seq: [0, 1], apos: 0, at: 0,
+                animFresh: false, bobOrdinal: 1,
+                collisionEventWord: 9, collisionPlayerCredit: true };
+              ag.air = [air]; ag.activeCost = 10;
+              ag.smartPulse = 20; ag.smartPulseTasks = [20];
+              step(ag);
+              const genericAir = {
+                hp: air.hp, score: ag.score, booms: ag.booms.length,
+                bigexpl: eventKinds(ag).filter(k => k === 'bigexpl').length,
+                air: ag.air.length, dead: !!air.dead,
+                pending: air.collisionEventWord | 0, cost: ag.activeCost
+              };
+
+              // TOKEN SMART ignoruje. Bit0 musi zmenit typ3 -> typ0 jeste
+              // pred bit3 pickupem, takze nevznikne +500 ochrana/skore.
+              const tg = makeGame();
+              const token = { x: 160, y: tg.scroll + 100,
+                vx: 0, vy: .5, typ: 3, cycles: 12, blink: false,
+                hitCooldown: -1, phase: 'active', interactive: true,
+                activeHalf: 0, dead: false, cost: 5, budgeted: true,
+                bobOrdinal: 1, collisionEventWord: 9,
+                collisionPlayerCredit: true };
+              tg.tokens = [token]; tg.activeCost = 5;
+              tg.smartPulse = 20; tg.smartPulseTasks = [20];
+              step(tg);
+              const tokenBoth = {
+                typ: token.typ, cycles: token.cycles,
+                cooldown: token.hitCooldown,
+                picked: tg.tokensPickedUp || 0,
+                tokenCount: tg.player.tokenCount,
+                weapon: tg.player.weapon, mode: tg.player.mode,
+                inv: tg.player.inv, score: tg.score,
+                tokens: tg.tokens.length, dead: !!token.dead,
+                pending: token.collisionEventWord | 0, cost: tg.activeCost,
+                pickupSfx: eventKinds(tg)
+                  .filter(k => k === 'token-pickup').length
+              };
+
+              // BIRD ma vlastni neletalni callback: -6y, RNG+cannon,
+              // a teprve potom standardni a35a generic-hit vrstvu.
+              const bg = makeGame();
+              const bird = { kind: 'bird', x: 160, y: bg.scroll + 100,
+                vx: 0, vy: 0, alive: true, pending: false, dead: false,
+                cost: 10, budgeted: true, hp: 2, scoreValue: 18,
+                shooter: false, seq: [0, 1, 2, 3], per: 4,
+                apos: 0, at: 0, animFresh: false, bobOrdinal: 1,
+                collisionEventWord: 1, collisionPlayerCredit: true };
+              bg.air = [bird]; bg.activeCost = 10;
+              const savedRandom32 = window.random32;
+              window.random32 = () => 0;
+              step(bg);
+              window.random32 = savedRandom32;
+              const birdHit = {
+                hp: bird.hp,
+                sy: Math.round(bird.y - bg.scroll),
+                shots: bg.shots.map(s => [s.kind, s.ang]),
+                kinds: eventKinds(bg), score: bg.score,
+                alive: bird.alive, cost: bg.activeCost
+              };
+
+              // GOOSE nonlethal 0xc974 vrstva je custom stereo synth a
+              // nasledny standardni generic-hit. Boss je vuci SMART immune.
+              const gg = makeGame();
+              const src = live.spawns.find(s => s.beh === 'boss');
+              if (!src || !src.parts) return { err: 'boss template chybi' };
+              const goose = Object.assign({}, src, {
+                born: true, alive: true, st: 2, hp: 3, timer: 1000,
+                x: 160, y: gg.scroll + 100, vx: .5, vy: 0,
+                fireT: 100, scrollLocked: true, hitSpread: false,
+                groupReleased: false, budgeted: true, bobOrdinal: 1,
+                collisionEventWord: 1, collisionPlayerCredit: true,
+                parts: src.parts.map(q => Object.assign({}, q, {
+                  entered: true, linked: true, budgeted: true
+                }))
+              });
+              gg.spawns = [goose]; gg.activeCost = 140;
+              gg.smartPulse = 20; gg.smartPulseTasks = [20];
+              step(gg);
+              const gooseHit = {
+                hp: goose.hp, alive: goose.alive,
+                pending: goose.collisionEventWord | 0,
+                kinds: eventKinds(gg), booms: gg.booms.length,
+                cost: gg.activeCost
+              };
+              return { homing, genericAir, tokenBoth, birdHit, gooseHit };
+            }""")
+            expect("err" not in scheduler_callbacks,
+                   scheduler_callbacks.get("err", ""))
+            expect(scheduler_callbacks["homing"] == {
+                     "score": 21, "booms": 3, "bigexpl": 6,
+                     "shots": 0, "dead": True, "pending": 0, "cost": 0},
+                   "SMART+bit0|bit3 potlacil HOMING callback po invalidaci: %s"
+                   % scheduler_callbacks["homing"])
+            expect(scheduler_callbacks["genericAir"] == {
+                     "hp": -1, "score": 36, "booms": 3,
+                     "bigexpl": 6, "air": 0, "dead": True,
+                     "pending": 0, "cost": 0},
+                   "SMART+bit0|bit3 potlacil generic air callback: %s" %
+                   scheduler_callbacks["genericAir"])
+            expect(scheduler_callbacks["tokenBoth"] == {
+                     "typ": 0, "cycles": 11, "cooldown": 4,
+                     "picked": 1, "tokenCount": 1,
+                     "weapon": 3, "mode": 0, "inv": 99, "score": 0,
+                     "tokens": 0, "dead": True, "pending": 0, "cost": 0,
+                     "pickupSfx": 1},
+                   "TOKEN bit0 nepredbehl bit3 nebo nebyl SMART immune: %s" %
+                   scheduler_callbacks["tokenBoth"])
+            expect(scheduler_callbacks["birdHit"] == {
+                     "hp": 1, "sy": 94, "shots": [["can", 56]],
+                     "kinds": ["cannon", "generic-hit"], "score": 0,
+                     "alive": True, "cost": 10},
+                   "BIRD nonlethal callback nema -6y/cannon/generic-hit: %s" %
+                   scheduler_callbacks["birdHit"])
+            expect(scheduler_callbacks["gooseHit"] == {
+                     "hp": 2, "alive": True, "pending": 0,
+                     "kinds": ["goose-hit-l", "goose-hit-r", "generic-hit"],
+                     "booms": 0, "cost": 140},
+                   "GOOSE nonlethal callback nema custom+generic hit vrstvy: %s"
+                   % scheduler_callbacks["gooseHit"])
+
+            # Priority-100 FIFO hrany: callback nesmi spustit nove a36a
+            # childy inline, GOOSE orphan pouziva posledni publikovany field
+            # a checksum parent uvolni cost az ve sve pozici mezi tasky.
+            fifo_scheduler_edges = page.evaluate("""() => {
+              const live = state.g;
+              function makeGame(playerPatch = {}) {
+                const maxTop = Math.max(1, live.mapH - 257);
+                const scroll = Math.min(1000, maxTop);
+                const player = Object.assign({
+                  x: 20, y: 220, ang: 17, alive: true, inv: 100,
+                  bubbleTimer: 0, bubbleBound: null, bubbleFrame: 9,
+                  bubbleZ: 0, bubblePhase: 0, bank: 0, cool: 0,
+                  weapon: 2, tokenCount: 0, mode: 0, reload: 11,
+                  respawnT: 0, rank: 0, heliAnimPos: 0,
+                  heliAnimFresh: true, weaponX: 20, weaponY: 220,
+                  bobOrdinal: 0, collisionEventWord: 0,
+                  collisionLethal: false
+                }, playerPatch);
+                return {
+                  mapH: live.mapH, mapW: 320, mapIndex: live.mapIndex,
+                  terrainOpen: live.terrainOpen,
+                  tick: 0, scroll, scrollMul: 0.000001,
+                  over: false, won: false, keys: {}, player,
+                  nextBobOrdinal: 50, bullets: [], shots: [], plops: [],
+                  spawns: [], booms: [], effects: [], tokens: [], air: [],
+                  hazards: [], activeCost: 0, score: 0,
+                  nextLife: 10000, lives: 4, players: 1, difficulty: 0,
+                  levelPhase: 0, rngState: 0x13579bdf, rngVhposWord: 0,
+                  rotoDirectionWord: 0, fadeBlack: 0, fadeWhite: 0,
+                  fadeDir: 0, fadeWhiteStep: 0, smartPulse: 0,
+                  smartPulseTasks: [], tokenSfxTasks: [],
+                  townExplosionTasks: [], tokensPickedUp: 0, flash: 0,
+                  sfx: createTownSfxState()
+                };
+              }
+              const kinds = g => g.sfx.events.map(e => e.kind);
+              const round = n => +n.toFixed(6);
+
+              // SMART a36a pouze zaradi explosion child. BIRD bit0 pak musi
+              // spotrebovat svuj cannon RNG jeste pred dvema BIGEXPL RNG,
+              // ktere child dostane az po navratu ze soucasneho tasku.
+              const og = makeGame();
+              const orderBird = {
+                kind: 'bird', x: 160, y: og.scroll + 100,
+                vx: 0, vy: 0, alive: true, pending: false, dead: false,
+                cost: 10, budgeted: true, hp: 2, scoreValue: 18,
+                shooter: false, seq: [0, 1, 2, 3], per: 4,
+                apos: 0, at: 0, animFresh: false, bobOrdinal: 1,
+                collisionEventWord: 1, collisionPlayerCredit: true
+              };
+              og.air = [orderBird]; og.activeCost = 10; og.smartPulse = 20;
+              const savedRandom32 = window.random32;
+              const rngTrace = [], rngValues = [5, 11, 22];
+              window.random32 = () => {
+                const value = rngValues[rngTrace.length] ?? 0x44;
+                rngTrace.push(value); return value;
+              };
+              let queuedA36a;
+              try {
+                const task = { kind: 'air', o: orderBird, ordinal: 1 };
+                resumeTownObjectHousekeeping(og, task);
+                queuedA36a = {
+                  birdHp: orderBird.hp,
+                  cannonAngle: og.shots[0] ? og.shots[0].ang : null,
+                  rng: rngTrace.slice(), kinds: kinds(og),
+                  booms: og.booms.length,
+                  queued: og.townExplosionTasks.length,
+                  invalidated: !!orderBird.retireAfterField
+                };
+                retireTownTaskAfterField(og, task);
+                runFreshTownExplosionTasks(og);
+                queuedA36a.after = {
+                  rng: rngTrace.slice(), kinds: kinds(og),
+                  booms: og.booms.length,
+                  queued: og.townExplosionTasks.length,
+                  alive: orderBird.alive, cost: og.activeCost
+                };
+              } finally { window.random32 = savedRandom32; }
+
+              // Escort +542 musi explodovat na posledni pozici, kterou jeho
+              // task skutecne publikoval. Nasledna kompenzace parenta ji uz
+              // nesmi posunout. Zbytek snake kodu spotrebuje 2/1/0 RNG.
+              const pg = makeGame();
+              const publishedEscort = newBossChild(BOSS_ESCORT, 0, true);
+              Object.assign(publishedEscort, {
+                phase: 'linked', entered: true, linked: true,
+                ox: 7.25, oy: 18.5, frame: 8, bobOrdinal: 2,
+                budgeted: true, cost: 10
+              });
+              const publishedBoss = {
+                beh: 'boss', file: 'GOOSE.LIN', idx: 0,
+                born: true, taskStarted: true, armed: true, alive: true,
+                x: 123.5, y: pg.scroll + 81.25, hp: 25,
+                st: 1, assemblyLeft: 1, parts: [publishedEscort],
+                bodyHidden: true, bodyFrame: 0, rotorActive: false,
+                hitSpread: false, groupReleased: false, bobOrdinal: 1
+              };
+              pg.spawns = [publishedBoss]; pg.activeCost = 10;
+              stepBossParts(pg, publishedBoss, 0);
+              const published = {
+                x: round(publishedEscort.publishedWorldX),
+                y: round(publishedEscort.publishedWorldY),
+                scroll: round(pg.scroll),
+                screen: [
+                  round(bossPartPosition(publishedBoss, publishedEscort,
+                                         pg.scroll).x),
+                  round(bossPartPosition(publishedBoss, publishedEscort,
+                                         pg.scroll).y)
+                ],
+                rendered: composeTownBobs(pg, Math.floor(pg.scroll)).ordered
+                  .some(r => r.id === 'boss-escort-main')
+              };
+              publishedBoss.x += 41; publishedBoss.y += 19;
+              const orphanStages = [];
+              for (let stage = 0; stage < 10; stage++) {
+                const sg = makeGame();
+                const sq = Object.assign({}, publishedEscort, {
+                  phase: 'snake', snakeStage: stage,
+                  alive: true, dead: false, entered: true, linked: true,
+                  orphanPending: true, budgeted: true, cost: 10
+                });
+                const sb = Object.assign({}, publishedBoss, {
+                  alive: false, groupReleased: true, parts: [sq]
+                });
+                sg.activeCost = 10; sg.rngState = 0x2468ace0 + stage;
+                let rngCalls = 0;
+                window.random32 = gg => { rngCalls++; return savedRandom32(gg); };
+                try { resumeBossPartOrphan(sg, sb, sq); }
+                finally { window.random32 = savedRandom32; }
+                const explosion = sg.townExplosionTasks[0];
+                orphanStages.push({
+                  stage, rngCalls,
+                  pos: explosion ? [round(explosion.x), round(explosion.y)] : null,
+                  queued: sg.townExplosionTasks.length,
+                  alive: sq.alive, budgeted: sq.budgeted,
+                  cost: sg.activeCost
+                });
+              }
+
+              // Body child, ktery pri unlinku jeste spi, dokonci delay,
+              // projde a2c6 a jeden creation field. +542 jej uklidi teprve
+              // pri nasledujicim vlastnim resume.
+              const sg = makeGame();
+              const sleeper = newBossChild(BOSS_BODY_PARTS[0], 0, false);
+              Object.assign(sleeper, {
+                bobOrdinal: 2, orphanPending: true,
+                alive: true, dead: false, entered: false,
+                budgeted: false
+              });
+              const sleepingBoss = {
+                beh: 'boss', file: 'GOOSE.LIN', idx: 0,
+                born: true, taskStarted: true, armed: true, alive: false,
+                x: 160, y: sg.scroll + 80, hp: 0, st: 1,
+                assemblyLeft: 1, parts: [sleeper], bodyHidden: true,
+                bodyFrame: 0, rotorActive: false, hitSpread: false,
+                groupReleased: true, budgeted: false, bobOrdinal: 1
+              };
+              sg.spawns = [sleepingBoss];
+              let sleeperRng = 0;
+              window.random32 = gg => { sleeperRng++; return savedRandom32(gg); };
+              try { stepRetiredBossParts(sg, 0); }
+              finally { window.random32 = savedRandom32; }
+              const creationField = {
+                entered: sleeper.entered, phase: sleeper.phase,
+                alive: sleeper.alive, budgeted: sleeper.budgeted,
+                cost: sg.activeCost, rngCalls: sleeperRng,
+                resumeTasks: townCollisionResumeTasks(sg)
+                  .filter(t => t.kind === 'bossPart' && t.o === sleeper).length,
+                published: Number.isFinite(sleeper.publishedWorldX) &&
+                           Number.isFinite(sleeper.publishedWorldY),
+                rendered: composeTownBobs(sg, Math.floor(sg.scroll)).ordered
+                  .some(r => r.id === 'boss-left-main')
+              };
+              step(sg);
+              const sleeperCleanup = {
+                alive: sleeper.alive, dead: sleeper.dead,
+                budgeted: sleeper.budgeted, cost: sg.activeCost,
+                rendered: composeTownBobs(sg, Math.floor(sg.scroll)).ordered
+                  .some(r => r.id === 'boss-left-main')
+              };
+
+              // Sweep N ulozi kontakt obema taskum. V N+1 je player task
+              // prvni: nechranena HELI zemre jeste pred c974, takze living
+              // player count pri dropBossTokens je nula.
+              const cg = makeGame({
+                x: 160, y: 100, inv: 0, bubbleTimer: 0,
+                weaponX: 160, weaponY: 100
+              });
+              const contactBoss = {
+                beh: 'boss', file: 'GOOSE.LIN', idx: 0,
+                born: true, taskStarted: true, armed: true, alive: true,
+                x: 160, y: cg.scroll + 100, vx: 0, vy: 0,
+                hp: 1, timer: 503, fireT: 100, st: 1,
+                assemblyLeft: 1, parts: [], bodyHidden: false,
+                bodyFrame: 0, rotorActive: false, rotorTick: 0,
+                hitSpread: false, scrollLocked: true,
+                groupReleased: false, budgeted: true, cost: 100,
+                bobOrdinal: 1, collisionEventWord: 0,
+                collisionPlayerCredit: false
+              };
+              cg.spawns = [contactBoss]; cg.activeCost = 100;
+              step(cg);                         // N: pouze collision word
+              const contactQueued = {
+                playerAlive: cg.player.alive,
+                playerLethal: !!cg.player.collisionLethal,
+                bossHp: contactBoss.hp,
+                bossMask: contactBoss.collisionEventWord | 0,
+                tokens: cg.tokens.length
+              };
+              step(cg);                         // N+1: player -> boss
+              const contactResolved = {
+                playerAlive: cg.player.alive,
+                bossAlive: contactBoss.alive, bossHp: contactBoss.hp,
+                tokens: cg.tokens.length,
+                bossDeath: kinds(cg)
+                  .filter(k => k.startsWith('goose-death')).length
+              };
+
+              // Due checksum parent lezi FIFO mezi dvema BIRD tasky. Jeho
+              // cost setter zaznamena presny okamzik release bez zavislosti
+              // na nazvu scheduler helperu.
+              const tg = makeGame();
+              const makeBird = (ordinal, x) => ({
+                kind: 'bird', x, y: tg.scroll + 100,
+                vx: 0, vy: 0, alive: true, pending: false, dead: false,
+                cost: 10, budgeted: true, hp: 2, scoreValue: 18,
+                shooter: false, seq: [0, 1, 2, 3], per: 4,
+                apos: 0, at: 0, animFresh: false, bobOrdinal: ordinal,
+                collisionEventWord: 1, collisionPlayerCredit: true
+              });
+              const earlyBird = makeBird(1, 120), lateBird = makeBird(20, 220);
+              let parentBudgeted = true, releaseMoment = null;
+              const tailBoss = {
+                beh: 'boss', file: 'GOOSE.LIN', idx: 0,
+                born: true, taskStarted: true, armed: true, alive: false,
+                x: 160, y: tg.scroll + 80, hp: 0, st: 1,
+                assemblyLeft: 1, parts: [], bodyHidden: true,
+                bodyFrame: 0, rotorActive: false, hitSpread: false,
+                groupReleased: true, checksumReleaseTick: 1,
+                checksumDone: false, cost: 100, bobOrdinal: 10
+              };
+              Object.defineProperty(tailBoss, 'budgeted', {
+                configurable: true, enumerable: true,
+                get: () => parentBudgeted,
+                set: value => {
+                  if (parentBudgeted && !value) releaseMoment = {
+                    earlyHp: earlyBird.hp, lateHp: lateBird.hp,
+                    shots: tg.shots.length, kinds: kinds(tg)
+                  };
+                  parentBudgeted = value;
+                }
+              });
+              tg.air = [lateBird, earlyBird];
+              tg.spawns = [tailBoss]; tg.activeCost = 120;
+              step(tg);
+              const checksumPriority = {
+                releaseMoment,
+                final: {
+                  earlyHp: earlyBird.hp, lateHp: lateBird.hp,
+                  shots: tg.shots.length, cost: tg.activeCost,
+                  parentBudgeted, checksumDone: tailBoss.checksumDone
+                }
+              };
+
+              return { queuedA36a, published, orphanStages,
+                       creationField, sleeperCleanup,
+                       contactQueued, contactResolved, checksumPriority };
+            }""")
+            expect(fifo_scheduler_edges["queuedA36a"] == {
+                     "birdHp": 1, "cannonAngle": 61,
+                     "rng": [5], "kinds": ["cannon", "generic-hit"],
+                     "booms": 0, "queued": 1, "invalidated": True,
+                     "after": {
+                       "rng": [5, 11, 22],
+                       "kinds": ["cannon", "generic-hit",
+                                 "bigexpl", "bigexpl"],
+                       "booms": 1, "queued": 0,
+                       "alive": False, "cost": 0}},
+                   "SMART a36a se spustil inline nebo predběhl BIRD RNG: %s"
+                   % fifo_scheduler_edges["queuedA36a"])
+            published = fifo_scheduler_edges["published"]
+            expect(published["x"] == 130.75 and
+                   published["screen"] == [130.75, 99.75] and
+                   abs(published["y"] -
+                       (published["screen"][1] + published["scroll"])) < 1e-6 and
+                   published["rendered"] is True,
+                   "GOOSE escort nema skutecnou posledni publikovanou pozici: %s"
+                   % published)
+            expected_orphan_rng = [2, 2, 2, 2, 1, 1, 1, 1, 1, 0]
+            for row, rng_count in zip(
+                    fifo_scheduler_edges["orphanStages"], expected_orphan_rng):
+                expect(row["rngCalls"] == rng_count and
+                       row["pos"] == [published["x"], published["y"]] and
+                       row["queued"] == 1 and row["alive"] is False and
+                       row["budgeted"] is False and row["cost"] == 0,
+                       "GOOSE escort orphan stage %d nema pozici/RNG 2-1-0: %s"
+                       % (row["stage"], row))
+            expect(fifo_scheduler_edges["creationField"] == {
+                     "entered": True, "phase": "straight",
+                     "alive": True, "budgeted": True, "cost": 10,
+                     "rngCalls": 1, "resumeTasks": 1,
+                     "published": True, "rendered": True},
+                   "spici GOOSE body nema jeden post-death creation field: %s"
+                   % fifo_scheduler_edges["creationField"])
+            expect(fifo_scheduler_edges["sleeperCleanup"] == {
+                     "alive": False, "dead": True,
+                     "budgeted": False, "cost": 0, "rendered": False},
+                   "spici GOOSE body se neuvolnil az na dalsim resume: %s"
+                   % fifo_scheduler_edges["sleeperCleanup"])
+            expect(fifo_scheduler_edges["contactQueued"] == {
+                     "playerAlive": True, "playerLethal": True,
+                     "bossHp": 1, "bossMask": 8, "tokens": 0},
+                   "GOOSE contact nevydrzel jako dvojice eventu do N+1: %s"
+                   % fifo_scheduler_edges["contactQueued"])
+            expect(fifo_scheduler_edges["contactResolved"] == {
+                     "playerAlive": False, "bossAlive": False,
+                     "bossHp": 0, "tokens": 0, "bossDeath": 2},
+                   "player task nepredbehl GOOSE token callback: %s"
+                   % fifo_scheduler_edges["contactResolved"])
+            expect(fifo_scheduler_edges["checksumPriority"] == {
+                     "releaseMoment": {
+                       "earlyHp": 1, "lateHp": 2, "shots": 1,
+                       "kinds": ["cannon", "generic-hit"]},
+                     "final": {
+                       "earlyHp": 1, "lateHp": 1, "shots": 2,
+                       "cost": 20, "parentBudgeted": False,
+                       "checksumDone": True}},
+                   "GOOSE checksum cost se neuvolnil v parent FIFO pozici: %s"
+                   % fifo_scheduler_edges["checksumPriority"])
 
             # Bonus TOKEN (0x96d8): 32t radialni burst, pak blikani a
             # hit-cooldown. Typ 3 pridava invulnerability, neni MINE bublina.
@@ -1255,11 +2358,14 @@ def main():
               p.alive = true; p.inv = 0; p.weapon = 0; p.tokenCount = 0; p.mode = 0;
               p.reload = null; g.score = 0; g.fadeWhite = 0;
               pickupToken(g, mk(3));
+              runFreshTownPriorityTasks(g);
               eff.guard = { inv: p.inv, score: g.score };
               p.reload = null;
               pickupToken(g, mk(2));
+              runFreshTownPriorityTasks(g);
               eff.rate = p.reload;
               pickupToken(g, mk(4));
+              runFreshTownPriorityTasks(g);
               eff.max = { weapon: p.weapon, reload: p.reload,
                           fadeWhite: g.fadeWhite, fadeStep: g.fadeWhiteStep };
               p.weapon = 0; p.mode = 0;
@@ -1431,6 +2537,7 @@ def main():
               g.activeCost += 5;
               const beforeTimer = g.player.bubbleTimer;
               pickupMineCore(g, duplicate);
+              runFreshTownPriorityTasks(g);
               const duplicateResult = { timer: g.player.bubbleTimer,
                 beforeTimer, alive: duplicate.alive, activeCost: g.activeCost,
                 fade: g.fadeWhite, step: g.fadeWhiteStep,
@@ -1550,7 +2657,16 @@ def main():
               gp.player.bubbleBound = immuneBubble;
               gp.shots = [{ kind: 'can', x: 10, y: 10 },
                           { kind: 'hom', x: 20, y: 20 }];
-              gp.activeCost = 135; startWhiteFlash(gp); applySmartPulse(gp);
+              gp.activeCost = 135; startWhiteFlash(gp);
+              runFreshTownPriorityTasks(gp); applySmartPulse(gp);
+              const pulseQueued = {
+                booms: gp.booms.length,
+                queued: (gp.townExplosionTasks || []).length,
+                bigexpl: (gp.sfx && gp.sfx.events || [])
+                  .filter(e => e.kind === 'bigexpl').length,
+                rng: Number.isInteger(gp.rngState) ? gp.rngState : null
+              };
+              runFreshTownExplosionTasks(gp);
               const pulse = { smart: gp.smartPulse, normal: normal.alive,
                 boss: immuneBoss.alive, air: pulseAir.alive,
                 hazard: pulseHazard.alive, token: immuneToken.dead,
@@ -1559,6 +2675,7 @@ def main():
                 activeCost: gp.activeCost, score: gp.score,
                 booms: gp.booms.length };
               const gd = makeGame(false); startWhiteFlash(gd);
+              runFreshTownPriorityTasks(gd);
               for (let i = 0; i < 49; i++) step(gd);
               const pulse49 = gd.smartPulse; step(gd); const pulse50 = gd.smartPulse;
               return { queuedPickup, pickup, first, second,
@@ -1566,7 +2683,8 @@ def main():
                        fade63, fade64, wait9, wait10, penultimate,
                        expired, after, shotQueued, shot,
                        whiteRecords, playerVisual,
-                       overBudget, coreBudget, equalZ, pulse, pulse49, pulse50 };
+                       overBudget, coreBudget, equalZ,
+                       pulseQueued, pulse, pulse49, pulse50 };
             }""")
             expect(bubble["queuedPickup"] == [0, 0, 8],
                    "MINE core pickup callback probehl uz ve VBL N: %s" %
@@ -1654,6 +2772,8 @@ def main():
                      "air": False, "hazard": False, "token": False,
                      "bubble": True, "player": True, "shots": 0,
                      "activeCost": 110, "score": 0, "booms": 4} and
+                   bubble["pulseQueued"] == {
+                     "booms": 0, "queued": 4, "bigexpl": 0, "rng": None} and
                    bubble["pulse49"] == 1 and bubble["pulse50"] == 0,
                    "white smart-pulse nema 50t default kill/imunity kontrakt: %s"
                    % bubble["pulse"])
@@ -1679,6 +2799,9 @@ def main():
                   spawns: [], booms: [], effects: [], tokens: [], air: [],
                   hazards: [], activeCost: 0, score: 0,
                   nextLife: 10000, lives: 4, players: 1,
+                  continues: 2, playerPhase: 'active', playerPhaseT: 0,
+                  joinClosed: false, jeepLives: 1, jeepScore: 0,
+                  jeepTokenCount: 0, townColor07Enabled: true,
                   rotoDirectionWord: 0, fadeBlack: 0, fadeWhite: 0,
                   fadeDir: 0, fadeWhiteStep: 0, smartPulse: 0,
                   smartPulseEpoch: 0, flash: 0
@@ -1761,6 +2884,87 @@ def main():
               const respawn = [gr.player.alive, gr.player.respawnT,
                 gr.lives, gr.player.x, gr.player.y, gr.player.inv,
                 gr.player.weapon, gr.player.reload, gr.shots.length];
+
+              const heli0WaitGame = makeGame();
+              heli0WaitGame.lives = 2;
+              killPlayer(heli0WaitGame);
+              for (let i = 0; i < 99; i++) step(heli0WaitGame);
+              const heli0Wait99 = [heli0WaitGame.player.alive,
+                heli0WaitGame.player.respawnT, heli0WaitGame.lives,
+                heli0WaitGame.playerPhase];
+              step(heli0WaitGame);
+              const heli0After100 = [heli0WaitGame.player.alive,
+                heli0WaitGame.player.respawnT, heli0WaitGame.lives,
+                heli0WaitGame.playerPhase, hudStatusText(heli0WaitGame)];
+
+              // Interni zasoba 2 -> respawn spotrebuje jednu a posledni
+              // aktivni stroj musi byt HELI 0. Teprve dalsi pokus je game over.
+              const lastLife = makeGame({ alive: false });
+              lastLife.lives = 2;
+              respawnPlayer(lastLife);
+              const activeHeli0 = [lastLife.player.alive, lastLife.lives,
+                lastLife.over, hudStatusText(lastLife)];
+              lastLife.player.alive = false;
+              lastLife.player.weapon = 6; lastLife.player.tokenCount = 5;
+              lastLife.keys.f = true;             // drzeno uz pri vstupu
+              respawnPlayer(lastLife);
+              const exhaustedLives = [lastLife.player.alive, lastLife.lives,
+                lastLife.over, lastLife.playerPhase, lastLife.playerPhaseT,
+                lastLife.continues, hudStatusText(lastLife)];
+              const continuePrompts = [0, 128].map(tick => {
+                lastLife.tick = tick;
+                const texts = hudTextsForGame(lastLife);
+                return [texts.left, texts.right];
+              });
+              lastLife.tick = 0; lastLife.score = 123;
+              step(lastLife);
+              const continuedCredit = [lastLife.player.alive,
+                lastLife.lives, lastLife.continues, lastLife.playerPhase,
+                lastLife.score, lastLife.player.weapon,
+                lastLife.player.tokenCount, lastLife.player.reload,
+                hudStatusText(lastLife)];
+
+              const creditWait = makeGame({ alive: false });
+              creditWait.lives = 1; creditWait.continues = 2;
+              creditWait.effects = [{ t: 0, life: 1000 }];
+              respawnPlayer(creditWait);
+              for (let i = 0; i < 299; i++) step(creditWait);
+              const creditWait299 = [creditWait.tick, creditWait.playerPhase,
+                creditWait.playerPhaseT, creditWait.over,
+                creditWait.scroll < 1000, creditWait.effects[0].t];
+              step(creditWait);
+              const creditWait300 = [creditWait.tick, creditWait.playerPhase,
+                creditWait.fadeBlack, creditWait.over,
+                creditWait.effects[0].t];
+
+              const noCredit = makeGame({ alive: false });
+              noCredit.lives = 1; noCredit.continues = 0;
+              noCredit.effects = [{ t: 0, life: 1000 }];
+              respawnPlayer(noCredit);
+              const noCreditStart = [noCredit.playerPhase,
+                noCredit.playerPhaseT, hudTextsForGame(noCredit).left];
+              for (let i = 0; i < 99; i++) step(noCredit);
+              const noCredit99 = [noCredit.tick, noCredit.playerPhase,
+                noCredit.playerPhaseT, noCredit.over,
+                noCredit.scroll < 1000, noCredit.effects[0].t];
+              step(noCredit);
+              const closingStart = [noCredit.tick, noCredit.playerPhase,
+                noCredit.playerPhaseT, noCredit.fadeBlack,
+                noCredit.fadeDir, noCredit.joinClosed,
+                noCredit.townColor07Enabled, noCredit.continues,
+                noCredit.over, noCredit.effects[0].t];
+              const closingPromptLow = Object.values(
+                hudTextsForGame(noCredit));
+              noCredit.tick = 128;
+              const closingPromptHigh = Object.values(
+                hudTextsForGame(noCredit));
+              noCredit.tick = 100;
+              for (let i = 0; i < 15; i++) step(noCredit);
+              const closing15 = [noCredit.tick, noCredit.playerPhase,
+                noCredit.fadeBlack, noCredit.over, noCredit.effects[0].t];
+              step(noCredit);
+              const statsStart = [noCredit.tick, noCredit.playerPhase,
+                noCredit.fadeBlack, noCredit.over, noCredit.effects[0].t];
 
               // Dva bolty stejne kategorie: oba se spotrebuji, callback jen 1x.
               const co = makeGame({ alive: false });
@@ -2106,19 +3310,23 @@ def main():
               };
               const retrigger = makeGame(); retrigger.smartPulse = 20;
               retrigger.fadeWhite = 100; startWhiteFlash(retrigger);
+              runFreshTownPriorityTasks(retrigger);
               const smartRetrigger = [retrigger.smartPulse, retrigger.fadeWhite];
 
               // Kazdy 0x885a ma vlastni wait50. Stary B task proto musi
               // vypnout pulse C, i kdyz A uz globalni flag drive shodil.
               const overlapPulse = makeGame({ alive: false });
               startWhiteFlash(overlapPulse);             // A @ 0
+              runFreshTownPriorityTasks(overlapPulse);
               for (let i = 0; i < 20; i++) step(overlapPulse);
               startWhiteFlash(overlapPulse);             // B @ 20
+              runFreshTownPriorityTasks(overlapPulse);
               for (let i = 0; i < 30; i++) step(overlapPulse);
               const afterA = [overlapPulse.smartPulse,
                               overlapPulse.smartPulseTasks.slice()];
               for (let i = 0; i < 5; i++) step(overlapPulse);
               startWhiteFlash(overlapPulse);             // C @ 55
+              runFreshTownPriorityTasks(overlapPulse);
               const afterC = [overlapPulse.smartPulse,
                               overlapPulse.smartPulseTasks.slice()];
               for (let i = 0; i < 14; i++) step(overlapPulse);
@@ -2205,7 +3413,13 @@ def main():
               return { joystick, clamp: [lowX.player.x, lowY.player.y,
                        highX.player.x, highY.player.y], anim, weaponTable,
                        power2, power6, latchedOrigin, freshBolt,
-                       wait99, respawn,
+                       wait99, respawn, heli0Wait99, heli0After100,
+                       activeHeli0, exhaustedLives,
+                       continuePrompts, continuedCredit,
+                       creditWait299, creditWait300,
+                       noCreditStart, noCredit99, closingStart,
+                       closingPromptLow, closingPromptHigh,
+                       closing15, statsStart,
                        coalescedQueued, coalesced, ground: groundContact(),
                        air: airContact(0), protectedAir: airContact(2),
                        homContact: shotContact('hom'),
@@ -2270,6 +3484,48 @@ def main():
                    [True, 0, 3, 160, 192, 199, 2, 11, 1],
                    "respawn neni presne 100 VBL / maze enemy shots: %s" %
                    player_exact)
+            expect(player_exact["heli0Wait99"] ==
+                     [False, 1, 2, "active"] and
+                   player_exact["heli0After100"] ==
+                     [True, 0, 1, "active", "HELI 0[ 2* 0000000"],
+                   "posledni hratelny HELI 0 nevznikl presne po 100 VBL: %s" %
+                   player_exact)
+            expect(player_exact["activeHeli0"] ==
+                     [True, 1, False, "HELI 0[ 2* 0000000"] and
+                   player_exact["exhaustedLives"] ==
+                     [False, 0, False, "continue", 300, 2,
+                      "HELI 0[ 3* 0000000"] and
+                   player_exact["continuePrompts"] == [
+                     ["PRESS FIRE", "PRESS FIRE"],
+                     ["HELI 0[ 3* 0000000", "JEEP 0[ 2* 0000000"]] and
+                   player_exact["continuedCredit"] ==
+                     [True, 4, 1, "active", 0, 3, 5, 10,
+                      "HELI 3[ 3* 0000000"],
+                   "posledni HELI 0 / continue kredit nesedi: %s" %
+                   player_exact)
+            expect(player_exact["creditWait299"] ==
+                     [299, "continue", 1, False, True, 299] and
+                   player_exact["creditWait300"] ==
+                     [300, "closing", 0, False, 300],
+                   "continue s kreditem nema presnych 300 bezicich VBL: %s" %
+                   player_exact)
+            expect(player_exact["noCreditStart"] ==
+                     ["continue", 100, "NO CREDITS"] and
+                   player_exact["noCredit99"] ==
+                     [99, "continue", 1, False, True, 99] and
+                   player_exact["closingStart"] ==
+                     [100, "closing", 0, 0, -1, True, False, 3,
+                      False, 100] and
+                   player_exact["closingPromptLow"] ==
+                     ["PLEASE WAIT", "PLEASE WAIT"] and
+                   player_exact["closingPromptHigh"] ==
+                     ["HELI 0[ 2* 0000000", "JEEP 0[ 2* 0000000"] and
+                   player_exact["closing15"] ==
+                     [115, "closing", 240, False, 115] and
+                   player_exact["statsStart"] ==
+                     [116, "stats", 256, True, 116],
+                   "terminal death nema 100 VBL wait + 16 VBL fade: %s" %
+                   player_exact)
             expect(player_exact["coalescedQueued"] == [3, False, 2, 1] and
                    player_exact["coalesced"] == [2, True, 0, 1, 0, 1],
                    "collision event bit se nekoaleskuje za VBL: %s" %
@@ -2293,9 +3549,9 @@ def main():
             expect(player_exact["homContact"] == [False, 0, 7, 0, 17] and
                    player_exact["cannonContact"] == [False, 0, 0, 0, 16],
                    "HOMING/cannon +514 callback nesedi: %s" % player_exact)
-            expect(player_exact["simultaneous"] == [False, 0, 0, 7, 0, 17] and
+            expect(player_exact["simultaneous"] == [False, 0, 0, 14, 0, 18] and
                    player_exact["simultaneousProtected"] ==
-                   [True, 0, 0, 7, 0, 1],
+                   [True, 0, 0, 14, 0, 2],
                    "pred-callback collision snapshot nezachoval player event: %s" %
                    player_exact)
             expect(player_exact["coreHitQueued"] == [2, 2, 1] and
@@ -2305,7 +3561,7 @@ def main():
                    "MINE core custom damage/wait node nesedi: %s" % player_exact)
             expect(player_exact["homingBudget"] == [166, 165, 165, 160] and
                    player_exact["smartQueued"] == [True, 0, 1, 1, True] and
-                   player_exact["smartAttributed"] == [0, 12, 0, 1, 0] and
+                   player_exact["smartAttributed"] == [0, 24, 0, 2, 0] and
                    player_exact["smartPrefire"] == [False, 0, 0, 0] and
                    player_exact["cannonQueued"] == {
                      "player": [True, 99], "tank": True, "shots": 1,
@@ -2701,6 +3957,7 @@ def main():
                                "roto": 10, "mill": 15, "goose": 100}
             for name, cost in lifecycle_costs.items():
                 life = last_field_matrix["lifecycle"][name]
+                cleanup_cost = cost if name == "goose" else 0
                 expect(life["field"]["present"] is True and
                        (name == "token" or life["field"]["alive"] is True) and
                        life["field"]["dead"] is False and
@@ -2708,10 +3965,14 @@ def main():
                        life["field"]["cost"] == cost and
                        life["field"]["bob"] is True and
                        life["cleanup"]["alive"] is False and
-                       life["cleanup"]["cost"] == 0 and
+                       life["cleanup"]["cost"] == cleanup_cost and
                        life["cleanup"]["bob"] is False,
                        "%s nema last-field alive/render/cost -> cleanup: %s"
                        % (name, life))
+            expect(last_field_matrix["lifecycle"]["goose"]["cleanup"]
+                   ["present"] is True,
+                   "GOOSE parent task zmizel pred checksum tail: %s" %
+                   last_field_matrix["lifecycle"]["goose"])
             expected_states = {
                 "air": [[-64, 1099.75, 0, 1], [-64, 1099.5, 0, 1]],
                 "prox": [[0, 1100, 0, 1], [0, 1100, 0, 1]],
@@ -3063,6 +4324,8 @@ def main():
               mapObjects: state.mapMeta.objects,
               spawns: state.g.spawns.length,
               lives: state.g.lives,
+              firstSpawnHud: hudStatusText({ lives: state.g.lives,
+                player: { tokenCount: 0 }, score: 0 }),
               hudTexts: [
                 hudStatusText({ lives: 4, player: { tokenCount: 0 }, score: 0 }),
                 hudStatusText({ lives: 12, player: { tokenCount: 5 }, score: 9 }),
@@ -3088,11 +4351,13 @@ def main():
             })""")
             expect(summary["dispatch"] == 73, "dispatch nema 73 zaznamu")
             expect(summary["mapObjects"] == 155, "TOWN nema 155 mapovych objektu")
-            expect(summary["lives"] == 4 and summary["hudTexts"] == [
+            expect(summary["lives"] == 4 and
+                   summary["firstSpawnHud"] == "HELI 3[ 2* 0000000" and
+                   summary["hudTexts"] == [
                      "HELI 3[ 2* 0000000", "HELI 11[ 3* 0000090",
                      "HELI 3[ 2* 0100000", "HELI 3[ 2* 0999990"
-                   ], "HUD nema nativni lives/weapon/score x10 format: %s" %
-                   summary["hudTexts"])
+                   ], "HUD nema prvni spawn/lives/weapon/score x10 format: %s" %
+                   summary)
             expected_behaviors = {"wave": 60, "yellow": 12, "bird": 9,
                                   "popup": 6, "mine": 6, "proxmine": 13,
                                   "train": 3, "mill": 2, "tank": 18, "roto": 9,
@@ -3539,7 +4804,12 @@ def main():
               actx = null;                     // pure logical model, bez vystupu
               try {
                 const fresh = () => ({ tick: 0, rngState: 0,
-                  rngVhposWord: 0, sfx: createTownSfxState() });
+                  rngVhposWord: 0, sfx: createTownSfxState(),
+                  nextBobOrdinal: 1, tokenSfxTasks: [],
+                  townExplosionTasks: [], smartPulse: 0,
+                  smartPulseTasks: [], smartPulseTaskOrdinals: [],
+                  shots: [], air: [], hazards: [], spawns: [], tokens: [],
+                  plops: [], booms: [], effects: [] });
                 const eventChannels = (x) => {
                   const g = fresh();
                   for (let i = 0; i < 5; i++) sfxPlayerFire(g, x);
@@ -3555,6 +4825,30 @@ def main():
                 };
 
                 const fire = sfxFireTimeline(), hit = sfxHitTimeline();
+                const a500 = paulaA500FilterCoefficients(44100);
+                const busProbe = (() => {
+                  const saved = [paulaBusContext, paulaBusInput, paulaBusNodes];
+                  const probe = withIir => {
+                    const links = [], filters = [];
+                    const destination = { label: 'destination' };
+                    const node = label => ({ label, gain: { value: 0 },
+                      connect(target) { links.push([label, target.label]); } });
+                    const context = { sampleRate: 44100, destination,
+                      createGain: () => node('gain') };
+                    if (withIir) context.createIIRFilter = (feed, feedback) => {
+                      const n = node('iir' + filters.length);
+                      filters.push([feed.length, feedback.length]); return n;
+                    };
+                    paulaBusContext = null; paulaBusInput = null;
+                    paulaBusNodes = [];
+                    const input = paulaOutputBus(context);
+                    return { gain: input.gain.value, links, filters,
+                             nodes: paulaBusNodes.length };
+                  };
+                  const result = { filtered: probe(true), fallback: probe(false) };
+                  [paulaBusContext, paulaBusInput, paulaBusNodes] = saved;
+                  return result;
+                })();
                 const shield = sfxShieldBubbleTimeline();
                 const tokenTone = sfxTokenPickupTimeline(159);
                 const transition = sfxPlayerTransitionTimeline();
@@ -3757,6 +5051,7 @@ def main():
                   fadeWhiteStep: 0, smartPulse: 0, smartPulseTasks: [] });
                 startWhiteFlash(smartImmediateGame);
                 startWhiteFlash(smartImmediateGame);
+                runFreshTownPriorityTasks(smartImmediateGame);
                 const smartImmediate = smartImmediateGame.sfx.events
                   .slice(4).map(e => e.accepted);
                 const smartBlockedGame = fresh();
@@ -3793,6 +5088,7 @@ def main():
                   smartPulse: 0, smartPulseTasks: [] });
                 startWhiteFlash(flashHook);
                 sfxBigExplosion(flashHook, 40);
+                runFreshTownPriorityTasks(flashHook);
                 const smartConflict = {
                   events: flashHook.sfx.events.map(e => [e.kind, e.accepted]),
                   rng: flashHook.rngState >>> 0,
@@ -3814,12 +5110,22 @@ def main():
                 const tokenPickupObject = { x: 40, typ: 3, dead: false,
                   cost: 0, budgeted: false };
                 pickupToken(tokenHook, tokenPickupObject);
+                const tokenEnqueue = {
+                  events: tokenHook.sfx.events.length,
+                  task: tokenHook.tokenSfxTasks.map(t =>
+                    [t.started, t.next, t.wait, t.bobOrdinal, t.x]),
+                };
                 tokenPickupObject.x = 220; tokenHook.player.x = 220;
+                runFreshTownPriorityTasks(tokenHook);
                 const tokenPending = [];
                 for (let frame = 1; frame <= 20; frame++) {
                   advanceTownSfxClock(tokenHook);
                   tokenHook.tick++;
-                  advanceTokenSfxTasks(tokenHook);
+                  const ready = townCollisionResumeTasks(tokenHook)
+                    .filter(task => task.kind === 'tokenSfx');
+                  for (const task of ready)
+                    resumeTownObjectHousekeeping(tokenHook, task);
+                  compactTokenSfxTasks(tokenHook);
                   if (frame === 15 || frame === 20)
                     tokenPending.push(tokenHook.tokenSfxTasks.length);
                 }
@@ -3831,6 +5137,48 @@ def main():
                     weapon: 0, tokenCount: 0, mode: 0, reload: 11 } });
                 pickupToken(maxTokenHook, { x: 40, typ: 4, dead: false,
                   cost: 0, budgeted: false });
+                runFreshTownPriorityTasks(maxTokenHook);
+
+                // Fresh TOKEN sound a 0x894a exploze sdileji creation FIFO.
+                // Nizsi priority BIGEXPL se smi nejdriv prijmout a teprve
+                // pozdejsi priority120 nota jej preemptuje.
+                const fifoLowFirst = fresh();
+                queueTownExplosionTask(fifoLowFirst, 40, 80, 33, 'fifo-low');
+                sfxTokenPickup(fifoLowFirst, 40);
+                runFreshTownPriorityTasks(fifoLowFirst);
+                const fifoTokenFirst = fresh();
+                sfxTokenPickup(fifoTokenFirst, 40);
+                queueTownExplosionTask(fifoTokenFirst, 40, 80, 33,
+                                       'fifo-late');
+                runFreshTownPriorityTasks(fifoTokenFirst);
+                const tokenFifo = {
+                  lowFirst: fifoLowFirst.sfx.events.map(e =>
+                    [e.kind, e.accepted, e.channel, e.period]),
+                  tokenFirst: fifoTokenFirst.sfx.events.map(e =>
+                    [e.kind, e.accepted, e.channel, e.period]),
+                };
+
+                // TOKEN child vznikly ve starsim collision callbacku se
+                // nesmi rozbehnout pred GOOSE callbackem, ktery uz na
+                // zacatku priority100 sweepu cekal ve stejnem snapshotu.
+                const fifoExisting = fresh();
+                Object.assign(fifoExisting, { activeCost: 0, score: 0,
+                  nextLife: 10000, lives: 4, nextBobOrdinal: 3,
+                  player: { alive: true, inv: 0, weapon: 0, tokenCount: 0,
+                    mode: 0, reload: 11 } });
+                fifoExisting.tokens = [{ x: 40, y: 80, typ: 3,
+                  interactive: true, dead: false, cost: 0, budgeted: false,
+                  bobOrdinal: 1,
+                  collisionEventWord: TOWN_EVENT_PLAYER_CONTACT }];
+                fifoExisting.spawns = [{ beh: 'boss', born: true,
+                  alive: true, hp: 2, vx: 3, x: 160, y: 80, parts: [],
+                  bobOrdinal: 2,
+                  collisionEventWord: TOWN_EVENT_PLAYER_SHOT }];
+                for (const task of townCollisionResumeTasks(fifoExisting))
+                  resumeTownObjectHousekeeping(fifoExisting, task);
+                runFreshTownPriorityTasks(fifoExisting);
+                tokenFifo.existingBeforeFresh = fifoExisting.sfx.events
+                  .map(e => e.kind);
 
                 const hooks = fresh();
                 Object.assign(hooks, { activeCost: 0, shots: [], plops: [],
@@ -3842,11 +5190,13 @@ def main():
 
                 const hitGame = fresh();
                 Object.assign(hitGame, { activeCost: 0, score: 0,
-                  nextLife: 10000, lives: 3, booms: [], effects: [] });
+                  nextLife: 10000, lives: 3, booms: [], effects: [],
+                  townExplosionTasks: [], nextBobOrdinal: 1 });
                 const target = { alive: true, hp: 2, x: 80, y: 80,
                   cost: 0, budgeted: false, scoreValue: 10, beh: 'tank' };
                 damageSpawn(hitGame, target);
                 damageSpawn(hitGame, target);
+                runFreshTownExplosionTasks(hitGame);
                 const bossHitGame = fresh();
                 const bossHit = { alive: true, hp: 2, vx: 3, parts: [] };
                 damageBoss(bossHitGame, bossHit);
@@ -3903,11 +5253,30 @@ def main():
                   sampleRates: stubSampleRates.slice(smartWebStart),
                   pans: stubPans.slice(smartWebPan).map(p => p.pan.value),
                 };
+                const tokenWebStart = stubStarts.length;
+                sfxTokenPickupNote(fresh(), 40, 159);
+                const tokenWebDelay = stubStarts[tokenWebStart] - 7;
+                const bossWebStart = stubStarts.length;
+                sfxBigExplosion(fresh(), 40,
+                                SFX_GOOSE_EXPLOSION_CHILD_DELAY);
+                const bossWebDelays = stubStarts.slice(bossWebStart)
+                  .map(t => t - 7);
                 actx = null;
 
                 return {
                   allocator: { left: left.channels, right: right.channels,
                     preempt },
+                  a500Filter: {
+                    gain: PAULA_OUTPUT_GAIN,
+                    ledEnabled: PAULA_LED_FILTER_ENABLED,
+                    cutoffs: [a500.low.cutoff, a500.led.cutoff,
+                              a500.high.cutoff],
+                    q: a500.led.q,
+                    low: [a500.low.feedforward, a500.low.feedback],
+                    led: [a500.led.feedforward, a500.led.feedback],
+                    high: [a500.high.feedforward, a500.high.feedback],
+                    busProbe,
+                  },
                   fire: [fire.length, fire[0].volume, fire[0].period,
                          fire.at(-1).volume, fire.at(-1).period,
                          sfxLogicalTimeline(fire).end],
@@ -3973,7 +5342,8 @@ def main():
                     rawLength: smartRawLength, rawFirst: smartRawFirst },
                   pickupSounds: {
                     flash: [flashHook.fadeWhite, flashHook.smartPulse,
-                      flashHook.sfx.events.slice(0, 4).map(e => e.kind)],
+                      flashHook.sfx.events.filter(e =>
+                        e.kind === 'smart-bomb').map(e => e.kind)],
                     smartConflict,
                     shield: shieldHook.sfx.events.map(e =>
                       [e.kind, e.accepted, e.voice, e.channel,
@@ -3981,17 +5351,20 @@ def main():
                     token: [tokenHook.sfx.events.map(e =>
                       [e.kind, e.accepted, e.channel, e.priority,
                        e.period, e.tick]),
-                      tokenPending, tokenHook.tokensPickedUp,
+                      tokenEnqueue, tokenPending, tokenHook.tokensPickedUp,
                       tokenHook.player.inv, tokenHook.score],
                     maxToken: maxTokenHook.sfx.events.map(e =>
                       [e.kind, e.accepted, e.channel, e.period]),
                   },
+                  tokenFifo,
                   hooks: hooks.sfx.events.map(e => e.kind),
                   damage: hitGame.sfx.events.map(e => e.kind),
                   bossHit: [bossHit.hp, bossHit.vx,
                     bossHitGame.sfx.events.map(e => e.kind)],
                   gooseWebAudio,
                   smartWebAudio,
+                  childAudioDelays: { token: tokenWebDelay,
+                    boss: bossWebDelays },
                 };
               } finally { actx = savedActx; }
             }""")
@@ -4002,6 +5375,38 @@ def main():
                                   "guards": [80, 79, 79, 79]}},
                    "Paula allocator pair/fallback/strict priority nesedi: %s" %
                    audio_exact["allocator"])
+            a500_filter = audio_exact["a500Filter"]
+            expect(abs(a500_filter["gain"] - 0.2048) < 1e-12 and
+                   a500_filter["ledEnabled"] is False and
+                   all(abs(v - e) < 1e-9 for v, e in zip(
+                       a500_filter["cutoffs"],
+                       [4420.970641441538, 3090.5329041189802,
+                        5.127629156243507])) and
+                   abs(a500_filter["q"] - 0.6602252917735248) < 1e-12 and
+                   all(abs(v - e) < 1e-12 for v, e in zip(
+                       a500_filter["low"][0] + a500_filter["low"][1],
+                       [0.4566588477496909, 1, -0.5433411522503091])) and
+                   all(abs(v - e) < 1e-12 for v, e in zip(
+                       a500_filter["led"][0] + a500_filter["led"][1],
+                       [0.1146938232350718, 0.2293876464701436,
+                        0.1146938232350718, 1, -0.803844081470823,
+                        0.2626193744111102])) and
+                   all(abs(v - e) < 1e-12 for v, e in zip(
+                       a500_filter["high"][0] + a500_filter["high"][1],
+                       [0.9992697034688279, -0.9992697034688279,
+                        1, -0.9992697034688279])),
+                   "A500 shared output gain/filter coefficients nesedi: %s" %
+                   a500_filter)
+            expect(a500_filter["busProbe"] == {
+                     "filtered": {"gain": 0.2048,
+                       "links": [["gain", "iir0"], ["iir0", "iir1"],
+                                 ["iir1", "destination"]],
+                       "filters": [[1, 2], [2, 2]], "nodes": 2},
+                     "fallback": {"gain": 0.2048,
+                       "links": [["gain", "destination"]],
+                       "filters": [], "nodes": 0}},
+                   "A500 bus zapojil LED filtr nebo fallback ztratil gain: %s" %
+                   a500_filter["busProbe"])
             expect(audio_exact["fire"] == [32, 32, 1000, 1, 6508, 34] and
                    audio_exact["hit"] == [16, 64, 200, 4, 5652, 18] and
                    audio_exact["transition"] ==
@@ -4138,14 +5543,16 @@ def main():
             expect(audio_exact["pickupSounds"] == {
                      "flash": [256, 50, ["smart-bomb"] * 4],
                      "smartConflict": {"events":
-                       [["smart-bomb",True]] * 4 + [["bigexpl",False]] * 2,
+                       [["bigexpl",True]] * 2 + [["smart-bomb",True]] * 4,
                        "rng": 0x3B0E5682},
                      "shield": [["shield-bubble", True, 1, 2, 60, 150]],
-                     "token": [[
+                    "token": [[
                        ["token-pickup",True,3,120,159,0],
                        ["token-pickup",True,0,120,212,5],
                        ["token-pickup",True,3,120,159,10],
                        ["token-pickup",True,0,120,141,15]],
+                       {"events": 0,
+                        "task": [[False,0,0,1,40]]},
                        [1,0], 1, 500, 500],
                      "maxToken": [
                        ["token-pickup",True,3,159],
@@ -4155,12 +5562,27 @@ def main():
                        ["smart-bomb",True,3,996]]},
                    "SMART/bubble/TOKEN gameplay hooky nesedi: %s" %
                    audio_exact["pickupSounds"])
+            expect(audio_exact["tokenFifo"] == {
+                     "lowFirst": [
+                       ["bigexpl",True,3,599],
+                       ["bigexpl",True,0,594],
+                       ["token-pickup",True,3,159]],
+                     "tokenFirst": [
+                       ["token-pickup",True,3,159],
+                       ["bigexpl",True,0,599],
+                       ["bigexpl",True,2,594]],
+                     "existingBeforeFresh": [
+                       "goose-hit-l", "goose-hit-r", "generic-hit",
+                       "token-pickup"]},
+                   "TOKEN child a 0x894a nesdileji creation FIFO: %s" %
+                   audio_exact["tokenFifo"])
             expect(audio_exact["hooks"] ==
                    ["cannon", "homing", "flame-puff"] and
                    audio_exact["damage"] ==
                    ["generic-hit", "bigexpl", "bigexpl"] and
                    audio_exact["bossHit"] ==
-                   [1, -3, ["goose-hit-l", "goose-hit-r"]] and
+                   [1, -3,
+                    ["goose-hit-l", "goose-hit-r", "generic-hit"]] and
                    audio_exact["gooseWebAudio"] == {
                      "submit": [["old0", "old1"], []], "irq1": [],
                      "starts": [7, 7], "pans": [-1, 1]},
@@ -4177,6 +5599,15 @@ def main():
                                        [1040,1025,1010,996])),
                    "SMART.SND WebAudio delka/pitch/pan/start nesedi: %s" %
                    smart_web)
+            child_delays = audio_exact["childAudioDelays"]
+            base_irq_delay = 6928 / 709379
+            expect(abs(child_delays["token"] -
+                       (base_irq_delay + 0.00946)) < 1e-12 and
+                   len(child_delays["boss"]) == 2 and
+                   all(abs(v - (base_irq_delay + 0.00921)) < 1e-12
+                       for v in child_delays["boss"]),
+                   "TOKEN/GOOSE child sub-frame audio delay nesedi: %s" %
+                   child_delays)
 
             dynamics = page.evaluate("""() => {
               const savedRandom = window.random32;
@@ -4197,19 +5628,23 @@ def main():
                 }
 
                 const gm = { activeCost: 7, hazards: [], effects: [], booms: [],
+                             townExplosionTasks: [], nextBobOrdinal: 1,
                              score: 0, nextLife: 10000, lives: 3 };
                 const mine = { x: 90, y: 120, alive: true, cost: 7,
                                budgeted: true };
                 detonateMine(gm, mine, true);
                 detonateMine(gm, mine, true); // idempotence
+                runFreshTownExplosionTasks(gm);
                 const core = gm.hazards[0];
 
                 const gp = { activeCost: 10, hazards: [], effects: [], booms: [],
+                             townExplosionTasks: [], nextBobOrdinal: 1,
                              score: 0, nextLife: 10000, lives: 3, scroll: 0,
                              player: { x: 100, y: 100, alive: true } };
                 const prox = { x: 0, y: 0, alive: true, cost: 10,
                                budgeted: true, proxAlternate: false };
                 detonateProx(gp, prox);
+                runFreshTownExplosionTasks(gp);
                 const base = angTo(0, 0, 100, 100);
 
                 const gt = { activeCost: 0, hazards: [] };

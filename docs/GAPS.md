@@ -4,9 +4,10 @@ Seznam toho, co v `game.html` chybi nebo nesedi. Kazda polozka nese
 adresu, na ktere se to da v `AMPROG.OBJ` docist — stejne pravidlo jako
 ve zbytku `docs/`: zadny odhad, jen misto v kodu.
 
-Zdroj hlaseni: hrani prepisu proti originalu (2026-08-27).
+Zdroj hlaseni: hrani prepisu proti originalu, prubezne aktualizovano
+2026-09-01.
 
-## 1. Zvuky — TOWN ENGINE A GOOSE HIT PREPSANY, CALL-SITES ZBYVAJI
+## 1. Zvuky — TOWN ENGINE, GOOSE HIT A TOKEN FIFO PREPSANY; CALL-SITES ZBYVAJI
 
 `game.html` uz modeluje ctyri persistentni Paula hlasy a CIAB scheduler
 `0x4a66..0x4bf2`: `priority*4` guard, strict `>`, stereo-pair preferenci
@@ -27,7 +28,12 @@ White flash uz pousti kanonicky 8,280B `SMART.SND` ctyrikrat pres
 `0x885a -> 0x4cb2`, priority127 a periody 1040/1025/1010/996. Napojeny je i
 jednorazovy activation tone bound MINE bubliny `0x98f2 -> 0x4ffe` a obecny
 ctyrnotovy TOKEN pickup `0x97ce -> 0x5614`; jeho noty se zkouseji v odstupech
-0/5/10/15 VBL a zachovavaji pan podle x konkretniho TOKENu.
+0/5/10/15 VBL a zachovavaji pan podle x konkretniho TOKENu. `0x5614` uz
+nezahraje prvni notu inline: zalozi priority100 child a ten startuje ve
+strictnim creation FIFO. Stejna fronta radi fresh TOKEN, SMART `0x885a` a
+`0x894a` explosion childy; splatne dalsi noty se vraceji do FIFO mezi
+existujici continuations. Typ4 proto nativne zkusi prvni TOKEN notu pred
+ctyrmi SMART vrstvami.
 
 Otevrene zustava:
 
@@ -40,7 +46,7 @@ Otevrene zustava:
 Gameplay hudba v TOWN neni mezera: original drzi tracker modul na titulku a
 pri startu hry jej uvolni; samotny level je postaveny na zvukovych efektech.
 
-## 2. TOWN boss (GOOSE) — STAVOVY AUTOMAT UZAVREN 2026-08-30
+## 2. TOWN boss (GOOSE) — STAV A DEATH SCHEDULER UZAVREN 2026-09-01
 
 `GOOSE.LIN` snimek 0 → `0xc78a`. Prepsan je blikajici nalet, unfold
 `0,0,1,2,3,4,5`, rotor, tri casti tela i ctvrty escort, jejich samostatny
@@ -55,7 +61,27 @@ uzly maji symetrickych ±8 a bit15 projektil ma vuci kladnemu cili na obou
 osach inkluzivne `−8..+8`; eventy se pred callbacky koaleskuji po bitech.
 Od 2026-08-31 se zasah, kontakt i smrt provedou az pri resume parent tasku
 v N+1; regrese zvlaste hlida neletalni hit-spread i lethalni death synth,
-BIGEXPL, unlink a prvni radialni pohyb novych TOKEN child tasku.
+BIGEXPL, unlink a prvni radialni pohyb novych TOKEN child tasku. Od
+2026-09-01 uz `a36a` nespousti efekt inline: radi samostatny `0x894a`
+priority100 child, jehoz BIGEXPL RNG prijde az po navratu z aktualniho
+callbacku. Parent a escort tak maji vlastni explosion tasky.
+
+Pri HP1 a pending masce `bit0|bit3` se callbacky neslouci do jedne smrti:
+prvni smrt vytvori 2 TOKENy na ziveho hrace a vynuluje timer, druha proto
+vytvori 3, tedy presne kruhy **2+3**, dve parent exploze a jednu pozdejsi
+escort explozi. Unlink pouze nuluje parent pointery. Tri body childy na svem
+orphan resume potichu uvolni cost10; escort pouzije posledni publikovanou
+world pozici, zaradi `0x894a` se `z=34` a teprve potom spotrebuje 2/1/0 RNG
+podle sve snake faze. Child, ktery v okamziku smrti jeste spi pred vlastnim
+`a2c6`, dokonci delay, spotrebuje startovni RNG/cost, publikuje jeden
+post-death creation field a zanikne az na pristim orphan resume.
+
+Parent po unlinku zustava budgetovany pres presne 107 checksum yieldu a
+cost100 uvolni v N+108 ve sve creation-order FIFO pozici. Timeout/cull sdili
+stejny orphan a checksum tail, ale nema parent death efekt ani death synth.
+Ingress stop, horizontalni steering, svisle hranice a palebny gate ted navic
+porovnavaji signed high WORD 16.16 presne jako `0xc818`, `0xc887`, `0xc8b2`
+a `0xc8ce`; desetinne hodnoty `.75` uz neposouvaji GOOSE o jeden field.
 
 Drive otevrene otazky jsou tim uzavrene:
 
@@ -80,6 +106,9 @@ Viditelna bublina je vystreleny `MINE#9/#10` core `0x9860`. Pickup nastavi
 hracem pres `z=+2/-2`; po celou dobu prepisuje `+108` na 100. Duplicate
 ochranu neprodlouzi a spusti white flash. Core je harmless pickup, ale ma
 10 HP, 30 bodu a po prvnim sebrani drzi neviditelny wait10 do cleanupu.
+Pickup callback v N+1 vstoupi do cooperative `wait10`; pri resume N+2 az
+N+11 se pred waitem stale provede airborne bit4 scroll compensation, v N+10
+je cost5 jeste drzen a cleanup probehne presne jednou v N+11.
 Prvni start childa hraje jediny priority60 ton `0x4ffe`; duplicate ani
 zastreleny core tento activation tone nemaji. Kazdy sebrany TOKEN vsech typu
 naopak spousti vlastni priority120 ctyrnotovy efekt `0x5614`.
@@ -94,7 +123,9 @@ Pri tom se opravily dve veci jinde:
 
 White flash `0x8852/0x885a` je prepsany vcetne `256,-4` (64 snimku),
 50tikoveho `fp@(169)` smart pulse a prekryvajicich se tasku: kazdy trigger
-ma vlastni deadline a ktery-koli z nich muze globalni pulse shodit. Pulse
+ma vlastni deadline a ktery-koli z nich muze globalni pulse shodit. Deadline
+je priority100 task a shodi globalni flag presne ve sve creation-order pozici
+mezi starsimi a mladsimi objekty. Pulse
 bez bodu odstrani bezne objekty; score dostane jen cil, kteremu uz sweep v
 tomtez VBL frontoval player event. Player, TOKEN, bound bubble, PLOP a cela
 GOOSE skupina jsou imunni.
@@ -144,6 +175,13 @@ updater je presunut na prioritu `0xfffe`, kde spotrebovane bolty odstrani
 pred jejich dalsim pohybem. Child zalozeny callbackem neni ve vstupnim
 snapshotu, ale jeste v N+1 projde svou prvni publikaci.
 
+Loader kill meni generation word, neni to navrat z `0x64b6`. Browser proto
+po SMART smrti ani po lethalnim bit0 callbacku nezahodi zbytek ulozene masky:
+provede `SMART -> bit0 -> bit3` (a dalsi nativni sloty `4,1,2,5`) a zaznam/cost
+uklidi fyzicky jen jednou. Regrese zahrnuje HOMING, bezny air cil, TOKEN,
+BIRD, GOOSE, MINE a PROXMINE. SMART deadline task se stejne radi podle
+creation ordinalu, takze starsi objekty jej jeste vidi a mladsi uz ne.
+
 Regrese pokryva dva bolty/jeden cil, jeden bolt/dva cile, aktivni i burst
 TOKEN, MINE core, player kontakt, SMART attribution, prefire MEDTANK,
 jeden viditelny cannon field pri kontaktu s HELI, TOKEN pickup a oba GOOSE
@@ -180,20 +218,16 @@ RNG nebo audio hlas uvnitr stejneho VBL, zustava k porovnani s raw trace.
 
 Konkretni dusledky, ktere zustavaji dalsim mechanickym blokem:
 
-- presne prokladani vsech priority100 callbacku a continuation bodu jednim
-  FIFO seznamem, vcetne overeni SMART a event callbacku pres invalidovanou
-  generaci; browser zachovava pozorovatelny N/N+1 last-field kontrakt, ale
-  tento vzacny same-VBL arbitration detail jeste nema raw trace;
-- GOOSE death parent vznika v N+1 spravne, ale unlink child skupiny,
-  escort orphan callback a dva BIGEXPL child tasky se zatim provedou inline
-  misto na jejich vlastnich FIFO resume bodech;
-- TOKEN pickup zvuk ma spravne noty i rozestupy 0/5/10/15 VBL, prvni note a
-  dalsi resume se ale jeste neradi jako samostatny priority100 child mezi
-  ostatni tasky stejneho VBL;
-- GOOSE parent po smrti prochazi checksum tail s priblizne 107 yieldy a TRAIN
-  lokomotiva analogicky priblizne 53 yieldy (vagony ne). Browser zatim drzi
-  jejich budget/cost-release delay jen jako aproximaci; tento casovy tail
-  neni soucasti vizualniho last-field uzavreni.
+- presne prokladani vsech priority100 callbacku, kategorialnich continuation
+  bodu a fresh-child startu jednim univerzalnim FIFO seznamem. SMART/event
+  invalidace, SMART deadline, GOOSE child orphany/explosion childy a parent
+  checksum uz maji vlastni creation-order body; to ale jeste nedokazuje
+  obecnou frontu pro vsechny typy tasku;
+- TRAIN lokomotiva prochazi priblizne 53 checksum yieldy (vagony ne), ale
+  jeho presny continuation tail/cost release je stale aproximace. GOOSE
+  parentovych 107 yieldu a release N+108 uz ma presnou regresi;
+- map-reader stale yielduje po zaznamu jen v originalu, takze creation-order
+  mezi soucasne zpusobilymi mapovymi tasky muze posunout RNG i fresh childy.
 
 ## 5. Map-reader a hardwarovy RNG — PORADI JE JEN HRUBE PRESNE
 
@@ -208,7 +242,7 @@ Vychozi browserova hodnota VHPOSR je ale zamerne nula. Bez zachyceneho
 VHPOSR/input trace a funkcniho raw checkpointu originalu nelze tvrdit, ze
 dlouhy beh pouziva stejny seed a stejne snimky jako Amiga.
 
-## 6. Renderer — TOWN HW SPRITY A HUD UZAVRENY, ZBYVA RAW CHECKPOINT
+## 6. Renderer — TOWN HW SPRITY A NORMALNI HUD UZAVRENY, ZBYVA RAW CHECKPOINT
 
 Player bolt, kanonovy granat a publikovany PLOP frame BULLET#2 patri do osmi hardwarovych
 sprite slotu (`0x5d86`), ne do globalni BOB fronty. TOWN runtime uz ma jeden
@@ -227,6 +261,76 @@ sprite-bank sloty, ne blocker HUD barvy. Finalni RGB/DMA checkpoint porad
 potrebuje raw mereni beziciho originalu. Allocator je zatim tvrzeni o TOWN
 podporovanych tridach, ne automaticky o objektech dalsich levelu. Podrobnosti
 jsou v `TOWN-PARITY.md` a `HUD.md`.
+
+Browser drzi interni zasobu `lives=4` pred aktualnim player spawnem a HUD
+zobrazuje `lives-1`: prvni stabilni gameplay field je proto `HELI 3`,
+posledni skutecne aktivni vrtulnik `HELI 0`. Continue se otevre az po smrti
+tohoto stroje a nasledujicim dekrementu zasoby na nulu.
+
+## 7. Death/continue HUD — MECHANIKA UZAVRENA, STATS OBRAZOVKA OTEVRENA
+
+Browserovy player task po smrti ceka presne 100 simulacnich VBL. `step()` se
+po tuto dobu nezastavi: mapa, nepratele, efekty i scheduler dal bezi. Bez
+dalsiho zivota vstoupi do `playerPhase="continue"`: s dostupnym kreditem na
+300 VBL, bez kreditu na 100 VBL. Fire test `0x702c` je level-triggered, takze
+tlacitko drzene uz pri vstupu vezme kredit hned v prvnim continue VBL.
+
+Prijaty continue ubere jeden kredit, nastavi `lives=4`, `score=0` a
+`nextLife=10000` a zalozi novy `HELI 3`. Pole zbrane `+100`, citac TOKENu
+`+102` a mode `+104` preziji; bezny `0x70c8` muze pouze omezit power dolu
+podle tieru a znovu nastavit reload. Continue ani cekani nema `g.over=true`.
+
+Inactive renderer `0x740c` uz neni natvrdo `PRESS FIRE`. Bit 7 globalniho
+VBL strida po 128 snimcich prompt a dynamicky status (cely cyklus 256):
+`PRESS FIRE` s kreditem, `NO CREDITS` bez nej a po uzavreni joinu
+`PLEASE WAIT`. Nepripojeny pravy slot ma interni `jeepLives=1`, proto jeho
+dynamicka pulka ukazuje `JEEP 0`. V posledni sekvenci se tedy oba sloty
+stridaji mezi `PLEASE WAIT` a `HELI 0`/`JEEP 0`.
+
+Po timeoutu browser uzavre join, obnovi loaderovou hodnotu tri kredity,
+vypne TOWN CPU writer pulzujiciho `COLOR07` a spusti fade do cerne po 16 VBL
+(`+16` do 256). Svet bezi i behem fadu; `g.over` se nastavi az pri vstupu do
+`playerPhase="stats"` na plne cerne. Regrese hlida hranice 99/100,
+299/300, oba 128-VBL HUD pulcy, drzeny fire, zachovani vybavy, COLOR07 i
+15/16. fade field.
+
+Otevrena zustava az cilova podoba cerne statisticke stranky
+`0x0da2..0x0e3e`: pixelove presny font/layout, uplne a nativne inkrementovane
+citace `BULLETS FIRED`, `ENEMIES DESTROYED`, `ENEMIES ESCAPED`,
+`TOKENS PICKED UP`, vypocet `PERCENTAGE COMPLETED`, high-score update/vstup
+jmena a casovany navrat na titul. Soucasny Canvas panel zachovava spravnou
+fazovou hranici, ale je zamerne jen placeholder a nema kompletni statisticky
+tok.
+
+## 8. Attract/title — HLAVNI SMYCKA PREPSANA, VSTUPY A POST-GAME VETVE OTEVRENE
+
+Normalni attract dispatcher `0x0d64` uz v browseru prochazi poradi COVER,
+Sales Curve, HELI blueprint a score table, JEEP blueprint a score table a
+FACES. Obrazovky zustavaji indexove az do finalni kompozice; texty a mini-font
+se ctou z `AMPROG.OBJ`, score jmena z `HS1..16.TXT` a paletove/Copper zmeny z
+nativnich tabulek. Blueprint zachovava poradi BP2, loaderem prekryteho
+typewriteru, paletovych tasku, BP1 merge a zaverecneho fadu. Jeho casovani je
+navazane na zmereny nativni loader a continuation body, ne na rychlost
+dekodovani souboru v browseru. BP2 reveal a prvni text jsou na 51/63 VBL pro
+HELI a 45/57 VBL pro JEEP; spawn-to-generation jadro zustava 257/253 VBL.
+Samostatny `MUSHROOM.RAW`/score handoff konci na 382/335 VBL, takze skutecne
+viditelny BP2-to-score interval je 331/290 VBL. Stejny embedded HUD renderer
+se prepina podle bitu 7 VBL a `AMTITUNE.MOD` bezi od konce COVER fadu do
+startu hry.
+
+Otevrene zustava:
+
+- volba konkretniho `HS1..16.TXT` pouziva pri zalozeni attractu
+  `Math.random()`, ne sdileny nativni PRNG/VHPOS stav;
+- fire/click vzdy spusti jednoplayerovy HELI TOWN. Nativni rozliseni
+  P1/P2, JEEP a kreditove startovaci vetve zatim prepsane neni; `L` je pouze
+  browserovy vyvojarsky level picker;
+- `AMHITUNE.MOD` decoder a regrese znaji, ale zadna runtime scena jej zatim
+  nespousti ani na nej neprepina;
+- podminene post-game obrazovky nejsou soucasti normalni attract smycky.
+  Zejmena `0x0f42..0x1042` nacita `CONGRAT2.RAW`, paletu `0x2abc` a REACTOR
+  tasky; spolu s `CONGRAT1`, high-score vstupem a navratem na titul patri do
+  dosud otevreneho post-game toku.
 
 ## Co uz je vedomo jinde
 

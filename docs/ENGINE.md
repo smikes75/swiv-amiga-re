@@ -32,8 +32,11 @@ Cull callback behem `0x62d2` nefunguje jako okamzity `return`: default
 animatorem, enqueue `0x640c` a yieldem. VBL N tedy udela pohyb, cull
 invalidation a jeste publikuje BOB/HW i collision node. Pri resume v N+1
 nasleduje bit4 scroll compensation, smazani jednopolickoveho hit flash,
-orphan, SMART a event callback; teprve potom se zaznam i jeho cost uklidi.
-Posledni hranicni field proto zustava viditelny a kolizni.
+orphan, SMART a event callbacky v poradi bitu `0,3,4,1,2,5`; teprve potom
+se zaznam i jeho cost uklidi. Loader kill tedy callbacky nezastavi: po
+SMART smrti se jeste vyhodnoti cela ulozena event maska a fyzicky cleanup
+probehe jen jednou. Posledni hranicni field proto zustava viditelny a
+kolizni.
 
 ## The object
 
@@ -94,6 +97,10 @@ Airborne flag bit 4 is applied in housekeeping at `0x6434–0x644e`.
 The camera y is saved before a yield and its delta is added back to object
 y afterwards. Once active, these objects therefore change **screen y only
 by their own velocity**; terrain scroll must not be added a second time.
+To plati i pro sebrane MINE core: pickup pouze prepne task do neviditelneho
+`wait10`, ale kazde jeho resume nejprve provede bit4 scroll compensation.
+Callback vstoupi do waitu v N+1, cost5 jeste drzi v N+10 a jednou jej
+uvolni az resume N+11.
 
 ## Global difficulty, random state and active cost
 
@@ -140,7 +147,12 @@ The two disk samples use that same allocator rather than a separate mixer:
 `BIGEXPL.SND` supplies explosions and `SMART.SND` is submitted four times by
 the white-flash task. TOKEN pickup is a two-level scheduler case: a 50 Hz
 priority-100 task attempts notes at VBL 0/5/10/15, while each accepted note is
-then advanced by its own 204.8 Hz sound coroutine.
+then advanced by its own 204.8 Hz sound coroutine. `0x5614` only captures the
+TOKEN side and enqueues that task; it does not play the first note inline.
+Equal-priority insertion is strict creation FIFO, including existing object
+callbacks, fresh `0x894a` explosions and the separate SMART `0x885a` start.
+For a type-4 TOKEN the pickup-sound child is therefore started before the
+SMART child; the fourth SMART request may then preempt its first note.
 
 The `0x56e6` noise polynomial is taken when the preceding `ADD.L` carries or
 produces zero (`BHI` skips it only for clear carry and non-zero result). GOOSE
@@ -172,7 +184,11 @@ bits and projectile consumption, while the next step clears the old hit flag,
 checks the current SMART pulse and dispatches the saved event before the
 object's next movement. A cull-invalidated ordinary node likewise keeps its
 N publication/sweep, passes the saved N+1 bit4/flash/orphan/SMART/event
-housekeeping, and is cleaned up only afterwards. The player resumes before
+housekeeping, and is cleaned up only afterwards. Generation invalidation
+uvnitr SMART nebo prvniho callbacku uz dalsi callbacky nepotlaci: poradi je
+`SMART -> bit0 -> bit3` (obecne pak zbytek `4,1,2,5`) a stejny objekt muze
+zdrojove projit vice death-effect/score callbacky, zatimco jeho zaznam a cost
+se uvolni jen jednou. The player resumes before
 input; consumed player bolts are removed by the relocated `0xfffe` updater
 immediately before the
 next sweep. Creation-order snapshots keep children spawned by an N+1 callback
@@ -180,10 +196,25 @@ out of housekeeping until their own following resume, while still allowing
 their first field in the current scheduler pass. The same creation-VBL drain
 now covers fresh PROXMINE fragments, FLAME emitter/puffs and TRAIN cars; an
 attached animator publishes `seq[0]` before starting its full period. The
-remaining limitation is
-full callback/continuation interleaving across every priority-100 task and the
-exact SMART/event arbitration across an invalidated generation, as tracked in
-`GAPS.md`.
+SMART `0x885a` wait50 deadline je rovnez priority-100 task a pulse shazuje ve
+sve creation-order pozici mezi starsimi a mladsimi objekty.
+
+GOOSE smrt pouziva stejny model: `a36a` pouze zaradi samostatny `0x894a`
+child (EXPL1#7..13 period4 a dve BIGEXPL zadosti), parent nejprve unlinkne
+deti a jejich `+542` callback se provede az na vlastnim resume. Escort pouzije
+posledni publikovanou world pozici a az po enqueue sve exploze spotrebuje
+zbyvajici snake RNG. Pozde startujici body child smi po smrti parentu dokoncit
+delay, uctovat cost a publikovat jeden creation field; orphan jej uklidi az
+pri dalsim resume. Parent drzi cost100 pres 107 checksum yieldu a uvolni jej
+presne v N+108 ve sve FIFO pozici.
+
+Remaining limitation is full callback/continuation interleaving across every
+priority-100 category. Browser stale nema jednu univerzalni frontu pro vsechny
+continuations a fresh children. TOKEN sound, SMART start and `0x894a` explosion
+children uz ale sdileji creation-order drain a splatne dalsi TOKEN noty se
+radi mezi existujici continuations. Otevrene jsou zejmena TRAIN
+checksum/map-reader yield a vzacne same-VBL RNG/audio soubehy ostatnich
+kategorii, jak sleduje `GAPS.md`.
 
 ## Aiming: angle → sprite frame
 
@@ -239,6 +270,36 @@ cannon and HOMING already move, while the PLOP animator publishes BULLET#2
 and kills it on the next resume. This implementation is scoped to the
 transcribed TOWN producers; later-level producers still need their own audit.
 
+### Player life, continue and closing phases
+
+Browserova reprezentace `g.lives` je zasoba pred aktualnim spawnem, ne primo
+cislo vypsane v HUD. Startovni `4` se formatuje jako `HELI 3`; interni `1`
+je posledni aktivni `HELI 0`. Smrt nastavi player tasku `respawnT=100`, ale
+nezastavi hlavni scheduler. Teprve po sto VBL se dekrementuje zasoba: kladny
+vysledek znovu zalozi playera, nula otevre post-life automat.
+
+Automat ma tyto pozorovatelne faze:
+
+- `active/death wait`: mapa, vsechny enemy tasky i efekty bez preruseni bezi;
+- `continue`: 300 VBL pri alespon jednom kreditu, jinak 100 VBL. Vstup fire
+  je level-triggered, takze uz drzene tlacitko muze kredit spotrebovat v
+  prvnim fieldu;
+- prijeti kreditu resetuje pouze `lives/score/nextLife` na `4/0/10000`
+  (a rank/collision mezistav). Playerova weapon power, TOKEN counter a mode
+  preziji; nasledujici weapon-table aplikace smi power pouze clampnout dolu;
+- `closing`: join je zavreny, credit word se obnovi na tri, TOWN
+  per-VBL `COLOR07` writer je vypnut a `fadeBlack` roste po 16 na VBL,
+  tedy z nuly do plne cerne za 16 VBL;
+- `stats`: az zde se nastavi `g.over=true` a zastavi se svet. Smrt,
+  100-VBL wait, continue i closing fade tedy nejsou game-over stop stavy.
+
+Inactive HUD je soucast tohoto automatu. `tick & 0x80` strida dva 128-VBL
+pulcy: prompt (`PRESS FIRE`, `NO CREDITS`, nebo `PLEASE WAIT`) a dynamicky
+status. Nepripojeny P2 slot drzi `jeepLives=1`, takze statusova pulka je
+`JEEP 0`. Browser ma presny phase/timing kontrakt, ale jeho `stats` kresba,
+vsechny nativni statisticke citace a high-score/return-to-title tok jsou stale
+samostatna otevrena rendererova a datova vrstva.
+
 **The copper event compiler** (`0x5dd4`): two sorted event queues
 (`fp@(11106)`/`fp@(11120)`) are merged per frame into copper
 `WAIT(line)` + `MOVE` pairs. Fades (`0x4a48`) are applied only to
@@ -263,6 +324,26 @@ Also read along the way:
   0x88D**. A set mask bit has the measured effective OCS result COLOR16,
   independent of lower4; conventional `16|lower4` is the AGA failure.
   Projectile sprite colours come separately from `0x2afc` (COLOR17–19).
+  Canvas prevod skutecnych COLOR16–31 slov pouziva z headless-vAmiga
+  baseline zmerenou radu high nibblu `106,123,141,159,178,197,216,236`;
+  fitted mapova paleta je od teto registrove cesty zamerne oddelena.
 - A level-select cheat handler reads raw keys at `0x20e4`.
-- The title sequence (`0xf42+`) loads COVER.RAW with palette `0x2abc`
-  and preloads REACTOR frames for the logo animation.
+- The normal attract dispatcher starts at `0x0d64`. The browser follows its
+  COVER -> Sales Curve -> HELI blueprint/scores -> JEEP blueprint/scores ->
+  FACES loop from indexed disk assets and embedded program data. Blueprint
+  page replacement, palette work and typewriter continuations retain their
+  native order and are synchronized to the measured loader path.
+  From the internal task spawn, BP2 is published after 51/45 VBL and the
+  first HELI/JEEP text continuation after 63/57 VBL. The unchanged core then
+  reaches BP1 swap at 190/186 and generation at 257/253 VBL. A separate
+  score-loader handoff holds that final page until the first score field at
+  382/335 VBL; measured BP2-to-score visibility is therefore 331/290 VBL.
+  The first narrative worker field is primed to three/two words, while the
+  specs worker publishes only its rule. Dense frames also show buffered
+  palette publication rather than every intermediate write: BP1 holds the
+  white-level-96 field before its endpoint, and the score fade collapses to
+  the measured dark/black fields without changing those timing boundaries.
+- `0x0f42` is not the title entry: it is the conditional post-game
+  `CONGRAT2.RAW` branch. It selects palette `0x2abc` and starts the REACTOR
+  animation tasks; that branch remains separate from the normal attract
+  transcription.

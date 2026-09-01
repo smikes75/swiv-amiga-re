@@ -40,7 +40,7 @@ a { color:#cfe0ff }
 
 <div id="titlewrap" style="display:none">
   <canvas id="title" style="image-rendering:pixelated;border:3px solid var(--black);cursor:pointer"></canvas>
-  <p><b>PRESS FIRE</b> <small>(space / click)</small></p>
+  <p id="titlehint" style="display:none"><b>PRESS FIRE</b> <small>(space / click)</small></p>
 </div>
 
 <div id="levelpick" style="display:none">
@@ -134,26 +134,62 @@ function readCatalog(adf) {
 
 function unpackFile(adf, f) { return unpackC(adf, f.off + 4, f.size); }
 
-// .RAW: 4 bitplany 320x256 sekvencne, paleta 16x RGB12 na konci
-function rawImage(bytes) {
-  const W = 320, H = 256, ROW = 40, base = bytes.length - 32;
-  const pal = [];
-  for (let i = 0; i < 16; i++) {
-    const v = (bytes[base + 2 * i] << 8) | bytes[base + 2 * i + 1];
-    pal.push([((v >> 8) & 15) * 17, ((v >> 4) & 15) * 17, (v & 15) * 17]);
-  }
-  const px = new Uint8ClampedArray(W * H * 4);
+// .RAW: 4 bitplany 320x256 sekvencne, paleta 16x RGB12 na konci.
+// Nativni intro paletu ze souboru casto zamerne ignoruje a prepisuje ji
+// blokem z AMPROG.OBJ. Proto indexy neztracime pri prvnim dekodovani.
+function decodeRawIndexed(bytes) {
+  const W = 320, H = 256, ROW = 40, BITPLANES = 4;
+  const pixelBytes = BITPLANES * ROW * H;
+  if (!bytes || bytes.length < pixelBytes + 32)
+    throw new RangeError("RAW file is shorter than 320x256x4 + palette");
+  const paletteOffset = bytes.length - 32;
+  const paletteWords = new Uint16Array(16);
+  for (let i = 0; i < 16; i++)
+    paletteWords[i] = (bytes[paletteOffset + 2 * i] << 8) |
+                      bytes[paletteOffset + 2 * i + 1];
+  const pixels = new Uint8Array(W * H);
   for (let y = 0; y < H; y++)
     for (let xb = 0; xb < ROW; xb++) {
       const bs = [0, 1, 2, 3].map(pl => bytes[pl * ROW * H + y * ROW + xb]);
       for (let b = 0; b < 8; b++) {
         let v = 0;
         for (let pl = 0; pl < 4; pl++) if (bs[pl] & (0x80 >> b)) v |= 1 << pl;
-        const o = (y * W + xb * 8 + b) * 4, c = pal[v];
-        px[o] = c[0]; px[o + 1] = c[1]; px[o + 2] = c[2]; px[o + 3] = 255;
+        pixels[y * W + xb * 8 + b] = v;
       }
     }
-  return { px, w: W, h: H, pal };
+  return { pixels, paletteWords, w: W, h: H };
+}
+
+function colorizeRawIndexed(raw, paletteWords = raw.paletteWords,
+                            blackLevel = 0, whiteLevel = 0, out) {
+  if (!raw || raw.pixels.length !== raw.w * raw.h ||
+      !paletteWords || paletteWords.length !== 16)
+    throw new RangeError("indexed RAW or palette has a wrong size");
+  const size = raw.w * raw.h * 4;
+  if (out === undefined) out = new Uint8ClampedArray(size);
+  if (out.length !== size)
+    throw new RangeError("RAW RGBA buffer has a wrong size");
+  const rgb = new Array(16);
+  for (let i = 0; i < 16; i++) {
+    const word = fadeRgb12(paletteWords[i], blackLevel, whiteLevel);
+    rgb[i] = [((word >> 8) & 15) * 17,
+              ((word >> 4) & 15) * 17,
+              (word & 15) * 17];
+  }
+  for (let i = 0; i < raw.pixels.length; i++) {
+    const c = rgb[raw.pixels[i]], o = i * 4;
+    out[o] = c[0]; out[o + 1] = c[1]; out[o + 2] = c[2]; out[o + 3] = 255;
+  }
+  return out;
+}
+
+function rawImage(bytes) {
+  const raw = decodeRawIndexed(bytes);
+  const px = colorizeRawIndexed(raw);
+  const pal = Array.from(raw.paletteWords, v =>
+    [((v >> 8) & 15) * 17, ((v >> 4) & 15) * 17, (v & 15) * 17]);
+  return { px, w: raw.w, h: raw.h, pal,
+           pixels: raw.pixels, paletteWords: raw.paletteWords };
 }
 
 // .LIN: word pocet; snimek = word delka, w, h, cx, cy, pruhledna, ...
@@ -307,6 +343,30 @@ function parsePam(pam, dico) {
   return { tiles, objs, checks, height: y, lead: Math.max(0, lead) };
 }
 
+/* COLOR00-09 jsou sdilene barvy objektu, nikoli terrain checkpointy PAM.
+   Tohle jsou canvas RGB12 kompenzace z pixel-fitu JEEPHELI/YELLOW/
+   MEDTANK/GOOSE proti vystupu emulatoru, ne tvrzeni o HW registrech.
+   Musi zustat stejne pres vsechny checkpointy;
+   kdybychom prijali zdanne zmeny PAM od y=104, GOOSE dostane prokazatelne
+   chybnou smisenou paletu 555/687/7ba/987/bcb/b30. */
+const TOWN_OBJECT_COLORS = [0x000, 0x333, 0x465, 0x598, 0x765,
+                            0x666, 0x9A9, 0x800, 0xED6, 0xEEE];
+function applyTownObjectPalette(checks) {
+  for (const check of checks)
+    for (let i = 0; i < TOWN_OBJECT_COLORS.length; i++)
+      check.pal[i] = TOWN_OBJECT_COLORS[i];
+  return checks;
+}
+
+/* 0x2b3e..0x2b5a: pri aktivnim levelu CPU kazdy VBL prepise COLOR07
+   cervenym trojuhelnikem 8..15..8, kazda hodnota drzi ctyri VBL.
+   Pouziva se mimo jine na pulzujici cervene casti skladaneho GOOSE. */
+function townObjectColor07Word(vbl) {
+  let phase = (Math.trunc(vbl || 0) >>> 2) & 15;
+  if (phase & 8) phase = ~phase;
+  return (8 + (phase & 7)) << 8;
+}
+
 /* Presne RGB12 skalovace z 0x4a48/0x4a40. Uroven 0 je beze zmeny,
    256 je plna cerna/bila; mezivysledek se oreze po kazdem nibblu. */
 function fadeRgb12Black(rgb12, level) {
@@ -325,6 +385,19 @@ function fadeRgb12(rgb12, blackLevel, whiteLevel) {
   if (blackLevel) out = fadeRgb12Black(out, blackLevel);
   if (whiteLevel) out = fadeRgb12White(out, whiteLevel);
   return out;
+}
+
+/* Vystup headless vAmiga baseline nema linearni nibble*17 profil.
+   CPU/HW barvy 8..F byly zmereny primo ve snimcich jako tato prevodni
+   rada. Pouzivame ji jen pro skutecna registrova slova (HUD, HW sprity,
+   dynamicky COLOR07); fitted canvas paleta mapy uz kompenzaci obsahuje. */
+const VAMIGA_HIGH_NIBBLE = [106, 123, 141, 159, 178, 197, 216, 236];
+function capturedRgb12(word) {
+  const channel = shift => {
+    const nibble = (word >> shift) & 15;
+    return nibble >= 8 ? VAMIGA_HIGH_NIBBLE[nibble - 8] : nibble * 17;
+  };
+  return [channel(8), channel(4), channel(0)];
 }
 
 /* Sestavi plochou tabulku rows x 16 RGB12 barev pro viditelne scanline.
@@ -386,7 +459,7 @@ function colorizeIndexedRows(mapIndex, width, mapHeight, margin, top, rows,
    ale Copper paleta se stale pocita z absolutniho mapoveho paletteTop. */
 function colorizeIndexedField(fieldIndex, width, rows, mapHeight, margin,
                               paletteTop, checks, out,
-                              blackLevel, whiteLevel) {
+                              blackLevel, whiteLevel, color07Word) {
   if (!Number.isInteger(width) || width <= 0 ||
       !Number.isInteger(rows) || rows < 0 || fieldIndex.length !== width * rows)
     throw new RangeError("indexed field has a wrong size");
@@ -400,11 +473,16 @@ function colorizeIndexedField(fieldIndex, width, rows, mapHeight, margin,
   for (let sy = 0; sy < rows; sy++) {
     const pal = sy * 16;
     for (let x = 0; x < width; x++) {
-      const word = palettes[pal + fieldIndex[sy * width + x]];
+      const color = fieldIndex[sy * width + x];
+      // 0x28fe vola CPU writer jen pri nulovem black fadu. Kdyz bezi,
+      // zapis COLOR07 prijde primo do HW a neprochazi ani white fadem.
+      const direct = color === 7 && color07Word !== undefined;
+      const word = direct ? color07Word : palettes[pal + color];
+      const capture = direct ? capturedRgb12(word) : null;
       const o = (sy * width + x) * 4;
-      out[o] = ((word >> 8) & 15) * 17;
-      out[o + 1] = ((word >> 4) & 15) * 17;
-      out[o + 2] = (word & 15) * 17;
+      out[o] = direct ? capture[0] : ((word >> 8) & 15) * 17;
+      out[o + 1] = direct ? capture[1] : ((word >> 4) & 15) * 17;
+      out[o + 2] = direct ? capture[2] : (word & 15) * 17;
       out[o + 3] = 255;
     }
   }
@@ -416,7 +494,10 @@ function renderMap(state, lv, withObjects) {
   const { fid, dico } = levelInfo(prog, lv);
   const pamName = order[fid];
   const pam = unpackFile(state.adf, state.files.find(f => f.name === pamName));
-  const { tiles, objs, checks, height } = parsePam(pam, dico);
+  const parsed = parsePam(pam, dico);
+  // Zmerena objektova paleta je zatim prokazana pouze pro level 1/TOWN.
+  if (lv === 0) applyTownObjectPalette(parsed.checks);
+  const { tiles, objs, checks, height } = parsed;
   // viditelne okno hry = hriste x 0..320: pointer bez posunu, fetch
   // 40 B, modulo 4 na konci radky -> skryty okraj je cely vpravo
   const XOFF = 0, MARGIN = 160;
@@ -513,6 +594,34 @@ function renderMap(state, lv, withObjects) {
 
 /* ---- ProTracker prehravac (podmnozina efektu, ktere SWIV moduly
    pouzivaji: 0,1,2,3,4,A,B,C,D,F). Mix v ScriptProcessorNode. ---- */
+const PT_PERIODS = Object.freeze([
+  856, 808, 762, 720, 678, 640, 604, 570, 538, 508, 480, 453,
+  428, 404, 381, 360, 339, 320, 302, 285, 269, 254, 240, 226,
+  214, 202, 190, 180, 170, 160, 151, 143, 135, 127, 120, 113,
+]);
+const PT_VIBRATO = Object.freeze([
+  0, 24, 49, 74, 97, 120, 141, 161,
+  180, 197, 212, 224, 235, 244, 250, 253,
+  255, 253, 250, 244, 235, 224, 212, 197,
+  180, 161, 141, 120, 97, 74, 49, 24,
+]);
+
+function proTrackerArpeggioPeriod(period, semitones) {
+  let note = 0, best = Infinity;
+  for (let i = 0; i < PT_PERIODS.length; i++) {
+    const distance = Math.abs(PT_PERIODS[i] - period);
+    if (distance < best) { best = distance; note = i; }
+  }
+  return PT_PERIODS[Math.min(PT_PERIODS.length - 1,
+                             note + Math.max(0, semitones | 0))];
+}
+
+function proTrackerVibratoPeriod(period, phase, depth) {
+  phase &= 63;
+  const magnitude = (PT_VIBRATO[phase & 31] * (depth & 15)) >> 7;
+  return period + ((phase & 32) ? -magnitude : magnitude);
+}
+
 function ModPlayer(bytes) {
   const dec = b => new TextDecoder("latin1").decode(b).replace(/\0.*$/, "");
   const smp = [];
@@ -538,7 +647,8 @@ function ModPlayer(bytes) {
   const ch = [];
   for (let i = 0; i < 4; i++)
     ch.push({ s: null, pos: 0, period: 0, tperiod: 0, vol: 0, port: 0,
-              vibpos: 0, vib: 0, playing: false });
+              fxperiod: 0, vibpos: 0, vibspeed: 0, vibdepth: 0,
+              playing: false });
   const st = { row: 0, order: 0, speed: 6, bpm: 125, tick: 0,
                samplesPerTick: 0, cnt: 0, done: false, loop: true };
 
@@ -551,11 +661,20 @@ function ModPlayer(bytes) {
     if (inst) { C.s = smp[inst - 1]; C.vol = C.s.vol; }
     if (period) {
       if (eff === 3) C.tperiod = period;       // toneporta cil
-      else { C.period = period; C.pos = 0; C.playing = !!C.s; }
+      else {
+        C.period = period; C.pos = 0; C.playing = !!C.s;
+        C.vibpos = 0;                          // PT retrigger resetuje fazi
+      }
     }
     C.eff = eff; C.arg = arg;
     switch (eff) {
       case 3: if (arg) C.port = arg; break;
+      case 4:
+        // ProTracker si pamatuje obe nibbly zvlast; 400 je po prvnim
+        // pruchodu no-op, v dalsim loopu AMTITUNE obnovi predchozi 462.
+        if (arg >> 4) C.vibspeed = arg >> 4;
+        if (arg & 15) C.vibdepth = arg & 15;
+        break;
       case 0xB: st.jump = arg; break;
       case 0xC: C.vol = Math.min(64, arg); break;
       case 0xD: st.brk = (arg >> 4) * 10 + (arg & 15); break;
@@ -565,9 +684,11 @@ function ModPlayer(bytes) {
   function tickFx() {
     for (const C of ch) {
       switch (C.eff) {
-        case 0: if (C.arg) {                    // arpeggio (hrube)
+        case 0: if (C.arg) {
             const t = st.tick % 3;
-            C.shift = t === 1 ? C.arg >> 4 : t === 2 ? C.arg & 15 : 0;
+            const semitones = t === 1 ? C.arg >> 4 : t === 2 ? C.arg & 15 : 0;
+            if (semitones)
+              C.fxperiod = proTrackerArpeggioPeriod(C.period, semitones);
           } break;
         case 1: C.period = Math.max(113, C.period - C.arg); break;
         case 2: C.period = Math.min(856, C.period + C.arg); break;
@@ -575,9 +696,11 @@ function ModPlayer(bytes) {
             if (C.period < C.tperiod) C.period = Math.min(C.tperiod, C.period + C.port);
             else C.period = Math.max(C.tperiod, C.period - C.port);
           } break;
-        case 4: C.vibpos = (C.vibpos + (C.arg >> 4)) & 63;
-            C.vib = Math.sin(C.vibpos * Math.PI / 32) * (C.arg & 15) * 2;
-            break;
+        case 4:
+          C.fxperiod = proTrackerVibratoPeriod(
+            C.period, C.vibpos, C.vibdepth);
+          C.vibpos = (C.vibpos + C.vibspeed) & 63;
+          break;
         case 0xA: C.vol = Math.max(0, Math.min(64,
             C.vol + (C.arg >> 4) - (C.arg & 15))); break;
       }
@@ -598,6 +721,12 @@ function ModPlayer(bytes) {
       if (st.loop) st.order = 0; else st.done = true;
     }
   }
+  function trackerTick() {
+    // Arpeggio a vibrato meni efektivni periodu pouze pro tento tick.
+    for (const C of ch) C.fxperiod = 0;
+    if (st.tick === 0) advanceRow(); else tickFx();
+    st.tick = (st.tick + 1) % st.speed;
+  }
   let node = null, gain = null;
   function start(actx, volume) {
     st.samplesPerTick = actx.sampleRate / (st.bpm * 2 / 5);
@@ -607,37 +736,38 @@ function ModPlayer(bytes) {
       const L = e.outputBuffer.getChannelData(0),
             R = e.outputBuffer.getChannelData(1);
       for (let i = 0; i < L.length; i++) {
-        if (st.cnt-- <= 0) {
-          st.cnt = actx.sampleRate / (st.bpm * 2 / 5) | 0;
-          if (st.tick === 0) advanceRow(); else tickFx();
-          st.tick = (st.tick + 1) % st.speed;
+        if (st.cnt <= 0) {
+          trackerTick();
+          st.samplesPerTick = actx.sampleRate / (st.bpm * 2 / 5);
+          st.cnt += st.samplesPerTick;
         }
+        st.cnt--;
         let l = 0, r = 0;
         for (let c = 0; c < 4; c++) {
           const C = ch[c];
           if (!C.playing || !C.s || C.period < 100) continue;
-          let per = C.period + (C.vib || 0);
-          if (C.shift) per = per / Math.pow(2, C.shift / 12);
+          const per = C.fxperiod || C.period;
           const rate = PAL / per / actx.sampleRate;
-          C.pos += rate;
           const s = C.s;
           if (C.pos >= s.len) {
             if (s.ll > 2) C.pos = s.ls + (C.pos - s.len) % s.ll;
             else { C.playing = false; continue; }
           }
           const v = ((s.data[C.pos | 0] << 24) >> 24) / 128 * (C.vol / 64);
+          C.pos += rate;
           if (c === 0 || c === 3) l += v; else r += v;   // Amiga LRRL
         }
-        L[i] = l * 0.5 + r * 0.15;
-        R[i] = r * 0.5 + l * 0.15;
+        L[i] = l;
+        R[i] = r;
       }
     };
-    node.connect(gain); gain.connect(actx.destination);
+    node.connect(gain); gain.connect(paulaOutputBus(actx));
   }
   function stop() {
     if (node) { node.disconnect(); gain.disconnect(); node = null; }
   }
-  return { start, stop, state: st };
+  return { start, stop, state: st, channels: ch,
+           debug: { note, tickFx, advanceRow, trackerTick } };
 }
 
 /* ============================================================ HRA
@@ -655,12 +785,12 @@ const SCROLL = 12.5;                 // 0x1da6: $4000 16.16 = .25 px/VBL
 window.addEventListener("dragover", e => e.preventDefault());
 window.addEventListener("drop", e => {
   e.preventDefault();
-  if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+  if (e.dataTransfer.files[0]) { unlockAudioContext(); loadFile(e.dataTransfer.files[0]); }
 });
 $("#fpick").addEventListener("change", e => {
-  if (e.target.files[0]) loadFile(e.target.files[0]);
+  if (e.target.files[0]) { unlockAudioContext(); loadFile(e.target.files[0]); }
 });
-$("#insert").onclick = () => $("#fpick").click();
+$("#insert").onclick = () => { unlockAudioContext(); $("#fpick").click(); };
 
 async function loadFile(file) {
   const adf = new Uint8Array(await file.arrayBuffer());
@@ -673,41 +803,645 @@ async function loadFile(file) {
   state.behaviorDispatch = scanBehaviorDispatch(state.prog, state.order);
   state.frameCache = {}; state.indexedFrameCache = new Map();
   state.spriteCache = {};
+  state.introFileCache = new Map(); state.introRawCache = new Map();
   $("#intro").style.display = "none";
   showTitle();
 }
 
-/* ---- titulka: COVER.RAW + AMTITUNE.MOD ---- */
-function showTitle() {
-  $("#titlewrap").style.display = "";
-  const f = state.files.find(f => f.name === "COVER.RAW");
-  if (f) {
-    const img = rawImage(unpackFile(state.adf, f));
-    const cv = $("#title");
-    cv.width = img.w; cv.height = img.h;
-    cv.getContext("2d").putImageData(new ImageData(img.px, img.w, img.h), 0, 0);
-    const scale = Math.max(1, Math.min(3, Math.floor(Math.min(
-      (window.innerWidth - 60) / img.w,
-      (window.innerHeight - 160) / img.h))));
-    cv.style.width = (img.w * scale) + "px";
+/* ---- Nativni attract intro (0x0d64, 0x1598..0x23cc, 0x2f06..0x33fc) ----
+   COVER -> credits -> HELI blueprint -> HELI scores -> JEEP blueprint ->
+   JEEP scores -> FACES, potom znovu od zacatku. Vsechny obrazovky i texty
+   vznikaji z dat vlozene diskety; zadna bitmapa ani jmeno nejsou nahrazky. */
+const ATTRACT_SCENE_ORDER = Object.freeze([
+  "cover", "sales", "heliBlueprint", "heliScores",
+  "jeepBlueprint", "jeepScores", "faces",
+]);
+const ATTRACT_HOLD_VBLS = Object.freeze({
+  cover: 600, sales: 400, heliScores: 250, jeepScores: 250, faces: 600,
+});
+const ATTRACT_PALETTE_OFFSETS = Object.freeze({
+  cover: 0x29BC, sales: 0x29BC, faces: 0x29DC, scores: 0x29FC,
+  outline: 0x2A3C, white: 0x2A5C, jeep: 0x2A7C, heli: 0x2A9C,
+});
+const ATTRACT_FADE_LEVELS = Object.freeze(
+  Array.from({ length: 17 }, (_, i) => i * 16));
+const BLUEPRINT_COLOR_STARTS = Object.freeze([0, 8, 16, 24, 32, 40, 48]);
+const BLUEPRINT_COLOR_WORDS = Object.freeze([
+  0xFFF, 0xFFF, 0xEFF, 0xCFE, 0xAFD, 0x8FC, 0x6FB, 0x4FA,
+  0x2F9, 0x0F8, 0x0E7, 0x0D6, 0x0C5, 0x0B4, 0x0A3,
+]);
+const BLUEPRINT_COLOR_END_VBL = 78;
+const BLUEPRINT_BP1_LOAD_VBLS = Object.freeze({ heli: 100, jeep: 96 });
+const BLUEPRINT_MERGE_VBLS = 9;
+const BLUEPRINT_REVEAL_VBLS = Object.freeze({ heli: 51, jeep: 45 });
+const BLUEPRINT_TASK_START_VBLS = Object.freeze({ heli: 63, jeep: 57 });
+const BLUEPRINT_NARRATIVE_FIRST_RESUMES = Object.freeze({ heli: 13, jeep: 7 });
+// Po generation zustane BP1 na obrazovce, zatimco 0x2f06/0x3314 pripravuji
+// high-score data a MUSHROOM.RAW. Prvni HELI pruchod jednou inicializuje oba
+// seznamy. Pole stable je nehybna cast pred prvni viditelnou zmenou; po ni
+// nasleduje 17-VBL fade a kratky cerny copy/palette tail.
+const BLUEPRINT_SCORE_HANDOFF_VBLS = Object.freeze({
+  firstHeli: Object.freeze({ stable: 100, black: 8 }),
+  cached: Object.freeze({ stable: 58, black: 7 }),
+});
+const INTRO_MINI_FONT = 0x2CCC;
+
+function readProgramPalette(prog, offset) {
+  if (!prog || offset < 0 || offset + 32 > prog.length)
+    throw new RangeError("intro palette is outside AMPROG.OBJ");
+  const words = new Uint16Array(16);
+  for (let i = 0; i < 16; i++)
+    words[i] = (prog[offset + i * 2] << 8) | prog[offset + i * 2 + 1];
+  return words;
+}
+
+function programCString(prog, offset) {
+  let end = offset;
+  while (end < prog.length && prog[end]) end++;
+  return new TextDecoder("latin1").decode(prog.subarray(offset, end));
+}
+
+function introFileBytes(name) {
+  if (!state.introFileCache) state.introFileCache = new Map();
+  if (!state.introFileCache.has(name)) {
+    const file = state.files.find(f => f.name === name);
+    if (!file) throw new Error("SWIV intro file is missing: " + name);
+    state.introFileCache.set(name, unpackFile(state.adf, file));
   }
-  if (!actx) try { actx = new AudioContext(); } catch (e) {}
-  if (actx && !state.titleMod) {
-    const mf = state.files.find(f => f.name === "AMTITUNE.MOD");
-    if (mf) {
-      state.titleMod = ModPlayer(unpackFile(state.adf, mf));
-      state.titleMod.start(actx, 0.6);
+  return state.introFileCache.get(name);
+}
+
+function introRaw(name) {
+  if (!state.introRawCache) state.introRawCache = new Map();
+  if (!state.introRawCache.has(name))
+    state.introRawCache.set(name, decodeRawIndexed(introFileBytes(name)));
+  return state.introRawCache.get(name);
+}
+
+function cloneIntroRaw(raw) {
+  return { pixels: raw.pixels.slice(), paletteWords: raw.paletteWords.slice(),
+           w: raw.w, h: raw.h };
+}
+
+function blankIntroRaw() {
+  return { pixels: new Uint8Array(320 * 256),
+           paletteWords: new Uint16Array(16), w: 320, h: 256 };
+}
+
+function drawIntroText(prog, pixels, text, anchorX, y, color, align = 1) {
+  const width = Math.max(0, hudTextWidth(prog, text) - 1);
+  let x = anchorX;
+  if (align === 0) x -= width >> 1;
+  else if (align === 2) x -= width;
+  const start = x;
+  for (const ch of text) {
+    const glyph = hudGlyph(prog, ch);
+    for (let gy = 0; gy < 7; gy++) {
+      const py = y + gy;
+      if (py < 0 || py >= 256) continue;
+      for (let gx = 0; gx < glyph.width; gx++) {
+        const px = x + gx;
+        if (px >= 0 && px < 320 &&
+            (glyph.rows[gy] & (1 << (glyph.width - 1 - gx))))
+          pixels[py * 320 + px] = color & 15;
+      }
+    }
+    x += glyph.width + 1;
+  }
+  return { x: start, width, end: x };
+}
+
+/* 0x5730..0x5934: formatovany text pouzivany sales/FACES/high-score.
+   _xNNN, _yNNN, _cNN, _aN, _n(+8), _m(+12), _f(flush). */
+function drawIntroFormatted(prog, pixels, stream) {
+  let x = 0, y = 0, color = 1, align = 1, p = 0, text = "";
+  const flush = () => {
+    if (text) drawIntroText(prog, pixels, text, x, y, color, align);
+    text = "";
+  };
+  while (p < stream.length) {
+    if (stream[p] !== "_") { text += stream[p++]; continue; }
+    flush();
+    const command = stream[p + 1]; p += 2;
+    if (command === "x" || command === "y") {
+      const value = Number(stream.slice(p, p + 3)); p += 3;
+      if (command === "x") x = value; else y = value;
+    } else if (command === "c") {
+      color = Number(stream.slice(p, p + 2)); p += 2;
+    } else if (command === "a") {
+      align = Number(stream[p++]);
+    } else if (command === "n") y += 8;
+    else if (command === "m") y += 12;
+    else if (command !== "f") throw new Error("unknown native text command _" + command);
+  }
+  flush();
+  return { x, y, color, align };
+}
+
+function introMiniCode(code) {
+  return code >= 97 && code <= 122 ? code - 32 : code;
+}
+
+/* 0x4344: 4x6 font, sest bajtu na ASCII znak, kresleny jako index 8. */
+function drawBlueprintMiniGlyph(prog, pixels, mask, code, x, y) {
+  code = introMiniCode(code & 255);
+  const offset = INTRO_MINI_FONT + code * 6;
+  if (offset + 6 > prog.length) return;
+  for (let gy = 0; gy < 6; gy++) {
+    const bits = prog[offset + gy] >> 4, py = y + gy;
+    if (py < 0 || py >= 256) continue;
+    for (let gx = 0; gx < 4; gx++) {
+      const px = x + gx;
+      if (px < 0 || px >= 320 || !(bits & (8 >> gx))) continue;
+      const pos = py * 320 + px;
+      pixels[pos] = 8; mask[pos] = 1;
     }
   }
-  const go = () => {
-    window.removeEventListener("keydown", onkey);
-    $("#title").removeEventListener("click", go);
-    $("#titlewrap").style.display = "none";
-    $("#levelpick").style.display = "";
+}
+
+function createBlueprintTextTask(prog, offset, x, y, pixels, mask) {
+  return { prog, bytes: prog, p: offset, start: offset,
+           baseX: x, baseY: y, x, y,
+           wrapX: (x <= 160 ? x + 32 : x) + 130,
+           delay: 0, wait: 0, afterWait: null,
+           pixels, mask, done: false, end: null };
+}
+
+function blueprintNewline(task) {
+  task.x = task.baseX; task.y += 6;
+}
+
+function drawBlueprintRule(task, vertical, count) {
+  let x = task.x, y = task.y;
+  for (let i = 0; i < count; i++) {
+    drawBlueprintMiniGlyph(task.prog, task.pixels, task.mask,
+                           vertical ? 94 : 92, x, y);
+    drawBlueprintMiniGlyph(task.prog, task.pixels, task.mask,
+                           vertical ? 93 : 91,
+                           vertical ? x : x + 4,
+                           vertical ? y + 6 : y);
+    if (vertical) y += 6; else x += 4;
+  }
+}
+
+/* 0x1b0a..0x1cc8: jedna aktivace vykresli cele slovo. Wait nastava na
+   whitespace/newline a po dekorativnim pravidle, nikoli po znacich. */
+function resumeBlueprintTextTask(task) {
+  if (task.done) return;
+  if (task.wait > 0 && --task.wait > 0) return;
+  if (task.afterWait) {
+    const action = task.afterWait; task.afterWait = null;
+    if (action === "space") task.x += 4;
+    else if (action === "newline") blueprintNewline(task);
+  }
+  // Bez waitu zustava callback v jednom scheduler resume: caption s
+  // delay=0 proto vznikne cely v jedinem VBL, ne po jednom slovu.
+  let guard = 4096;
+  while (!task.done && guard-- > 0) {
+    // Pred kazdym slovem native premeri delku po prvni byte <= 32.
+    let q = task.p, wordWidth = 0;
+    while (q < task.bytes.length && task.bytes[q] > 32) {
+      wordWidth += 4; q++;
+    }
+    if (task.x + wordWidth >= task.wrapX) blueprintNewline(task);
+
+    let tokenEnded = false;
+    while (task.p < task.bytes.length) {
+      const code = task.bytes[task.p++];
+      if (code === 0) {
+        task.done = true; task.end = task.p - 1; return;
+      }
+      if (code === 3) {
+        const dx = (task.bytes[task.p++] << 24) >> 24;
+        const dy = (task.bytes[task.p++] << 24) >> 24;
+        task.baseX += dx * 4; task.x = task.baseX;
+        task.baseY += dy * 6; task.y = task.baseY;
+        continue;
+      }
+      if (code === 4) {
+        task.delay = (task.bytes[task.p++] << 24) >> 24;
+        continue;
+      }
+      if (code === 1 || code === 2) {
+        drawBlueprintRule(task, code === 2, task.bytes[task.p++]);
+        if (task.delay > 0) {
+          task.wait = task.delay; task.afterWait = "rule"; return;
+        }
+        continue;
+      }
+      if (code === 32 || code === 10) {
+        const action = code === 32 ? "space" : "newline";
+        if (task.delay > 0) {
+          task.wait = task.delay; task.afterWait = action; return;
+        }
+        if (action === "space") task.x += 4;
+        else blueprintNewline(task);
+        tokenEnded = true;
+        break;
+      }
+      if (task.x < task.wrapX)
+        drawBlueprintMiniGlyph(task.prog, task.pixels, task.mask,
+                               code, task.x, task.y);
+      task.x += 4;
+    }
+    if (!tokenEnded && task.p >= task.bytes.length) {
+      task.done = true; task.end = task.p; return;
+    }
+  }
+  if (guard <= 0) throw new Error("blueprint typewriter did not yield");
+}
+
+function blueprintPaletteAt(prog, vbl) {
+  const palette = readProgramPalette(prog, ATTRACT_PALETTE_OFFSETS.outline);
+  for (let slot = 0; slot < 7; slot++) {
+    const elapsed = vbl - BLUEPRINT_COLOR_STARTS[slot];
+    if (elapsed < 0) continue;
+    const step = Math.min(BLUEPRINT_COLOR_WORDS.length - 1,
+                          Math.floor(elapsed / 2));
+    const word = BLUEPRINT_COLOR_WORDS[step];
+    const color = slot + 1;
+    palette[color] = (word >> 1) & 0x777;
+    palette[color + 8] = word;
+  }
+  return palette;
+}
+
+function blueprintFinalPalette(prog, vehicle, whiteLevel) {
+  const offset = vehicle === "heli" ? ATTRACT_PALETTE_OFFSETS.heli
+                                     : ATTRACT_PALETTE_OFFSETS.jeep;
+  const palette = readProgramPalette(prog, offset);
+  for (let i = 0; i < 16; i++)
+    // 0x19e4 prochazi paletu dopredu, ale DBF index 15..0 obracene;
+    // NOT/AND #7/BEQ proto ve skutecnem COLOR poradi vynecha 0 a 8.
+    if (i !== 0 && i !== 8)
+      palette[i] = fadeRgb12White(palette[i], whiteLevel);
+  return palette;
+}
+
+function blueprintFinalWhiteLevel(vehicle, vbl) {
+  // Dense native frames publikuji jeden mezistupen a potom endpoint;
+  // mezilehle 0x19e4 zapisy zustavaji v zadnim palette bufferu.
+  return vbl < (vehicle === "heli" ? 13 : 12) ? 96 : 0;
+}
+
+function blueprintScoreFadeBlack(vehicle, vbl) {
+  if (vbl <= 0) return 0;
+  if (vehicle === "heli") return vbl <= 12 ? 224 : 256;
+  return 256;
+}
+
+function parseHighScoreNames(bytes) {
+  const lines = new TextDecoder("latin1").decode(bytes).split(/\r?\n/);
+  const names = [];
+  for (const line of lines) {
+    if (line === ".") break;
+    if (line) names.push(line);
+  }
+  return names.slice(0, 7);
+}
+
+function introHighScoreFile(vehicle, randomWord) {
+  return "HS" + ((vehicle === "heli" ? 1 : 9) + (randomWord & 7)) + ".TXT";
+}
+
+function drawHighScores(a, vehicle) {
+  const raw = cloneIntroRaw(introRaw("MUSHROOM.RAW"));
+  const randomWord = vehicle === "heli" ? a.heliHighScoreWord : a.jeepHighScoreWord;
+  const file = introHighScoreFile(vehicle, randomWord);
+  const names = parseHighScoreNames(introFileBytes(file));
+  drawIntroText(state.prog, raw.pixels,
+                "TODAY'S BEST " + vehicle.toUpperCase() + " SCORES",
+                160, 48, 15, 0);
+  for (let i = 0; i < 7; i++) {
+    drawIntroText(state.prog, raw.pixels, names[i] || "", 32, 80 + i * 16, 15, 1);
+    drawIntroText(state.prog, raw.pixels, String((7 - i) * 100000),
+                  290, 80 + i * 16, 15, 2);
+  }
+  a.highScoreFile = file;
+  return raw;
+}
+
+function prepareBlueprint(a, vehicle) {
+  const prefix = vehicle === "heli" ? "HELI" : "JEEP";
+  const bp2 = cloneIntroRaw(introRaw(prefix + "BP2.RAW"));
+  const mask = new Uint8Array(320 * 256);
+  a.vehicle = vehicle; a.raw = bp2; a.blueprintMask = mask;
+  a.blueprintHiddenRaw = blankIntroRaw();
+  a.blueprintVbl = 0; a.blueprintRevealed = false;
+  a.blueprintTaskStarted = false;
+  const narrative = vehicle === "heli" ? 0x17B4 : 0x15F4;
+  const specs = vehicle === "heli" ? 0x1856 : 0x16A2;
+  a.blueprintTasks = [
+    createBlueprintTextTask(state.prog, 0x1906, 16, 196, bp2.pixels, mask),
+    createBlueprintTextTask(state.prog, narrative, 180, 86, bp2.pixels, mask),
+    createBlueprintTextTask(state.prog, specs, 180, 137, bp2.pixels, mask),
+  ];
+}
+
+function mergeBlueprintFinal(a) {
+  const prefix = a.vehicle === "heli" ? "HELI" : "JEEP";
+  const finalRaw = cloneIntroRaw(introRaw(prefix + "BP1.RAW"));
+  for (let i = 0; i < finalRaw.pixels.length; i++)
+    if (a.blueprintMask[i]) finalRaw.pixels[i] = 8;
+  a.raw = finalRaw;
+  // Zbyvajici typewriter tasky musi po native page swapu kreslit dal.
+  for (const task of a.blueprintTasks) task.pixels = finalRaw.pixels;
+}
+
+function prepareAttractScene(a, sceneIndex) {
+  a.sceneIndex = (sceneIndex + ATTRACT_SCENE_ORDER.length) % ATTRACT_SCENE_ORDER.length;
+  a.scene = ATTRACT_SCENE_ORDER[a.sceneIndex];
+  a.phaseTick = 0; a.highScoreFile = null;
+  a.blueprintTasks = null; a.blueprintMask = null; a.vehicle = null;
+  a.blueprintHiddenRaw = null; a.blueprintRevealed = false;
+  a.blueprintTaskStarted = false; a.blueprintVbl = 0;
+  if (a.scene === "cover") a.raw = cloneIntroRaw(introRaw("COVER.RAW"));
+  else if (a.scene === "sales") {
+    a.raw = blankIntroRaw();
+    drawIntroFormatted(state.prog, a.raw.pixels, programCString(state.prog, 0x2400));
+  } else if (a.scene === "faces") {
+    a.raw = cloneIntroRaw(introRaw("FACES.RAW"));
+    drawIntroFormatted(state.prog, a.raw.pixels, programCString(state.prog, 0x2232));
+  } else if (a.scene === "heliScores") a.raw = drawHighScores(a, "heli");
+  else if (a.scene === "jeepScores") a.raw = drawHighScores(a, "jeep");
+  else if (a.scene === "heliBlueprint") prepareBlueprint(a, "heli");
+  else if (a.scene === "jeepBlueprint") prepareBlueprint(a, "jeep");
+  a.phase = a.scene.endsWith("Blueprint") ? "blueprintLoad" : "fadeIn";
+}
+
+function createAttractState() {
+  const random = () => Math.floor(Math.random() * 0x100000000) >>> 0;
+  const a = { active: true, vbl: 0, frac: 0, last: 0,
+              heliHighScoreWord: random(), jeepHighScoreWord: random(),
+              highScoresPrepared: false,
+              rgba: new Uint8ClampedArray(320 * 256 * 4),
+              highColors: new Uint16Array(16) };
+  prepareAttractScene(a, 0);
+  return a;
+}
+
+function startAttractMusic() {
+  unlockAudioContext();
+  if (actx && !state.titleMod) {
+    const file = state.files.find(f => f.name === "AMTITUNE.MOD");
+    if (file) {
+      state.titleMod = ModPlayer(unpackFile(state.adf, file));
+      state.titleMod.start(actx, 1);
+    }
+  }
+}
+
+function stepAttract(a = state.attract) {
+  if (!a || !a.active) return;
+  a.vbl++;
+  if (a.blueprintTasks) {
+    a.blueprintVbl++;
+    if (a.blueprintVbl >= BLUEPRINT_REVEAL_VBLS[a.vehicle])
+      a.blueprintRevealed = true;
+    if (a.blueprintVbl >= BLUEPRINT_TASK_START_VBLS[a.vehicle]) {
+      if (!a.blueprintTaskStarted) {
+        a.blueprintTaskStarted = true;
+        // Prvni worker field neni round-robin: caption a specs vstoupi
+        // jednou, narrative dobehne pres nekolik wait6 continuations.
+        resumeBlueprintTextTask(a.blueprintTasks[0]);
+        for (let i = 0; i < BLUEPRINT_NARRATIVE_FIRST_RESUMES[a.vehicle]; i++)
+          resumeBlueprintTextTask(a.blueprintTasks[1]);
+        resumeBlueprintTextTask(a.blueprintTasks[2]);
+      } else {
+        for (const task of a.blueprintTasks) resumeBlueprintTextTask(task);
+      }
+    }
+  }
+
+  if (a.phase === "fadeIn") {
+    if (a.phaseTick < 16) a.phaseTick++;
+    else {
+      a.phase = "hold"; a.phaseTick = 0;
+      if (a.scene === "cover") startAttractMusic();
+    }
+  } else if (a.phase === "hold") {
+    const hold = ATTRACT_HOLD_VBLS[a.scene];
+    if (a.phaseTick + 1 < hold) a.phaseTick++;
+    else { a.phase = "fadeOut"; a.phaseTick = 0; }
+  } else if (a.phase === "fadeOut") {
+    if (a.phaseTick < 16) a.phaseTick++;
+    else prepareAttractScene(a, a.sceneIndex + 1);
+  } else if (a.phase === "blueprintLoad") {
+    // 0x15d4/0x1794 -> 0x5ea0: typewriter tasky bezely i po dobu
+    // synchronniho nacitani BP1. RAM timestampy na A500 davaji 100 VBL
+    // pro HELI a 96 VBL pro JEEP; bez teto prodlevy web urezal specs.
+    const duration = BLUEPRINT_BP1_LOAD_VBLS[a.vehicle];
+    if (a.phaseTick + 1 < duration) a.phaseTick++;
+    else { a.phase = "blueprintColor"; a.phaseTick = 0; }
+  } else if (a.phase === "blueprintColor") {
+    if (a.phaseTick < BLUEPRINT_COLOR_END_VBL) a.phaseTick++;
+    else { a.phase = "blueprintWhite"; a.phaseTick = 0; }
+  } else if (a.phase === "blueprintWhite") {
+    if (a.phaseTick < 1) a.phaseTick++;
+    else { a.phase = "blueprintMerge"; a.phaseTick = 0; }
+  } else if (a.phase === "blueprintMerge") {
+    // 0x19a6 + 0x5e84 spotrebuji na puvodni A500 devet VBL; zobrazeny
+    // zustava bily BP2 a BP1 se zverejni az po dokonceni compositu.
+    if (a.phaseTick + 1 < BLUEPRINT_MERGE_VBLS) a.phaseTick++;
+    else {
+      mergeBlueprintFinal(a);
+      a.phase = "blueprintFinalFade"; a.phaseTick = 0;
+    }
+  } else if (a.phase === "blueprintFinalFade") {
+    if (a.phaseTick < 16) a.phaseTick++;
+    else { a.phase = "blueprintHold"; a.phaseTick = 0; }
+  } else if (a.phase === "blueprintHold") {
+    if (a.phaseTick < 49) a.phaseTick++;
+    else {
+      const firstHeli = a.vehicle === "heli" && !a.highScoresPrepared;
+      const handoff = firstHeli
+        ? BLUEPRINT_SCORE_HANDOFF_VBLS.firstHeli
+        : BLUEPRINT_SCORE_HANDOFF_VBLS.cached;
+      a.scoreLoadVbls = handoff.stable;
+      a.scoreBlackVbls = handoff.black;
+      // 0x2f06 je v nativnim dispatcheru za HELI blueprintem a svou
+      // inicializaci pres bit0 provede jen jednou za cely attract beh.
+      if (a.vehicle === "heli") a.highScoresPrepared = true;
+      a.phase = "blueprintScoreLoad"; a.phaseTick = 0;
+    }
+  } else if (a.phase === "blueprintScoreLoad") {
+    if (a.phaseTick + 1 < a.scoreLoadVbls) a.phaseTick++;
+    else { a.phase = "blueprintFadeOut"; a.phaseTick = 0; }
+  } else if (a.phase === "blueprintFadeOut") {
+    if (a.phaseTick < 16) a.phaseTick++;
+    else { a.phase = "blueprintScoreBlack"; a.phaseTick = 0; }
+  } else if (a.phase === "blueprintScoreBlack") {
+    if (a.phaseTick + 1 < a.scoreBlackVbls) a.phaseTick++;
+    else {
+      prepareAttractScene(a, a.sceneIndex + 1);
+      // 0x3304 uz uvnitr handoffu provedlo fade-in i kresbu tabulky;
+      // prvni publikovany score field je proto plny a rovnou zacina hold.
+      a.phase = "hold"; a.phaseTick = 0;
+    }
+  }
+}
+
+function attractPaletteAndFade(a) {
+  let palette, black = 0;
+  if (a.scene === "cover" || a.scene === "sales")
+    palette = readProgramPalette(state.prog, ATTRACT_PALETTE_OFFSETS.cover);
+  else if (a.scene === "faces")
+    palette = readProgramPalette(state.prog, ATTRACT_PALETTE_OFFSETS.faces);
+  else if (a.scene.endsWith("Scores"))
+    palette = readProgramPalette(state.prog, ATTRACT_PALETTE_OFFSETS.scores);
+  else if (a.phase === "blueprintLoad")
+    palette = readProgramPalette(state.prog, ATTRACT_PALETTE_OFFSETS.outline);
+  else if (a.phase === "blueprintColor")
+    palette = blueprintPaletteAt(state.prog, a.phaseTick);
+  else if (a.phase === "blueprintWhite")
+    // 0x197a: jeden VBL zustane posledni outline paleta, az potom se na
+    // jeden VBL nahraje 0x2a5c a probehne BP2 -> BP1 merge.
+    palette = a.phaseTick === 0
+      ? blueprintPaletteAt(state.prog, BLUEPRINT_COLOR_END_VBL)
+      : readProgramPalette(state.prog, ATTRACT_PALETTE_OFFSETS.white);
+  else if (a.phase === "blueprintMerge")
+    palette = readProgramPalette(state.prog, ATTRACT_PALETTE_OFFSETS.white);
+  else {
+    const white = a.phase === "blueprintFinalFade"
+      ? blueprintFinalWhiteLevel(a.vehicle, a.phaseTick) : 0;
+    palette = blueprintFinalPalette(state.prog, a.vehicle, white);
+  }
+  if (a.phase === "fadeIn") black = 256 - a.phaseTick * 16;
+  else if (a.phase === "fadeOut") black = a.phaseTick * 16;
+  else if (a.phase === "blueprintFadeOut")
+    black = blueprintScoreFadeBlack(a.vehicle, a.phaseTick);
+  else if (a.phase === "blueprintScoreBlack") black = 256;
+  return { palette, black };
+}
+
+/* 0x2d28: tabulka zacina poctem, potom opakuje
+   [delta scanline, COLOR-register/high RGB nibble, low RGB byte]. */
+function decodeIntroCopperTable(prog, offset, firstLine) {
+  const count = prog[offset++], events = [];
+  let line = firstLine & 0xFFFF;
+  for (let i = 0; i < count; i++) {
+    line = (line & 0xFF00) | ((line + prog[offset++]) & 255);
+    const registerAndHigh = prog[offset++], low = prog[offset++];
+    events.push({ line, color: (registerAndHigh >> 4) & 15,
+                  word: ((registerAndHigh << 8) | low) & 0xFFF });
+  }
+  return events;
+}
+
+function introCopperEvents(scene) {
+  const prog = state.prog, events = [];
+  const add = (offset, line) =>
+    events.push(...decodeIntroCopperTable(prog, offset, line));
+  if (scene === "sales") {
+    add(0x2BFF, 48); add(0x2BFF, 64);
+    for (const line of [84, 104, 120, 136, 156]) add(0x2C0F, line);
+    add(0x2C1F, 176); add(0x2C1F, 192);
+  } else if (scene === "faces") {
+    for (const line of [22, 70, 118, 166]) add(0x2BA2, line);
+  } else if (scene.endsWith("Scores")) {
+    // 0x3396 nejprve meni paletu houboveho mraku a horizontu,
+    // potom 0x2ca8 prida textove COLOR15 gradienty.
+    add(0x2C4F, 130); add(0x2C77, 158);
+    add(0x2BDF, 48);
+    for (let line = 64; line <= 192; line += 16) add(0x2BEF, line);
+    add(0x2C3F, 208);
+  }
+  return events.map((event, serial) => ({ ...event, serial }))
+    .sort((a, b) => a.line - b.line || a.serial - b.serial);
+}
+
+function colorizeAttractRaw(raw, palette, black, events, out) {
+  const current = Array.from(palette), rgb = new Array(16);
+  let eventIndex = 0;
+  for (let y = 0; y < raw.h; y++) {
+    while (eventIndex < events.length && events[eventIndex].line <= y) {
+      const event = events[eventIndex++]; current[event.color] = event.word;
+    }
+    for (let i = 0; i < 16; i++)
+      rgb[i] = capturedRgb12(fadeRgb12Black(current[i], black));
+    for (let x = 0; x < raw.w; x++) {
+      const i = y * raw.w + x, c = rgb[raw.pixels[i]], o = i * 4;
+      out[o] = c[0]; out[o + 1] = c[1]; out[o + 2] = c[2]; out[o + 3] = 255;
+    }
+  }
+  return out;
+}
+
+function attractHudTexts(vbl) {
+  if ((vbl & 0x80) === 0) return ["PRESS FIRE", "PRESS FIRE"];
+  return ["HELI 0[ 2* 0000000", "JEEP 0[ 2* 0000000"];
+}
+
+function renderAttract(a = state.attract) {
+  if (!a || !a.active || !a.raw) return;
+  const { palette, black } = attractPaletteAndFade(a);
+  const copperEvents = introCopperEvents(a.scene);
+  const displayedRaw = a.blueprintTasks && !a.blueprintRevealed
+    ? a.blueprintHiddenRaw : a.raw;
+  colorizeAttractRaw(displayedRaw, palette, black, copperEvents, a.rgba);
+  const texts = attractHudTexts(a.vbl);
+  const hud = buildHudPlane(state.prog, texts[0], texts[1]);
+  compositeHudPlane(displayedRaw.pixels, 320, a.rgba, hud.bytes,
+                    a.vbl, a.highColors, false);
+  const cv = $("#title"), ctx = cv.getContext("2d");
+  ctx.imageSmoothingEnabled = false;
+  ctx.putImageData(new ImageData(a.rgba, 320, 256), 0, 0);
+  a.lastRender = { scene: a.scene, phase: a.phase, phaseTick: a.phaseTick,
+                   black, palette: Array.from(palette),
+                   copperEvents: copperEvents.length, hud: texts.slice() };
+}
+
+function attractFrame(now) {
+  const a = state.attract;
+  if (!a || !a.active) return;
+  if (!a.last) a.last = now;
+  a.frac += Math.min(0.1, (now - a.last) / 1000); a.last = now;
+  while (a.frac >= TICK) { a.frac -= TICK; stepAttract(a); }
+  renderAttract(a);
+  requestAnimationFrame(attractFrame);
+}
+
+function stopAttract() {
+  const a = state.attract;
+  if (!a) return;
+  a.active = false;
+  if (a.onkey) window.removeEventListener("keydown", a.onkey);
+  if (a.onclick) $("#title").removeEventListener("click", a.onclick);
+  state.attract = null;
+}
+
+function showDevelopmentLevelPicker() {
+  stopAttract();
+  $("#titlewrap").style.display = "none";
+  $("#levelpick").style.display = "";
+}
+
+function showTitle() {
+  stopAttract();
+  $("#levelpick").style.display = "none";
+  $("#gamewrap").style.display = "none";
+  $("#titlewrap").style.display = "";
+  const cv = $("#title"); cv.width = 320; cv.height = 256;
+  const scale = Math.max(1, Math.min(3, Math.floor(Math.min(
+    (window.innerWidth - 60) / 320,
+    (window.innerHeight - 160) / 256))));
+  cv.style.width = (320 * scale) + "px";
+  cv.style.height = (256 * scale) + "px";
+
+  const a = state.attract = createAttractState();
+  const fire = () => { unlockAudioContext(); startGame(0); };
+  a.onclick = fire;
+  a.onkey = e => {
+    if (e.key === " " || e.key === "Enter" || e.key.toLowerCase() === "z") {
+      e.preventDefault(); fire();
+    } else if (e.key.toLowerCase() === "l") {
+      e.preventDefault(); showDevelopmentLevelPicker();
+    }
   };
-  const onkey = e => { if (e.key === " " || e.key === "Enter") go(); };
-  window.addEventListener("keydown", onkey);
-  $("#title").addEventListener("click", go);
+  window.addEventListener("keydown", a.onkey);
+  cv.addEventListener("click", a.onclick);
+  renderAttract(a);
+  requestAnimationFrame(attractFrame);
 }
 for (let lv = 0; lv < 7; lv++) {
   const b = document.createElement("a");
@@ -978,11 +1712,11 @@ function composeTownBobs(g, top) {
   // Mapove objekty. MEDTANK ma dve cookie vrstvy stejne hloubky;
   // turret se vlozi driv, a proto pri stejnem klici skonci navrchu.
   for (const s of g.spawns) {
-    if (!s.born || !s.alive) continue;
+    if (!s.born) continue;
     const sy = s.y - top;
     if (sy < -96 || sy > 352) continue;
     if (s.beh === "boss") {
-      if (!s.bodyHidden) {
+      if (s.alive && !s.bodyHidden) {
         const secondaryVisible = s.rotorActive && (s.rotorTick & 1) === 0;
         bob("boss-main", s.file, s.bodyFrame || 0, s.x, sy, 32, {
           ordinal: s.bobOrdinal,
@@ -992,13 +1726,14 @@ function composeTownBobs(g, top) {
         });
       }
       for (const q of s.parts || []) {
-        if (!q.entered) continue;
+        if (!q.entered || q.alive === false) continue;
         const pos = bossPartPosition(s, q, top);
         bob("boss-" + q.id, "GOOSE.LIN", q.frame,
             pos.x, pos.y, q.z || 33, { ordinal: q.bobOrdinal });
       }
       continue;
     }
+    if (!s.alive) continue;
     if (s.beh === "tank") {
       if (!s.tankSetup) continue;
       if (s.turretTask && s.turretTask.alive)
@@ -1198,11 +1933,23 @@ function shadowOf(spr) {
    vzorky BIGEXPL.SND/SMART.SND pousti pres Paula DMA. Logicky stav bezi i
    pri mute, aby priority, scratch a RNG zustaly deterministicke. */
 let actx = null;
+function unlockAudioContext() {
+  if (!actx) try {
+    const AudioCtor = window.AudioContext || window.webkitAudioContext;
+    if (AudioCtor) actx = new AudioCtor();
+  } catch (e) {}
+  if (actx && actx.state === "suspended") actx.resume().catch(() => {});
+  return actx;
+}
 const PAULA_CLOCK = 3546895;
 const PAULA_PAL_MIN_DMA_PERIOD = 123;
+const PAULA_OUTPUT_GAIN = 0.2048;
+const PAULA_LED_FILTER_ENABLED = false;
 const SFX_CIA_CLOCK = 709379, SFX_CIA_LATCH = 0x0D88;
 const SFX_CIA_HZ = SFX_CIA_CLOCK / SFX_CIA_LATCH;
 const SFX_VBL_DEN = SFX_CIA_LATCH * 50;
+const SFX_TOKEN_CHILD_DELAY = 0.00946;
+const SFX_GOOSE_EXPLOSION_CHILD_DELAY = 0.00921;
 const SFX_HW_CHANNELS = [3, 2, 1, 0];
 const SFX_FIRE_WAVE = new Int8Array([
   0,16,32,64,127,64,32,16, 0,-64,-96,-112,-127,-112,-96,-64,
@@ -1217,6 +1964,76 @@ const SFX_TOKEN_WAVE_TABLE = new Int8Array([
   8,24,40,56,-56,-40,-24,-8, 8,24,40,56,-56,-40,-24,-8,
 ]);
 const sfxAudioCache = new Map();
+
+/* Spolecny vystupni filtr skutecneho A500. SWIV po bootu zhasne power LED
+   a v celych zachycenych attract/TOWN prubezich ji uz nezapne. Aktivni je
+   proto jen pevny jednopól LP a pevny jednopól HP az za souctem vsech
+   Paula kanalu. Koeficient LED dvoupólu nechavame pro dokumentaci a budouci
+   levely, ale do zvukove cesty se pro level 1 nezapojuje. */
+let paulaBusContext = null, paulaBusInput = null, paulaBusNodes = [];
+
+function paulaOnePoleCoefficients(sampleRate, resistance, capacitance,
+                                  highPass = false) {
+  const cutoff = 1 / (2 * Math.PI * resistance * capacitance);
+  const a = 2 - Math.cos(2 * Math.PI * cutoff / sampleRate);
+  const memory = a - Math.sqrt(a * a - 1);
+  return {
+    cutoff,
+    feedforward: highPass ? [memory, -memory] : [1 - memory],
+    feedback: [1, -memory],
+  };
+}
+
+function paulaTwoPoleCoefficients(sampleRate, r1, r2, c1, c2) {
+  const cutoff = 1 / (2 * Math.PI * Math.sqrt(r1 * r2 * c1 * c2));
+  const q = Math.sqrt(r1 * r2 * c1 * c2) / (c2 * (r1 + r2));
+  const a = 1 / Math.tan(2 * Math.PI * cutoff / sampleRate);
+  const damping = 1 / q;
+  const b0 = 1 / (1 + damping * a + a * a);
+  const b1 = 2 * b0;
+  const a1 = 2 * (1 - a * a) * b0;
+  const a2 = (1 - damping * a + a * a) * b0;
+  return { cutoff, q, feedforward: [b0, b1, b0],
+           feedback: [1, a1, a2] };
+}
+
+function paulaA500FilterCoefficients(sampleRate) {
+  return {
+    low: paulaOnePoleCoefficients(sampleRate, 360, 1e-7),
+    led: paulaTwoPoleCoefficients(sampleRate,
+                                  10000, 10000, 6.8e-9, 3.9e-9),
+    high: paulaOnePoleCoefficients(sampleRate, 1390, 2.233e-5, true),
+  };
+}
+
+function paulaOutputBus(context) {
+  if (!context || !context.destination) return null;
+  if (typeof context.createGain !== "function") return context.destination;
+  if (paulaBusContext === context && paulaBusInput) return paulaBusInput;
+
+  const input = context.createGain();
+  // vAmiga/A500 mix: signed sample byte * AUDVOL * 0.000025. Interni
+  // timelines jsou normalizovane /128 /64, proto spolecny faktor 0.2048.
+  input.gain.value = PAULA_OUTPUT_GAIN;
+  // Stare WebAudio implementace mohou IIR nemit. Hlasitost musi zustat
+  // spravna i tam; degraduje pouze analogova filtrace, ne master gain.
+  if (typeof context.createIIRFilter !== "function") {
+    input.connect(context.destination);
+    paulaBusContext = context; paulaBusInput = input; paulaBusNodes = [];
+    return input;
+  }
+
+  const coeffs = paulaA500FilterCoefficients(context.sampleRate);
+  const low = context.createIIRFilter(
+    coeffs.low.feedforward, coeffs.low.feedback);
+  const high = context.createIIRFilter(
+    coeffs.high.feedforward, coeffs.high.feedback);
+  input.connect(low); low.connect(high);
+  high.connect(context.destination);
+  paulaBusContext = context; paulaBusInput = input;
+  paulaBusNodes = [low, high];
+  return input;
+}
 
 function createTownSfxState() {
   return { phase: 0, irq: 0, serial: 0, events: [],
@@ -1472,11 +2289,12 @@ function sfxStopVoiceSource(voice) {
   voice.source = null;
 }
 function sfxAttachVoiceSource(voice, src) {
+  const output = paulaOutputBus(actx);
   const pan = actx.createStereoPanner ? actx.createStereoPanner() : null;
   if (pan) {
     pan.pan.value = (voice.channel === 0 || voice.channel === 3) ? -1 : 1;
-    src.connect(pan); pan.connect(actx.destination);
-  } else src.connect(actx.destination);
+    src.connect(pan); pan.connect(output);
+  } else src.connect(output);
   voice.source = src;
   src.onended = () => { if (voice.source === src) voice.source = null; };
 }
@@ -1498,7 +2316,7 @@ function sfxPlayVoice(voice, spec) {
   sfxAttachVoiceSource(voice, src);
   // Prvni IRQ callback pouze rozbehne a hned yieldne; hardware se zapise
   // pri druhem IRQ. Wall-clock audio sleduje stejny dvoutikovy nabeh.
-  src.start(actx.currentTime + 2 / SFX_CIA_HZ);
+  src.start(actx.currentTime + 2 / SFX_CIA_HZ + (spec.startDelay || 0));
 }
 function sfxPlayTimelineNow(voice, states) {
   if (!actx) return;
@@ -1619,14 +2437,14 @@ function sfxNoise(g, x, priority, kind) {
   return submitTownSfx(g, x, priority, kind, voice =>
     sfxNoiseTimeline(voice, kind));
 }
-function sfxBigExplosion(g, x) {
+function sfxBigExplosion(g, x, startDelay = 0) {
   // 0x4c58 vola 0x4c5e jako podprogram a jeho return PC je opet 0x4c5e:
   // dve vrstvy, dve RNG hodnoty, obe pred arbitrazi i pri mute/rejectu.
   let last = null;
   for (let layer = 0; layer < 2; layer++) {
     const period = 592 + (random32(g) & 31);
     last = submitTownSfx(g, x, 50, "bigexpl", () => ({
-      sample: "BIGEXPL.SND", period,
+      sample: "BIGEXPL.SND", period, startDelay,
     }));
   }
   return last;
@@ -1660,6 +2478,9 @@ function sfxTokenPickupNote(g, x, period) {
   return submitTownSfx(g, x, 120, "token-pickup", () => ({
     states, logical: sfxLogicalTimeline(states, ops),
     cacheKey: "token-pickup-5672-" + period, period,
+    // PC/HW trace: task vstoupi mezi VBL hranicemi; po obecnem 2-IRQ
+    // nabehu je native DMA onset jeste zhruba o 9.1 ms pozdeji.
+    startDelay: SFX_TOKEN_CHILD_DELAY,
   }));
 }
 function ensureTokenSfxTasks(g) {
@@ -1667,24 +2488,32 @@ function ensureTokenSfxTasks(g) {
   return g.tokenSfxTasks;
 }
 function sfxTokenPickup(g, x) {
-  // 0x97ce -> 0x5614: selector se zachyti z TOKEN x jednou a stejny pan
-  // pouziji vsechny ctyri noty. Prvni zacne hned, dalsi po 5 VBL.
+  // 0x97ce -> 0x5614 nezahraje notu inline. Zachyti selector podle TOKEN
+  // x a zalozi novy priority100 task 0x564c; jeho prvni continuation se
+  // zaradi za prave bezici collision callback. Stejny pan pak pouziji
+  // vsechny ctyri noty.
   const periods = [159, 212, 159, 141];
   const panX = signedWord(Math.trunc(x || 0));
-  sfxTokenPickupNote(g, panX, periods[0]);
-  ensureTokenSfxTasks(g).push({ x: panX, periods, next: 1, wait: 5 });
+  const task = { x: panX, periods, next: 0, wait: 0,
+                 started: false, done: false };
+  assignBobOrdinal(g, task);
+  ensureTokenSfxTasks(g).push(task);
+  return task;
 }
-function advanceTokenSfxTasks(g) {
-  const tasks = ensureTokenSfxTasks(g), keep = [];
-  for (const task of tasks) {
-    if (--task.wait > 0) { keep.push(task); continue; }
-    // I po ctvrte note nativni task jeste wait5 dokonci, teprve potom
-    // nacte nulovy terminator tabulky a zanikne.
-    if (task.next >= task.periods.length) continue;
-    sfxTokenPickupNote(g, task.x, task.periods[task.next++]);
-    task.wait = 5; keep.push(task);
+function resumeTokenSfxTask(g, task) {
+  if (!task || task.done) return false;
+  // 0x5662: i po ctvrte note task dokonci wait5. Az nasledujici resume
+  // precte nulovy terminator tabulky a odejde pres fp@(-1446).
+  if (task.next >= task.periods.length) {
+    task.done = true;
+    return false;
   }
-  g.tokenSfxTasks = keep;
+  sfxTokenPickupNote(g, task.x, task.periods[task.next++]);
+  task.wait = 5;
+  return true;
+}
+function compactTokenSfxTasks(g) {
+  g.tokenSfxTasks = ensureTokenSfxTasks(g).filter(task => !task.done);
 }
 function sfxPlayerTransition(g, x) {
   return submitTownSfx(g, x, 10, "player-transition", () => {
@@ -1862,20 +2691,22 @@ function compositeHudPlane(fieldIndex, width, rgba, plane, tick,
       // proto musi reprodukovat efektivni OCS vystup, ne AGA artefakt
       // 16|lower4 (zlute/cervene problikavani textu pres teren a sprity).
       const word = hudHighColorWord(16, row, tick, false, firstPass);
+      const capture = capturedRgb12(word);
       const o = (sy * width + x) * 4;
-      rgba[o] = ((word >> 8) & 15) * 17;
-      rgba[o + 1] = ((word >> 4) & 15) * 17;
-      rgba[o + 2] = (word & 15) * 17;
+      rgba[o] = capture[0];
+      rgba[o + 1] = capture[1];
+      rgba[o + 2] = capture[2];
       rgba[o + 3] = 255;
     }
   }
   return rgba;
 }
 function hudPlaneForGame(g) {
-  const key = hudStatusText(g) + "\0PRESS FIRE";
+  const texts = hudTextsForGame(g);
+  const key = texts.left + "\0" + texts.right;
   if (g.hudPlaneKey !== key) {
     g.hudPlaneKey = key;
-    g.hudPlane = buildHudPlane(state.prog, hudStatusText(g), "PRESS FIRE");
+    g.hudPlane = buildHudPlane(state.prog, texts.left, texts.right);
   }
   return g.hudPlane;
 }
@@ -1969,9 +2800,9 @@ function allocateTownHwSprites(g) {
 function hwSpritePalette(g, bank) {
   const high = updateRetainedHighColors(g), base = (bank & 3) * 4;
   const pal = Array.from({ length: 16 }, () => [0, 0, 0]);
-  pal[1] = rgb12(high[base + 1]);
-  pal[2] = rgb12(high[base + 2]);
-  pal[3] = rgb12(high[base + 3]);
+  pal[1] = capturedRgb12(high[base + 1]);
+  pal[2] = capturedRgb12(high[base + 2]);
+  pal[3] = capturedRgb12(high[base + 3]);
   return { pal, key: `hw:${bank}:${high[base + 1].toString(16)}:` +
     `${high[base + 2].toString(16)}:${high[base + 3].toString(16)}` };
 }
@@ -2021,24 +2852,64 @@ function stepFade(g) {
 }
 function ensureSmartPulseTasks(g) {
   if (!Array.isArray(g.smartPulseTasks)) g.smartPulseTasks = [];
+  if (!Array.isArray(g.smartPulseTaskOrdinals))
+    g.smartPulseTaskOrdinals = [];
   // Kompatibilita izolovanych fixture/starych save stavu, ktere nesou jen
   // drivejsi scalar countdown. Produkcni trigger vzdy zaklada task nize.
-  if ((g.smartPulse | 0) > 0 && g.smartPulseTasks.length === 0)
+  if ((g.smartPulse | 0) > 0 && g.smartPulseTasks.length === 0) {
     g.smartPulseTasks.push(g.smartPulse | 0);
+    // Legacy fixture nema creation ordinal. Pozdni pozice zachova jeji
+    // dosavadni kontrakt: vsechny existujici objekty deadline jeste vidi.
+    g.smartPulseTaskOrdinals.push(0x7fffffff);
+  }
+  while (g.smartPulseTaskOrdinals.length < g.smartPulseTasks.length)
+    g.smartPulseTaskOrdinals.push(0x7fffffff);
   return g.smartPulseTasks;
 }
+function ensureSmartStartTasks(g) {
+  if (!Array.isArray(g.smartStartTasks)) g.smartStartTasks = [];
+  return g.smartStartTasks;
+}
 function startWhiteFlash(g) {                   // 0x8852 / 0x885a
+  // 0x8852 pouze zalozi equal-priority child 0x885a. SMART zvuk, pulse i
+  // bila se zapnou az pri jeho pozdejsim same-VBL startu v creation FIFO.
+  const task = { started: false };
+  assignBobOrdinal(g, task);
+  ensureSmartStartTasks(g).push(task);
+  return task;
+}
+function startSmartPulseTask(g, task) {
+  if (!task || task.started) return false;
+  task.started = true;
   sfxSmartBomb(g);                              // 0x4cb2: 4x SMART.SND
   g.fadeWhite = 256;
   g.fadeWhiteStep = -4;                        // gameplay hodnota z 0x1028
-  // Kazdy trigger 0x8852 zalozi VLASTNI 0x885a task s wait50. Ktery-koli
-  // jeho deadline pak udela SF globalniho fp@(169), i kdyz novejsi task
-  // stale ceka. Seznam je nutny pro pripad A@0, B@20, C@55: zbyvajici
-  // deadline B musi C vypnout uz v t70. Bila se na 256 resetuje vzdy.
+  // Kazdy 0x885a drzi vlastni wait50. Ktery-koli jeho deadline udela SF
+  // globalniho fp@(169), i kdyz novejsi task stale ceka.
   const tasks = ensureSmartPulseTasks(g);
   tasks.push(50);
-  if (!((g.smartPulse | 0) > 0))
-    g.smartPulse = Math.min(...tasks);
+  g.smartPulseTaskOrdinals.push(task.bobOrdinal);
+  g.smartPulse = Math.min(...tasks.filter(t => t > 0));
+  return true;
+}
+
+function resumeSmartPulseTask(g, index) {
+  const tasks = ensureSmartPulseTasks(g);
+  if (index < 0 || index >= tasks.length || tasks[index] <= 0) return;
+  if (--tasks[index] <= 0) g.smartPulse = 0;    // 0x885a: SF fp@(169)
+}
+
+function compactSmartPulseTasks(g) {
+  const tasks = ensureSmartPulseTasks(g), ords = g.smartPulseTaskOrdinals;
+  const keptTasks = [], keptOrdinals = [];
+  for (let i = 0; i < tasks.length; i++) {
+    if (tasks[i] <= 0) continue;
+    keptTasks.push(tasks[i]); keptOrdinals.push(ords[i]);
+  }
+  g.smartPulseTasks = keptTasks;
+  g.smartPulseTaskOrdinals = keptOrdinals;
+  if ((g.smartPulse | 0) > 0 && keptTasks.length)
+    g.smartPulse = Math.min(...keptTasks);
 }
 
 /* HOMING.LIN je ve skutecnosti 4bitovy BOB v bezne Copper COLOR00-15.
@@ -2182,7 +3053,15 @@ function spawnPlop(g, x, y, parentVx = 0, parentVy = 0) {
   // Loader jej pouze oznaci; cost/task se uvolni az pri resume N+1.
   if (outsideCullMargin(p.x, p.y, 0)) p.retireAfterField = true;
 }
-function releaseEnemyShot(g, s) { releaseCost(g, s); s.dead = true; }
+function deferTownCleanup(o) {
+  if (!o || !o.townResumeActive) return false;
+  o.townResumeInvalidated = true;
+  return true;
+}
+function releaseEnemyShot(g, s) {
+  if (deferTownCleanup(s)) return;
+  releaseCost(g, s); s.dead = true;
+}
 function clearEnemyShots(g) {
   for (const s of g.shots || []) releaseEnemyShot(g, s);
   g.shots = [];
@@ -2336,6 +3215,10 @@ function random32(g) {
   return next;
 }
 function reserveCost(g, o) {
+  // Checksum parent je starsi priority100 task. V jeho deadline fieldu
+  // musi pozdejsi guard uz videt uvolnenych 100 bodu, starsi jeste ne.
+  advanceBossChecksumTails(g, Number.isFinite(o && o.bobOrdinal)
+    ? o.bobOrdinal : Infinity);
   const cost = o.cost || 0;
   if ((g.activeCost || 0) + cost > 160) return false;
   g.activeCost = (g.activeCost || 0) + cost;
@@ -2378,6 +3261,7 @@ function newBossChild(t, delay, escort) {
     id: t.id, kind: escort ? "escort" : "body",
     tx: t.dx, ty: t.dy, frame: t.frame,
     delay, phase: "delay", entered: false, linked: false,
+    alive: true, dead: false,
     x: 0, y: -24, ox: t.dx, oy: t.dy, z: 33,
     ang: 64, vx: 0, vy: 2, wait: 75, settle: 0,
     animTick: 0, animPos: 0, snakeWait: 0, snakeStage: 0,
@@ -2454,6 +3338,7 @@ function stepBossEscort(g, q) {
 function stepBossParts(g, boss, scrollDelta) {
   const bsy = boss.y - g.scroll;
   for (const q of boss.parts) {
+    if (q.alive === false) continue;
     if (q.phase === "delay") {
       // Body 0xca0a vola 0x5f22 i pro random delay 0. Wait helper vzdy
       // provede cooperative yield, takze telo na rozdil od escorty nesmi
@@ -2509,6 +3394,22 @@ function stepBossParts(g, boss, scrollDelta) {
       attachBossChild(boss, q);                  // 0xcc2a..0xcc56, dalsi tick
     }
   }
+  publishBossPartPositions(g, boss);
+}
+
+function publishBossPartPositions(g, boss) {
+  // +542 orphan callback pouzije posledni skutecne publikovanou pozici
+  // child tasku, nikoli parenta kompenzovaneho az v nasledujicim VBL.
+  for (const q of boss.parts) {
+    if (q.alive === false || !q.entered) continue;
+    if (q.linked) {
+      q.publishedWorldX = boss.x + q.ox;
+      q.publishedWorldY = boss.y + q.oy;
+    } else {
+      q.publishedWorldX = q.x;
+      q.publishedWorldY = q.y + g.scroll;
+    }
+  }
 }
 function bossAssembled(boss) { return (boss.assemblyLeft || 0) === 0; }
 function bossPartPosition(boss, q, top) {
@@ -2517,29 +3418,88 @@ function bossPartPosition(boss, q, top) {
     : { x: q.x, y: q.y };
 }
 
-function releaseBossGroup(g, boss, orphanCallbacks = false) {
-  if (boss.groupReleased) return;
-  boss.groupReleased = true;
-  // 0x6458/+542: tri body children maji silent 0x6db4. Escort si po
-  // vlastnim a2c6 startu instaluje 0xa36a a pri orphaningu jednou vybuchne.
-  if (orphanCallbacks) {
-    const escort = (boss.parts || []).find(q =>
-      q.kind === "escort" && q.entered && q.budgeted);
-    if (escort) {
-      const ep = bossPartPosition(boss, escort, g.scroll);
-      spawnBoom(g, ep.x, ep.y + g.scroll, "small", 34);
-      sfxBigExplosion(g, ep.x);
-    }
+/* 0xc986 -> 0x60e0 pouze nuluje parent pointery. Child costy se uvolni
+   na jejich vlastnich +542 resume bodech a skryty parent teprve po 107
+   checksum yieldech (N+108 od posledniho viditelneho fieldu). */
+function beginBossRetirement(g, boss) {
+  if (!boss.groupReleased) {
+    boss.groupReleased = true;
+    for (const q of boss.parts || []) q.orphanPending = true;
+    if (!Number.isInteger(boss.checksumReleaseTick))
+      boss.checksumReleaseTick = (g.tick | 0) + 107;
   }
+  if (deferTownCleanup(boss)) return;
+  boss.alive = false;
+}
+
+function bossEscortOrphanRngCount(q) {
+  if (q.phase !== "snake") return 2;
+  const stage = ((q.snakeStage | 0) % BOSS_SNAKE_ACTIONS.length +
+                 BOSS_SNAKE_ACTIONS.length) % BOSS_SNAKE_ACTIONS.length;
+  if (stage <= 3) return 2;
+  if (stage <= 8) return 1;
+  return 0;
+}
+
+function resumeBossPartOrphan(g, boss, q) {
+  if (!boss || !boss.groupReleased || !q.orphanPending ||
+      q.alive === false || !q.entered) return false;
+  if (q.kind === "escort") {
+    const x = Number.isFinite(q.publishedWorldX)
+      ? q.publishedWorldX : boss.x + q.ox;
+    const y = Number.isFinite(q.publishedWorldY)
+      ? q.publishedWorldY : boss.y + q.oy;
+    // a36a nejprve zaradi 0x894a; zbytek snake kodu muze jeste pred jeho
+    // FIFO startem spotrebovat 0..2 RNG longy.
+    queueTownExplosionTask(g, x, y, 34, "boss-escort");
+    for (let i = 0; i < bossEscortOrphanRngCount(q); i++) random32(g);
+  }
+  releaseCost(g, q);
+  q.alive = false; q.dead = true; q.linked = false;
+  q.orphanPending = false;
+  return true;
+}
+
+function advanceBossChecksumTails(g, beforeOrdinal = Infinity) {
+  for (const boss of g.spawns || []) {
+    if (boss.beh !== "boss" || !boss.budgeted ||
+        !Number.isInteger(boss.checksumReleaseTick)) continue;
+    if ((g.tick | 0) < boss.checksumReleaseTick) continue;
+    const ordinal = Number.isFinite(boss.bobOrdinal)
+      ? boss.bobOrdinal : 0x40000000;
+    if (!(ordinal < beforeOrdinal)) continue;
+    releaseCost(g, boss);
+    boss.checksumReleaseTick = null;
+    boss.checksumDone = true;
+  }
+}
+
+function resumeBossChecksumTail(g, boss) {
+  if (!boss || !boss.budgeted ||
+      !Number.isInteger(boss.checksumReleaseTick) ||
+      (g.tick | 0) < boss.checksumReleaseTick) return false;
   releaseCost(g, boss);
-  for (const q of boss.parts || []) releaseCost(g, q);
+  boss.checksumReleaseTick = null;
+  boss.checksumDone = true;
+  return true;
+}
+
+function stepRetiredBossParts(g, scrollDelta) {
+  for (const boss of g.spawns || []) {
+    if (boss.beh !== "boss" || boss.alive || !boss.groupReleased) continue;
+    if (!(boss.parts || []).some(q => q.alive !== false && !q.entered))
+      continue;
+    // Spici child dokonci svuj puvodni random wait. Po a2c6 publikuje
+    // jeden creation field a orphan callback jej uklidi az pri dalsim resume.
+    stepBossParts(g, boss, scrollDelta);
+  }
 }
 
 /* Jediny GOOSE damage callback 0xc974. Event bity koaleskuji vsechny bolty
    stejne kategorie v jednom ticku, ale player-contact jej muze zavolat
    podruhe samostatnym bitem. */
 function damageBoss(g, boss) {
-  if (!boss.alive || boss.hp <= 0) return false;
+  if ((!boss.alive || boss.hp <= 0) && !boss.townResumeActive) return false;
   if (--boss.hp > 0) {
     boss.vx = -boss.vx;
     sfxGooseHit(g);                             // 0xc97e -> 0x8834/0x4e46
@@ -2551,16 +3511,20 @@ function damageBoss(g, boss) {
       if (q.ox !== q.tx) q.ox += q.ox < q.tx ? 4 : -4;
       if (q.oy !== q.ty) q.oy += q.oy < q.ty ? 4 : -4;
     }
+    sfxGenericHit(g, boss.x);                   // 0xc982 -> 0xa35a/0x5070
     return false;
   }
 
-  boss.alive = false;
   // c98c rozhoduje unsigned WORD +280: 0..500 => tri, jinak dva kruhy.
-  dropBossTokens(g, boss, (boss.timer & 0xFFFF) <= 500 ? 3 : 2);
-  spawnBoom(g, boss.x, boss.y, "small", 33);
+  const perPlayer = (boss.timer & 0xFFFF) <= 500 ? 3 : 2;
+  boss.timer = 0;                               // 0xc9a0 zapisuje count
+  dropBossTokens(g, boss, perPlayer);
   sfxBossDeath(g);                              // 0xc998 -> 0x8838/0x553a
-  sfxBigExplosion(g, boss.x);                  // 0xa36a -> 0x894a/0x4c58
-  releaseBossGroup(g, boss, true);
+  // 0xc998 -> 0x553a je inline, ale prvni 0x894a child vstoupi podle
+  // PC/HW trace az za 9.21 ms. Jeho BIGEXPL DMA tak zacne kolem +19.6 ms.
+  queueTownExplosionTask(g, boss.x, boss.y, 33, "boss-parent",
+                         SFX_GOOSE_EXPLOSION_CHILD_DELAY);
+  beginBossRetirement(g, boss);
   return true;
 }
 
@@ -2600,6 +3564,7 @@ const TOKEN_ICONS = [1, 2, 3, 4, 5];             // 0x0218,0x0418,...,0x0a18
    nainstaluje 0x97c6 (sebrani) a 0x9780 (strela), zastavi, oreze x na
    8..312 (0x9742), zapne cull a klesa 0.5 px/t (+338 = 0x8000). */
 function releaseToken(g, k) {
+  if (deferTownCleanup(k)) return;
   releaseCost(g, k);
   k.dead = true;
 }
@@ -2798,6 +3763,7 @@ function activateAirMember(g, a, p) {
   return true;
 }
 function releaseAirMember(g, a) {
+  if (deferTownCleanup(a)) return;
   releaseCost(g, a);
   a.alive = false; a.pending = false; a.dead = true;
 }
@@ -2856,55 +3822,60 @@ function outsideCullMargin(x, y, margin) {       // 0x6480, inclusive
          iy <= margin || iy >= 256 - margin;
 }
 
-function killSpawnCredited(g, s) {             // 0xa36a z player eventu
-  if (!s.alive) return;
+function releaseSpawnTask(g, s) {
+  if (deferTownCleanup(s)) return;
   s.alive = false; releaseCost(g, s);
+}
+function killSpawnCredited(g, s) {             // 0xa36a z player eventu
+  if (!s.alive && !s.townResumeActive) return;
+  releaseSpawnTask(g, s);
   awardScore(g, s.scoreValue ?? 100);
-  spawnBoom(g, s.x, s.y, "small", s.beh === "mill" ? 33 : 1);
+  queueTownExplosionTask(g, s.x, s.y, s.beh === "mill" ? 33 : 1,
+                         "death-" + s.beh);
   if (["tank", "popup", "flame", "proxmine"].includes(s.beh))
     addDecal(g, "EXPL1.LIN", 0, s.x, s.y);
-  sfxBigExplosion(g, s.x);
 }
 function damageSpawn(g, s) {
-  if (!s.alive || s.hp <= 0) return false;
+  if ((!s.alive || s.hp <= 0) && !s.townResumeActive) return false;
   if (--s.hp > 0) {
     s.hitFlash = true; sfxGenericHit(g, s.x); return false;
   }
   killSpawnCredited(g, s); return true;
 }
 function killAirCredited(g, a) {
-  if (!a.alive) return;
+  if (!a.alive && !a.townResumeActive) return;
   releaseAirMember(g, a); awardScore(g, a.scoreValue ?? 0);
-  spawnBoom(g, a.x, a.y, "small", 33);
-  sfxBigExplosion(g, a.x);
+  queueTownExplosionTask(g, a.x, a.y, 33, "death-" + a.kind);
 }
 function damageAir(g, a) {
-  if (!a.alive || a.hp <= 0) return false;
+  if ((!a.alive || a.hp <= 0) && !a.townResumeActive) return false;
   if (--a.hp > 0) {
-    a.hitFlash = true;
-    if (a.kind !== "bird") sfxGenericHit(g, a.x); // BIRD hit je tichy
+    a.hitFlash = true; sfxGenericHit(g, a.x);
     return false;
   }
   killAirCredited(g, a); return true;
 }
 function damageBirdEvent(g, a) {               // 0x8696, +510 i +514
   const ay = a.y - g.scroll;
-  const died = damageAir(g, a);
-  if (!died) {
+  if ((!a.alive || a.hp <= 0) && !a.townResumeActive) return false;
+  if (--a.hp > 0) {
     a.y -= 6;
     fireCannon(g, a.x, ay - 6, 56 + (random32(g) & 15), true, false);
+    // 0x8696 konci pres 0xa35a az po vlastnim posunu/RNG/palbe.
+    a.hitFlash = true; sfxGenericHit(g, a.x);
+    return false;
   }
-  return died;
+  killAirCredited(g, a); return true;
 }
 function killHazardCredited(g, h) {
-  if (!h.alive) return;
+  if (!h.alive && !h.townResumeActive) return;
   releaseHazard(g, h); awardScore(g, h.scoreValue ?? 0);
-  spawnBoom(g, h.x, h.y, "small",
-            h.kind === "minecore" || h.kind === "proxfrag" ? 33 : 1);
-  sfxBigExplosion(g, h.x);
+  queueTownExplosionTask(g, h.x, h.y,
+    h.kind === "minecore" || h.kind === "proxfrag" ? 33 : 1,
+    "death-" + h.kind);
 }
 function damageHazard(g, h) {
-  if (!h.alive || h.hp <= 0) return false;
+  if ((!h.alive || h.hp <= 0) && !h.townResumeActive) return false;
   if (--h.hp > 0) {
     h.hitFlash = true; sfxGenericHit(g, h.x); return false;
   }
@@ -2913,20 +3884,101 @@ function damageHazard(g, h) {
 /* 0x737e..0x73ea: stejny text, ktery nativni renderer sklada do BPL5.
    Skore je sest internich cislic a literalni nula, tedy zobrazene x10. */
 function hudStatusText(g, prefix = "HELI") {
-  // 0x709a: spawn nejprve pricte fp@(12524) k +68, takze HUD ukazuje
-  // zivoty zbyvajici PO teto spotrebe - pri ctyrech na zacatku "3"
-  // (overeno baseline snimkem t17: "HELI 3♥ 2★").
+  // g.lives drzi pocet zaznamu pred aktualnim spawnem; 0x709a jeden
+  // spotrebuje. Proto startovni 4 zobrazi HELI 3 a posledni aktivni stroj
+  // pri g.lives === 1 korektne zobrazi HELI 0.
   const lives = Math.max(0, Math.trunc(g.lives || 0) - 1);
   const tokenCount = (g.player && g.player.tokenCount) || 0;
   const weapon = 2 + Math.trunc(tokenCount / 5);
   const score = String(Math.max(0, Math.trunc(g.score || 0))).padStart(6, "0") + "0";
   return prefix + " " + lives + "[ " + weapon + "* " + score;
 }
-function spawnBoom(g, x, y, kind = "small", z = 1) {
+function hudInactiveText(g, prefix, lives, score, tokenCount = 0) {
+  // 0x740c: inactive slot strida po 128 VBL dynamicky stav a prompt.
+  if ((g.tick | 0) & 0x80)
+    return hudStatusText({ lives, score,
+      player: { tokenCount } }, prefix);
+  if (g.joinClosed) return "PLEASE WAIT";
+  if ((g.continues | 0) <= 0) return "NO CREDITS";
+  return "PRESS FIRE";
+}
+function hudTextsForGame(g) {
+  const inactive = g.playerPhase === "continue" ||
+                   g.playerPhase === "closing" ||
+                   g.playerPhase === "stats";
+  const left = inactive
+    ? hudInactiveText(g, "HELI", g.lives | 0, g.score | 0,
+                      (g.player && g.player.tokenCount) || 0)
+    : hudStatusText(g);
+  const right = hudInactiveText(g, "JEEP", g.jeepLives ?? 1,
+                                g.jeepScore ?? 0, g.jeepTokenCount || 0);
+  return { left, right };
+}
+function spawnBoom(g, x, y, kind = "small", z = 1, ordinal = null) {
   // Efekty vznikaji uvnitr step() jeste pred spolecnym starnutim na konci
   // tiku. Start na -1 proto zachova cely prvni snimek po 4 rendery.
   const boom = { x, y, kind, z, t: -1 };
-  assignBobOrdinal(g, boom); g.booms.push(boom);
+  if (Number.isFinite(ordinal)) boom.bobOrdinal = ordinal;
+  else assignBobOrdinal(g, boom);
+  g.booms.push(boom);
+  return boom;
+}
+function ensureTownExplosionTasks(g) {
+  if (!Array.isArray(g.townExplosionTasks)) g.townExplosionTasks = [];
+  return g.townExplosionTasks;
+}
+/* 0x894a je samostatny priority100 child. Caller jej pouze zaradi; jeho
+   prvni EXPL1#7 BOB a obe BIGEXPL/RNG vrstvy vzniknou az na FIFO startu. */
+function queueTownExplosionTask(g, x, y, z, source, sfxDelay = 0) {
+  const task = { x, y, z, source, sfxDelay, started: false };
+  assignBobOrdinal(g, task);
+  ensureTownExplosionTasks(g).push(task);
+  return task;
+}
+function startTownExplosionTask(g, task) {
+  if (!task || task.started) return false;
+  task.started = true;
+  const boom = spawnBoom(g, task.x, task.y, "small", task.z,
+                         task.bobOrdinal);
+  boom.source = task.source;
+  sfxBigExplosion(g, task.x, task.sfxDelay || 0);
+  return true;
+}
+function runFreshTownExplosionTasks(g) {
+  const tasks = ensureTownExplosionTasks(g);
+  const fresh = tasks.filter(t => !t.started)
+    .sort((a, b) => a.bobOrdinal - b.bobOrdinal);
+  for (const task of fresh) startTownExplosionTask(g, task);
+  g.townExplosionTasks = tasks.filter(t => !t.started);
+}
+/* Fresh priority100 childy vznikle behem existujicich continuations musi
+   dobehnout v jednom spolecnem creation FIFO. TOKEN 0x564c a exploze
+   0x894a proto nelze spoustet ve dvou nesouvisejicich JS smyckach. */
+function runFreshTownPriorityTasks(g) {
+  const fresh = [];
+  for (const task of ensureTokenSfxTasks(g))
+    if (!task.started && !task.done)
+      fresh.push({ kind: "tokenSfx", task });
+  for (const task of ensureSmartStartTasks(g))
+    if (!task.started)
+      fresh.push({ kind: "smartStart", task });
+  for (const task of ensureTownExplosionTasks(g))
+    if (!task.started)
+      fresh.push({ kind: "explosion", task });
+  fresh.sort((a, b) => a.task.bobOrdinal - b.task.bobOrdinal);
+  for (const item of fresh) {
+    if (item.kind === "tokenSfx") {
+      item.task.started = true;
+      resumeTokenSfxTask(g, item.task);          // prvni nota v creation VBL
+    } else if (item.kind === "smartStart") {
+      startSmartPulseTask(g, item.task);
+    } else startTownExplosionTask(g, item.task);
+  }
+  compactTokenSfxTasks(g);
+  g.smartStartTasks = ensureSmartStartTasks(g)
+    .filter(task => !task.started);
+  g.townExplosionTasks = ensureTownExplosionTasks(g)
+    .filter(task => !task.started);
 }
 function boomLife(bm) {
   return bm.kind === "big" ? 42 : 28;
@@ -2952,6 +4004,7 @@ function addDecal(g, file, frame, x, y) {      // 0x898c: zapis do mapy
   g.effects.push({ file, frame, x, y, t: 0, life: Infinity });
 }
 function releaseHazard(g, h) {
+  if (deferTownCleanup(h)) return;
   releaseCost(g, h);
   h.alive = false; h.dead = true;
 }
@@ -3201,11 +4254,10 @@ function initMill(g, s) {                      // 0x79d4 po a2c6
   g.activeCost = (g.activeCost || 0) + s.cost; s.budgeted = true;
 }
 function detonateMine(g, s, credited) {
-  if (!s.alive) return;
-  s.alive = false; releaseCost(g, s);
+  if (!s.alive && !s.townResumeActive) return;
+  releaseSpawnTask(g, s);
   if (credited) awardScore(g, 25);
-  spawnBoom(g, s.x, s.y);
-  sfxBigExplosion(g, s.x);
+  queueTownExplosionTask(g, s.x, s.y, 1, "death-mine");
   addDecal(g, "MINE.LIN", 8, s.x, s.y);
   // 0x9b62 je callback zasahu hracskou strelou. Kontaktni exploze core
   // nezaklada; vystreleny core je ochranny pickup, nikoli nepratelsky hazard.
@@ -3213,9 +4265,8 @@ function detonateMine(g, s, credited) {
 }
 function detonateProx(g, s) {
   if (!s.alive) return;
-  s.alive = false; releaseCost(g, s);
-  spawnBoom(g, s.x, s.y);
-  sfxBigExplosion(g, s.x);
+  releaseSpawnTask(g, s);
+  queueTownExplosionTask(g, s.x, s.y, 1, "death-proxmine");
   const p = g.player;
   const tx = p.alive ? p.x : 160, ty = p.alive ? p.y : 192;
   const base = angTo(s.x, s.y - g.scroll, tx, ty);
@@ -3227,36 +4278,35 @@ function detonateProx(g, s) {
    projectile attribution bitu, ale udela standardni explozi/decal a task
    cleanup. Custom MINE/PROX callbacks se nevolaji, tedy zadny core/strepy. */
 function pulseKillSpawn(g, s, credited) {
-  if (!s.born || !s.alive || s.beh === "boss") return;
-  s.alive = false; releaseCost(g, s);
+  if (!s.born || (!s.alive && !s.townResumeActive) || s.beh === "boss") return;
+  releaseSpawnTask(g, s);
   if (credited) awardScore(g, s.scoreValue ?? 100);
-  spawnBoom(g, s.x, s.y, "small", s.beh === "mill" ? 33 : 1);
-  sfxBigExplosion(g, s.x);
+  queueTownExplosionTask(g, s.x, s.y, s.beh === "mill" ? 33 : 1,
+                         "death-" + s.beh);
   if (["mine", "tank", "popup", "flame", "proxmine"].includes(s.beh))
     addDecal(g, s.beh === "mine" ? "MINE.LIN" : "EXPL1.LIN",
              s.beh === "mine" ? 8 : 0, s.x, s.y);
 }
 function pulseKillAir(g, a, credited) {
-  if (!a.alive) return;
+  if (!a.alive && !a.townResumeActive) return;
   releaseAirMember(g, a);
   if (credited) awardScore(g, a.scoreValue ?? 0);
-  spawnBoom(g, a.x, a.y, "small", 33);
-  sfxBigExplosion(g, a.x);
+  queueTownExplosionTask(g, a.x, a.y, 33, "death-" + a.kind);
 }
 function pulseKillHazard(g, h, credited) {
-  if (!h.alive || h.consumed) return;
+  if ((!h.alive && !h.townResumeActive) || h.consumed) return;
   releaseHazard(g, h);
   if (credited) awardScore(g, h.scoreValue ?? 0);
-  spawnBoom(g, h.x, h.y, "small",
-            h.kind === "minecore" || h.kind === "proxfrag" ? 33 : 1);
-  sfxBigExplosion(g, h.x);
+  queueTownExplosionTask(g, h.x, h.y,
+    h.kind === "minecore" || h.kind === "proxfrag" ? 33 : 1,
+    "death-" + h.kind);
 }
 function pulseKillEnemyShot(g, sh, credited) {
-  if (sh.dead) return;
+  if (sh.dead && !sh.townResumeActive) return;
   if (sh.kind === "hom") {
     if (credited) awardScore(g, 7);
-    spawnBoom(g, sh.x, sh.y + g.scroll, "small", 33);
-    sfxBigExplosion(g, sh.x);
+    queueTownExplosionTask(g, sh.x, sh.y + g.scroll, 33,
+                           "death-homing");
   }
   releaseEnemyShot(g, sh);                    // cannon konci bez exploze
 }
@@ -3316,18 +4366,81 @@ function findPlayerRespawn(g) {
   return { x: 288, y: 192, probes };
 }
 
-function respawnPlayer(g) {                    // 0x714e -> 0x9046 -> 0x9410
+function releasePlayerBubble(g) {
   const p = g.player;
-  if (--g.lives <= 0) { g.over = true; return; }
   if (p.bubbleBound) releaseCost(g, p.bubbleBound);
+  p.bubbleTimer = 0; p.bubbleBound = null;
+}
+
+function placePlayerSpawn(g) {                 // 0x9046 -> 0x9410
+  const p = g.player;
+  releasePlayerBubble(g);
   p.alive = true; p.respawnT = 0;
   const pos = findPlayerRespawn(g);
   p.x = pos.x; p.y = pos.y; p.ang = 192;
   p.weaponX = p.x; p.weaponY = p.y;
-  p.inv = 200; p.bubbleTimer = 0; p.bubbleBound = null;
+  p.inv = 200;
   p.cool = 0;
   applyWeaponTable(p);
   resetPlayerHeliAnim(p);
+}
+
+function remainingContinues(g) {
+  if (!Number.isInteger(g.continues)) g.continues = 2;
+  return Math.max(0, g.continues | 0);
+}
+
+function beginContinueWindow(g) {
+  releasePlayerBubble(g);
+  g.playerPhase = "continue";
+  // 0x1dc8..0x1dd4: s kreditem 300 VBL, bez kreditu jen 100.
+  g.playerPhaseT = remainingContinues(g) > 0 ? 300 : 100;
+  g.joinClosed = false;
+}
+
+function acceptContinue(g) {
+  if (g.playerPhase !== "continue" || remainingContinues(g) <= 0)
+    return false;
+  g.continues--;
+  g.playerPhase = "active"; g.playerPhaseT = 0;
+  g.joinClosed = false;
+  g.townColor07Enabled = true;
+  g.lives = 4; g.score = 0; g.nextLife = 10000;
+  const p = g.player;
+  // 0x7076 resetuje jen lives/score/next-life. Zbran +100, pickup count
+  // +102 a mode +104 preziji continue a normalni 0x70c8 je jen clampne.
+  p.rank = 0; p.collisionEventWord = 0; p.collisionLethal = false;
+  placePlayerSpawn(g);                         // novy kredit zacina HELI 3
+  return true;
+}
+
+function beginClosingLevel(g) {
+  g.playerPhase = "closing"; g.playerPhaseT = 0;
+  g.joinClosed = true; g.jeepLives = 1;
+  g.continues = 3;                            // 0x1dea: -12 = tri kredity
+  g.townColor07Enabled = false;                // 0x1de6 SF fp@(3615)
+  g.fadeDir = -1;
+}
+
+function stepPostLifeSequence(g) {
+  if (g.playerPhase === "continue") {
+    // 0x702c je level-triggered: drzeny fire vezme kredit hned v prvnim
+    // continue VBL, bez umeleho browseroveho debounce.
+    if (g.keys && g.keys.f && acceptContinue(g)) return;
+    if (--g.playerPhaseT <= 0) beginClosingLevel(g);
+  } else if (g.playerPhase === "closing" && g.fadeBlack >= 256) {
+    g.playerPhase = "stats"; g.playerPhaseT = 0;
+    g.over = true;                             // svet se zastavi az na stats
+  }
+}
+
+function respawnPlayer(g) {                    // 0x714e -> 0x9046 -> 0x9410
+  if (--g.lives <= 0) {
+    g.lives = 0;
+    beginContinueWindow(g);
+    return;
+  }
+  placePlayerSpawn(g);
 }
 
 function killPlayer(g) {                       // 0x9306 + 0x714e
@@ -3355,11 +4468,11 @@ function queueTownCollisionEvent(o, bit) {
 function townCollisionResumeTasks(g) {
   const tasks = [];
   let fallback = 0;
-  const add = (kind, o) => {
+  const add = (kind, o, boss = null) => {
     if (!o) return;
     const ordinal = Number.isFinite(o.bobOrdinal)
       ? o.bobOrdinal : 0x40000000 + fallback;
-    tasks.push({ kind, o, ordinal, fallback: fallback++ });
+    tasks.push({ kind, o, boss, ordinal, fallback: fallback++ });
   };
   for (const sh of g.shots || []) if (!sh.dead) add("shot", sh);
   for (const a of g.air || []) if (a.alive) add("air", a);
@@ -3367,6 +4480,31 @@ function townCollisionResumeTasks(g) {
   for (const s of g.spawns || []) if (s.born && s.alive) add("spawn", s);
   for (const k of g.tokens || []) if (!k.dead) add("token", k);
   for (const pl of g.plops || []) if (!pl.dead) add("plop", pl);
+  // 0x564c po wait5 znovu vstupuje jako puvodni priority100 task. Wait
+  // odecteme jednou za VBL, ale splatnou notu provedeme az na jejim miste
+  // podle creation ordinalu mezi ostatnimi continuations.
+  for (const tokenSfx of ensureTokenSfxTasks(g)) {
+    if (!tokenSfx.started || tokenSfx.done) continue;
+    if (tokenSfx.wait > 0) tokenSfx.wait--;
+    if (tokenSfx.wait <= 0) add("tokenSfx", tokenSfx);
+  }
+  // 0x885a je rovnez priority100 coroutine. Jeji wait50 deadline musi
+  // globalni SMART flag shodit presne mezi starsimi a mladsimi tasky.
+  const pulseTasks = ensureSmartPulseTasks(g);
+  for (let i = 0; i < pulseTasks.length; i++) {
+    const ordinal = g.smartPulseTaskOrdinals[i];
+    add("smartPulse", { pulseIndex: i, bobOrdinal: ordinal });
+  }
+  for (const s of g.spawns || []) {
+    if (s.beh === "boss" && s.budgeted &&
+        Number.isInteger(s.checksumReleaseTick))
+      add("bossChecksum", s);
+  }
+  for (const s of g.spawns || []) {
+    if (s.beh !== "boss") continue;
+    for (const q of s.parts || [])
+      if (q.entered && q.alive !== false) add("bossPart", q, s);
+  }
   tasks.sort((a, b) => a.ordinal - b.ordinal || a.fallback - b.fallback);
   return tasks;
 }
@@ -3403,8 +4541,7 @@ function dispatchTownShotEvent(g, task) {
     } else damageHazard(g, o);
   } else if (kind === "shot" && o.kind === "hom" && !o.dead) {
     releaseEnemyShot(g, o); awardScore(g, 7);
-    spawnBoom(g, o.x, o.y + g.scroll, "small", 33);
-    sfxBigExplosion(g, o.x);
+    queueTownExplosionTask(g, o.x, o.y + g.scroll, 33, "death-homing");
   }
 }
 
@@ -3416,8 +4553,7 @@ function dispatchTownContactEvent(g, task) {
     if (o.dead) return;
     if (o.kind === "hom") {
       releaseEnemyShot(g, o); awardScore(g, 7);
-      spawnBoom(g, o.x, o.y + g.scroll, "small", 33);
-      sfxBigExplosion(g, o.x);
+      queueTownExplosionTask(g, o.x, o.y + g.scroll, 33, "death-homing");
     } else releaseEnemyShot(g, o);              // default +514=0x6db4
   } else if (kind === "air") {
     if (!o.alive) return;
@@ -3436,8 +4572,36 @@ function dispatchTownContactEvent(g, task) {
 
 function resumeTownObjectHousekeeping(g, task) {
   const o = task.o;
+  if (task.kind === "tokenSfx") {
+    resumeTokenSfxTask(g, o);
+    return;
+  }
+  if (task.kind === "smartPulse") {
+    resumeSmartPulseTask(g, o.pulseIndex);
+    return;
+  }
+  if (task.kind === "bossChecksum") {
+    resumeBossChecksumTail(g, o);
+    return;
+  }
+  // +542 orphan callback patri child tasku a v creation FIFO proto bezi
+  // az po parentove c986 unlinku, ne inline uvnitr damageBoss().
+  if (task.kind === "bossPart") {
+    resumeBossPartOrphan(g, task.boss, o);
+    return;
+  }
+  // 0x98c4 je stale uvnitr kontaktniho callbacku: kazde wait resume udela
+  // uvodni bit4 kompenzaci, ale nevraci se znovu do SMART/event dispatchu.
+  if (task.kind === "hazard" && o.kind === "minecore" && o.consumed > 0)
+    return;
   const mask = o.collisionEventWord | 0;
   const credited = !!o.collisionPlayerCredit;
+
+  // Loader kill jen zneplatni generation word. Dokud 0x64b6 neprojde
+  // celou ulozenou masku, objekt musi zustat callbackove dostupny; fyzicky
+  // release se provede jednou az za vsemi bity.
+  o.townResumeActive = true;
+  o.townResumeInvalidated = !!o.retireAfterField;
 
   // 0x6452 maze predchozi jednopolickovy hit flag jeste pred orphan/smart.
   if (task.kind === "spawn" && o.beh === "boss") o.hitSpread = false;
@@ -3450,6 +4614,9 @@ function resumeTownObjectHousekeeping(g, task) {
 
   o.collisionEventWord = 0;                    // 0x6538 CLR.W +506
   o.collisionPlayerCredit = false;
+  o.townResumeActive = false;
+  if (o.townResumeInvalidated) o.retireAfterField = true;
+  delete o.townResumeInvalidated;
 }
 
 /* +367 bit4 se aplikuje na zacatku 0x643a resume, tedy jeste pred
@@ -3470,6 +4637,12 @@ function compensateTownTaskScrollOnResume(task, scrollDelta) {
 function retireTownTaskAfterField(g, task) {
   const { kind, o } = task;
   if (!o.retireAfterField) return false;
+  // 0x98c4 callback zustava deset VBL uvnitr wait helperu. Generation uz
+  // muze byt invalidni, ale cost/task se uvolni az po navratu callbacku.
+  if (kind === "hazard" && o.kind === "minecore" && o.consumed > 0) {
+    o.retireAfterField = false;
+    return false;
+  }
   if (kind === "shot") releaseEnemyShot(g, o);
   else if (kind === "air") releaseAirMember(g, o);
   else if (kind === "hazard") releaseHazard(g, o);
@@ -3478,7 +4651,7 @@ function retireTownTaskAfterField(g, task) {
     releaseCost(g, o); o.dead = true;
   } else if (kind === "spawn" && o.beh === "boss") {
     // 0xc930 -> 0x62cc/0x6480: pouze unikajici GOOSE pouziva bounds.
-    o.alive = false; releaseBossGroup(g, o, true);
+    beginBossRetirement(g, o);
   } else if (kind === "spawn") {
     o.alive = false; releaseCost(g, o);
   }
@@ -3495,6 +4668,8 @@ function resumePlayerCollision(g) {
 
 /* ---- start urovne ---- */
 function startGame(lv) {
+  stopAttract();
+  $("#titlewrap").style.display = "none";
   const m = renderMap(state, lv, false);
   const big = document.createElement("canvas");
   big.width = m.w; big.height = m.h;
@@ -3503,28 +4678,9 @@ function startGame(lv) {
   const { fid, dico } = levelInfo(state.prog, lv);
   const pam = unpackFile(state.adf, state.files.find(f => f.name === state.order[fid]));
   const parsed = parsePam(pam, dico);
+  if (lv === 0) applyTownObjectPalette(parsed.checks);
   // paleta pro sprity: prvni kompletni checkpoint
   const rgb = v => [((v >> 8) & 15) * 17, ((v >> 4) & 15) * 17, (v & 15) * 17];
-  // COLOR00-09 (barvy objektu) nastavuje engine az po nacteni urovne a
-  // uvodni davka mapy je neurcuje. Hodnoty pro TOWN jsou zmerene
-  // pixel-fitem JEEPHELI#0 / YELLOW#0 / MEDTANK proti baseline snimkum
-  // originalu (tools/baseline.sh, neshoda 0.000; docs/TOWN-PARITY.md).
-  // PAM prikaz, ktery stejny index prepise pozdeji v mape, plati dal.
-  {
-    const TOWN_OBJECT_COLORS = [0x000, 0x333, 0x465, 0x598, 0x765,
-                                0x666, 0x9A9, 0x800, 0xED6, 0xEEE];
-    const overridden = TOWN_OBJECT_COLORS.map(() => true);
-    let prev = null;
-    for (const c of parsed.checks) {
-      const orig = c.pal.slice();
-      if (prev)
-        for (let i = 0; i < TOWN_OBJECT_COLORS.length; i++)
-          if (orig[i] !== prev[i]) overridden[i] = false;
-      for (let i = 0; i < TOWN_OBJECT_COLORS.length; i++)
-        if (overridden[i]) c.pal[i] = TOWN_OBJECT_COLORS[i];
-      prev = orig;
-    }
-  }
   state.copperChecks = parsed.checks;
   state.checks = parsed.checks.map(c => ({ y: c.y, pal: c.pal.map(rgb) }));
   state.pal = state.checks[0] ? state.checks[0].pal : [];
@@ -3565,10 +4721,9 @@ function startGame(lv) {
   const g = state.g = {
     lv, big, mapIndex: m.mapIndex, terrainOpen: m.terrainOpen,
     mapW: m.w, spawns, mapH: m.h,
-    // Start okna: spodni hrana lezi na prvnim skutecnem obsahu mapy -
-    // uvodni davka prikazu spotrebuje parsed.lead px (TOWN: 96) a original
-    // je nikdy neukaze. Zmereno korelaci baseline snimku t16-t23 na radky
-    // mapy (start ~3245+-8 = 3345 - 96); docs/TOWN-PARITY.md.
+    // Uvodni davka PAM spotrebuje parsed.lead px drive, nez prijde prvni
+    // skutecny mapovy zaznam. Original tento prazdny usek neukazuje
+    // (TOWN: 3345 - 96, potvrzeno korelaci baseline t16..t23).
     scroll: m.h - MARGIN - 256 - parsed.lead,
     frac: 0,
     // Hracsky struct fp@(11176): +98 prodleva, +100 sila (0x6fde: start 2),
@@ -3589,6 +4744,12 @@ function startGame(lv) {
     air: [], hazards: [], tokens: [],
     players: 1, difficulty: 0, levelPhase: lv, activeCost: 0,
     score: 0, tick: 0, over: false, won: false,
+    // Po vlozeni prvniho kreditu zbyvaji nativne dva dalsi. Posledni
+    // smrt nezmrazi scheduler: nasleduje continue a zaviraci faze.
+    continues: 2, playerPhase: "active", playerPhaseT: 0,
+    joinClosed: false,
+    jeepLives: 1, jeepScore: 0, jeepTokenCount: 0,
+    townColor07Enabled: lv === 0,
     // AMPROG stav zacina v BSS; skutecny hardware jej pred kazdym během
     // scheduleru meni VHPOSR. Bez zachyceneho beam trace pouzivame nulu,
     // takze gameplay je deterministicky a samotny 0x883c zustava bitove presny.
@@ -3603,7 +4764,10 @@ function startGame(lv) {
     // 0x3092 vola po zalozeni hracskych korutin 0x2868 = fade z cerne,
     // tedy uroven 256 a smer +1: 16 snimku do plne palety.
     fadeBlack: 256, fadeWhite: 0, fadeDir: 1, fadeWhiteStep: 0,
-    smartPulse: 0, smartPulseTasks: [], tokenSfxTasks: [],
+    smartPulse: 0, smartStartTasks: [], smartPulseTasks: [],
+    smartPulseTaskOrdinals: [],
+    tokenSfxTasks: [],
+    townExplosionTasks: [],
     tokensPickedUp: 0,
   };
   g.player.bobOrdinal = 0;                    // player task existuje pred spawnery
@@ -3627,6 +4791,8 @@ document.getElementById("livesbox").onchange = e => {
   if (g.over && !g.won) {           // oziveni po game over pro dalsi testovani
     g.over = false; g.player.alive = true; g.player.inv = 200;
     g.player.x = 160; g.player.y = 192; g.player.respawnT = 0;
+    g.playerPhase = "active"; g.playerPhaseT = 0; g.joinClosed = false;
+    g.townColor07Enabled = g.lv === 0; g.fadeBlack = 0; g.fadeDir = 0;
     resetPlayerHeliAnim(g.player);
   }
 };
@@ -3651,8 +4817,8 @@ window.addEventListener("keyup", e => {
 function step(g) {
   advanceTownSfxClock(g);                      // CIAB IRQ 0x4abc pred schedulerem
   g.tick++;
-  advanceTokenSfxTasks(g);                     // 0x564c: dalsi nota po 5 VBL
   stepFade(g);
+  stepPostLifeSequence(g);
   const oldScroll = g.scroll;
   g.scroll -= SCROLL * TICK * (g.scrollMul || 1);   // scroll nahoru
   let scrollDelta = g.scroll - oldScroll;
@@ -3662,7 +4828,6 @@ function step(g) {
   }
   const p = g.player;
   ensureSmartPulseTasks(g);
-  const pulseTaskCountAtStart = g.smartPulseTasks.length;
   const collisionResumeTasks = townCollisionResumeTasks(g);
   // Strely, ktere uz cekaly na resume na zacatku scheduler passu. Child
   // zalozeny pozdeji collision callbackem dostane prvni 0x62d2 uvnitr
@@ -3671,7 +4836,9 @@ function step(g) {
 
   // 0x714e je pocet simulacnich VBL, ne wall-clock timeout. Uroven i
   // nepratelske tasky behem cekani normalne pokracuji.
-  if (!p.alive && (p.respawnT | 0) > 0 && --p.respawnT === 0)
+  if (!p.alive && g.playerPhase !== "continue" &&
+      g.playerPhase !== "closing" && g.playerPhase !== "stats" &&
+      (p.respawnT | 0) > 0 && --p.respawnT === 0)
     respawnPlayer(g);
 
   // Player task je v priority100 FIFO prvni. Event z collision sweepu N
@@ -3772,6 +4939,9 @@ function step(g) {
     // Flagged task uz ale nesmi provest continuation/motion fieldu N+1.
     retireTownTaskAfterField(g, task);
   }
+  compactTokenSfxTasks(g);
+  compactSmartPulseTasks(g);
+  stepRetiredBossParts(g, scrollDelta);
   g.shots = (g.shots || []).filter(s => !s.dead);
   g.air = (g.air || []).filter(a => !a.dead && (a.pending || a.alive));
   g.hazards = (g.hazards || []).filter(h => !h.dead && h.alive);
@@ -3979,6 +5149,7 @@ function step(g) {
         s.rotorTick = 0; s.rotorActive = false;
         s.hitSpread = false; s.assemblyLeft = 4;
         s.groupReleased = false;
+        s.checksumReleaseTick = null; s.checksumDone = false;
         s.timer = 0;                    // 0xc7ce: WORD +280 pred detmi = 0
         // Parent zaplati 100 hned. Escort a tri body po 10 se uctuji az
         // pri svem vlastnim a2c6 startu (body tedy po random waitu).
@@ -4145,7 +5316,8 @@ function step(g) {
         } else {
           s.y += s.vy;
           bsy = s.y - g.scroll;
-          if (bsy <= 72) s.arrived = true;       // tento frame jeste ingress
+          if (positionWord(bsy) <= 72)
+            s.arrived = true;                    // tento frame jeste ingress
         }
       } else {
         // 0xc85e: posledni child po counter-- obnovi parent task jeste
@@ -4182,18 +5354,19 @@ function step(g) {
             const ax = 1536 / 65536;
             const preMoveX = s.x;               // palba pred 0xc902/0x62d2
             const targetX = p.alive ? p.x : 160;// 0x7312 death fallback
-            if (targetX < s.x) {
+            if (positionWord(targetX) < positionWord(s.x)) {
               // CMP.W cte high word 16.16; hodnota -1.x ma high word -2 a
               // uz se dale nezmensuje, takze nemuze preletet pod -2.
               if (Math.floor(s.vx) > -2) s.vx -= ax;
             } else if (Math.floor(s.vx) < 1) s.vx += ax;
             s.x += s.vx;
             // 0xc8b2: nad64 klesa4, pod192 stoupa.25, mezi tim drzi.
-            if (bsy < 64) s.vy = 4;
-            else if (bsy > 192) s.vy = -0.25;
+            const bsyWord = positionWord(bsy);
+            if (bsyWord < 64) s.vy = 4;
+            else if (bsyWord > 192) s.vy = -0.25;
             s.y += s.vy;
             // 0xc8ce: pali jen v horni polovine, kadence (12-D)*4.
-            if (bsy <= 128 && --s.fireT <= 0) {
+            if (bsyWord <= 128 && --s.fireT <= 0) {
               s.fireT = (12 - (g.difficulty || 0)) * 4;
               fireCannonAimed(g, preMoveX, bsy, s.vx, s.vy);
               fireHoming(g, preMoveX + 6, bsy, 0, s.vx, s.vy);
@@ -4231,6 +5404,13 @@ function step(g) {
     }
   }
 
+  // Browser dosud publikoval linked child snapshot uvnitr stepBossParts(),
+  // tedy pred pozdejsim pohybem GOOSE parentu v temze continuation. Render,
+  // collision node i pripadny +542 orphan ted sdileji skutecnou koncovou
+  // pozici fieldu po dokonceni parent i child casti tohoto VBL.
+  for (const s of g.spawns || [])
+    if (s.beh === "boss" && s.born) publishBossPartPositions(g, s);
+
   // Equal-priority child z PROXMINE/FLAME/TRAIN se po zalozeni zaradi za
   // bezici parent a jeste v tomtez VBL udela prvni 0x62d2 field. Smycka je
   // dynamicka: fresh emitter muze pri deadline zalozit fresh puff.
@@ -4251,6 +5431,14 @@ function step(g) {
       s.apos = (s.apos + 1) % s.anim.frames.length;
     }
   }
+
+  // Nove 0x894a tasky maji stejnou prioritu100, ale vznikly az uvnitr
+  // callbacku. Rozbehnou se proto teprve za continuations vsech tasku,
+  // ktere cekaly uz na zacatku VBL, stale v creation poradi mezi sebou.
+  runFreshTownPriorityTasks(g);
+  // Parentova c934 checksum continuation patri take do priority100; pokud
+  // ji cestou nepotkal zadny pozdejsi budget guard, uvolni cost zde.
+  advanceBossChecksumTails(g);
 
   // Player projectile updater ma prioritu 0xfffe, tedy az za vsemi beznymi
   // object tasky a tesne pred resident sweepem 0xffff. Nejprve uvolni sloty,
@@ -4292,22 +5480,27 @@ function step(g) {
 
   const spawnShotEvents = new Set(), bossShotEvents = new Set();
   for (const s of g.spawns) {
-    if (!s.born || !s.alive || s.beh === "unimplemented" ||
+    if (!s.born || s.beh === "unimplemented" ||
         s.beh === "missing-dispatch") continue;
+    if (s.beh === "boss") {
+      const sy = s.y - g.scroll;
+      if (s.alive && s.hp > 0 && collectBulletEvent(s.x, sy))
+        bossShotEvents.add(s);
+      // HP0 deti nemaji damage callback, class34 ale spotrebuje bullet.
+      for (const q of s.parts || []) {
+        if (!q.entered || q.alive === false) continue;
+        const qp = bossPartPosition(s, q, g.scroll);
+        collectBulletEvent(qp.x, qp.y);
+      }
+      continue;
+    }
+    if (!s.alive) continue;
     // MEDTANK TYP4 je po a2c6 zapocitany, ale raw 0x9ac8 wait do sy=288
     // jeste nevydal prvni 0x62d2 BOB/collision node. Skryty parent proto
     // nesmi na sve budouci world pozici pohltit player bolt.
     if (s.beh === "tank" && !s.tankSetup) continue;
     const sy = s.y - g.scroll;
-    if (s.beh === "boss") {
-      if (s.hp > 0 && collectBulletEvent(s.x, sy)) bossShotEvents.add(s);
-      // HP0 deti nemaji damage callback, class34 ale spotrebuje bullet.
-      for (const q of s.parts || []) {
-        if (!q.entered) continue;
-        const qp = bossPartPosition(s, q, g.scroll);
-        collectBulletEvent(qp.x, qp.y);
-      }
-    } else if (s.hp > 0 && collectBulletEvent(s.x, sy)) {
+    if (s.hp > 0 && collectBulletEvent(s.x, sy)) {
       spawnShotEvents.add(s);
     }
   }
@@ -4355,24 +5548,25 @@ function step(g) {
       }
     }
     for (const s of g.spawns) {
-      if (!s.born || !s.alive) continue;
-      if (s.beh === "tank" && !s.tankSetup) continue;
+      if (!s.born) continue;
       if (s.beh === "boss") {
         const sy = s.y - g.scroll;
-        if (s.hp > 0 && collisionNodeHit(p.x, p.y, s.x, sy)) {
+        if (s.alive && s.hp > 0 && collisionNodeHit(p.x, p.y, s.x, sy)) {
           contactBoss.add(s); lethalContact = true;
         }
         for (const q of s.parts || []) {
-          if (!q.entered) continue;
+          if (!q.entered || q.alive === false) continue;
           const qp = bossPartPosition(s, q, g.scroll);
           if (collisionNodeHit(p.x, p.y, qp.x, qp.y)) lethalContact = true;
         }
-      } else {
-        const overlap = collisionNodeHit(p.x, p.y, s.x, s.y - g.scroll);
-        if (overlap) playerAttribution.add(s);
-        if (s.beh === "mill" && overlap) {
-          contactMill.add(s); lethalContact = true;
-        }
+        continue;
+      }
+      if (!s.alive) continue;
+      if (s.beh === "tank" && !s.tankSetup) continue;
+      const overlap = collisionNodeHit(p.x, p.y, s.x, s.y - g.scroll);
+      if (overlap) playerAttribution.add(s);
+      if (s.beh === "mill" && overlap) {
+        contactMill.add(s); lethalContact = true;
       }
     }
     for (const h of g.hazards) {
@@ -4438,17 +5632,6 @@ function step(g) {
   g.booms = g.booms.filter(bm => bm.t < boomLife(bm));
   for (const ef of g.effects) ef.t++;
   g.effects = g.effects.filter(ef => ef.t < ef.life);
-  // Resume jen tasku, ktere existovaly na zacatku VBL; trigger zalozeny
-  // behem collision callbacku zacne svuj wait50 az od pristiho tiku.
-  let pulseDeadline = false;
-  for (let i = 0; i < pulseTaskCountAtStart; i++) {
-    g.smartPulseTasks[i]--;
-    if (g.smartPulseTasks[i] <= 0) pulseDeadline = true;
-  }
-  g.smartPulseTasks = g.smartPulseTasks.filter(t => t > 0);
-  if (pulseDeadline) g.smartPulse = 0;          // SF fp@(169)
-  else if ((g.smartPulse | 0) > 0 && g.smartPulseTasks.length)
-    g.smartPulse = Math.min(...g.smartPulseTasks);
   if (g.flash > 0) g.flash--;
   // 0x1db8: az po dokonceni celeho scheduleru; enemy tasky v tomto VBL
   // tedy cetly obtiznost vypoctenou na konci predchoziho VBL.
@@ -4475,7 +5658,10 @@ function frame(now) {
   const composed = composeTownBobs(g, top);
   colorizeIndexedField(composed.index, 320, 256, state.mapMeta.height,
                        state.mapMeta.margin, top, state.copperChecks,
-                       g.mapFrame.data, g.fadeBlack, g.fadeWhite);
+                       g.mapFrame.data, g.fadeBlack, g.fadeWhite,
+                       g.lv === 0 && g.townColor07Enabled !== false &&
+                         !g.fadeBlack
+                         ? townObjectColor07Word(g.tick) : undefined);
   const hudPlane = hudPlaneForGame(g);
   const highColors = updateRetainedHighColors(g);
   compositeHudPlane(composed.index, 320, g.mapFrame.data, hudPlane.bytes,
@@ -4682,17 +5868,22 @@ function frame(now) {
 
   // Nativni pata bitplane uz je v mapFrame: musi zustat pod COLOR17+
   // hardwarovymi sprity, ktere se skladaji az nize.
-  if (g.over) {
-    ctx.fillStyle = "rgba(0,0,20,.55)"; ctx.fillRect(0, 100, 320, 56);
-    ctx.fillStyle = "#fff"; ctx.font = "bold 16px monospace";
-    ctx.fillText(g.won ? "LEVEL COMPLETE!" : "GAME OVER", 92, 124);
-    ctx.font = "10px monospace";
-    ctx.fillText("reload to play again \u2014 reconstruction", 58, 142);
-  }
-
   // Jediny 0x3d00/0x3d4e pass pro cannon, PLOP#1 a P1 bolt pool:
   // 64 records, osm channel listu, banky podle channel pair a HW priorita.
-  drawTownHardwareSprites(ctx, g);
+  if (!g.over) drawTownHardwareSprites(ctx, g);
+
+  if (g.over) {
+    // Po continue + closing fadu uz nesmi pod stat obrazem prosvitat HUD
+    // ani pozdni HW sprity. Pixelove presny nativni stats screen je dalsi
+    // samostatny parity krok; tento mezistav zachovava spravnou fazovou mez.
+    ctx.fillStyle = "#000"; ctx.fillRect(0, 0, 320, 256);
+    ctx.fillStyle = "#fff"; ctx.font = "bold 16px monospace";
+    ctx.fillText(g.won ? "LEVEL COMPLETE!" : "GAME OVER", 92, 112);
+    ctx.font = "10px monospace";
+    ctx.fillText("TOKENS PICKED UP", 56, 144);
+    ctx.fillText(String(g.tokensPickedUp || 0).padStart(3, "0"), 238, 144);
+    ctx.fillText("reload to play again \u2014 reconstruction", 58, 178);
+  }
 
   requestAnimationFrame(frame);
 }

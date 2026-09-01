@@ -38,9 +38,15 @@ locally) and insert your `.adf`. Screens, 900+ sprite frames with
 selectable palettes, all seven levels assembled from the map data,
 a smooth fly-over mode, music metadata, and the file catalogue.
 
-**Playable transcription:** open `game.html`, insert the same ADF,
-press Space and choose TOWN. The TOWN runtime currently routes all 155
-map objects, and **all 155 now run transcribed behaviour coroutines** —
+**Playable transcription:** open `game.html` and insert the same ADF. The
+native attract loop starts automatically; Space, Enter, Z or a click starts
+TOWN directly, while `L` opens the development level picker. The attract loop
+uses the disk's COVER, Sales Curve credits, HELI/JEEP blueprints and score
+tables, FACES, embedded text, palettes, Copper gradients and fades, with
+`AMTITUNE.MOD` playing after the COVER fade.
+
+The TOWN runtime currently routes all 155 map objects, and **all 155 now run
+transcribed behaviour coroutines** —
 including the level boss, which flies in from below, assembles from three
 parts, and fires an aimed grenade plus two homing missiles.
 The level fades in from black over 16 frames, as the engine's own fade
@@ -48,8 +54,9 @@ driver does — and the HUD stays lit through it, because the fade only
 touches COLOR00-15. The local TOWN runtime also has the four-voice
 Paula/CIAB effect model for player fire, hits, launchers, flames and the
 principal explosions, including four-layer `SMART.SND`, shield/TOKEN pickup
-effects and the IRQ-seeded custom GOOSE hit/death; the original uses title
-music rather than a gameplay module.
+effects and the IRQ-seeded custom GOOSE hit/death. The title module stops when
+TOWN starts; the absence of gameplay music is the original level-one policy,
+not a missing module.
 Other levels are still research previews, not complete ports.
 
 **Command line:**

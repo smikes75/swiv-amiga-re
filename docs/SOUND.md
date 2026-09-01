@@ -75,10 +75,25 @@ The first MINE-core pickup sets player field `+106=-1`; only the subsequently
 created bound child at `0x98F2` plays the shield tone, once, from the player's
 current x position at child start. A duplicate active core and a shot core do
 not play this tone. Every actual TOKEN pickup, of any type, instead captures
-the TOKEN x position and runs its own notes at VBL offsets 0, 5, 10 and 15. Shooting a
-TOKEN, dropping it, or culling it is silent. Each note has 64 two-IRQ states
+the TOKEN x position and enqueues a priority-100 child; the pickup callback
+itself produces no audio. That child runs notes at VBL offsets 0, 5, 10 and
+15 and resumes in strict creation order among existing object tasks. Shooting
+a TOKEN, dropping it, or culling it is silent. Each note has 64 two-IRQ states
 and cleanup on IRQ 130; scratch rewrites remain live so later noise effects
 inherit the same per-voice bytes as on the Amiga.
+
+Direct PC/audio captures put the first non-zero TOKEN state at 28.9975 ms
+after pickup; the browser path is 28.9926 ms. The GOOSE synth begins near
+9.50 ms natively and 9.77 ms in the browser. Its two accepted BIGEXPL layers
+start at 19.617/19.673 ms natively and about 18.976 ms locally; the remaining
+sub-millisecond difference is deliberately left to the future scanline/CIA
+phase model instead of being hidden by an event-specific fixed delay.
+
+`0x8852` likewise enqueues the separate priority-100 `0x885A` SMART child.
+Fresh TOKEN, SMART and `0x894A` explosion children share one creation-order
+drain. A type-4 pickup creates TOKEN first and SMART second, so the initial
+period-159 request precedes the four SMART requests; their fourth layer can
+preempt that TOKEN voice.
 
 GOOSE hit is deliberately not panned from the boss x coordinate. `0x4E46`
 first requests selector `0x4BB4`, then `0x4B8C`; each retains the normal
@@ -105,6 +120,22 @@ The HOMING routine inherits an unresolved D0 at its sound call. The browser
 uses explicit deterministic pan value zero until that register provenance is
 closed; it does not claim that the missile's x coordinate is native.
 
+## Attract music and verified A500 output path
+
+The browser loads `AMTITUNE.MOD` from the inserted disk, starts it after the
+COVER fade, keeps it alive across the normal attract loop and stops it in
+`startGame()` before TOWN begins. Its ProTracker path uses the period and
+vibrato tables, per-nibble `4xy` memory, hard Paula LRRL stereo and the effect
+set exercised by the disk modules rather than a pre-rendered replacement.
+
+Both that module and the four TOWN effect voices feed one shared post-mix
+A500 output path. The verified order is gain `0.2048`, the fixed one-pole
+low-pass at approximately 4.421 kHz, then the fixed one-pole high-pass at
+approximately 5.13 Hz. These stages belong after the Paula channel sum, not
+on each voice independently. The power-LED two-pole low-pass at approximately
+3.091 kHz is disabled after boot in SWIV and must not be inserted into either
+the attract or level-one path.
+
 ## Browser timing model and tests
 
 `game.html` keeps the logical four-voice state alive even without an
@@ -126,7 +157,8 @@ an exact reuse pattern still needs scanline DMA-slot phase.
 - all four SMART sample periods/channels, raw length, guard/tail and WebAudio
   pitch/start time;
 - the bound-shield 48-state tone and TOKEN four-note VBL scheduler, including
-  their per-IRQ scratch writes and cleanup;
+  its zero-audio enqueue, creation FIFO against existing GOOSE callbacks,
+  SMART/`0x894A` children, per-IRQ scratch writes and cleanup;
 - deferred GOOSE-hit RNG in voice-structure order, including reject and
   pre-second-IRQ preemption cases;
 - PAL period-below-123 effective address-rate clamp in the GOOSE renderer;
@@ -145,10 +177,9 @@ an exact reuse pattern still needs scanline DMA-slot phase.
   the threshold itself belongs to the following live-player resume, not to
   `awardScore()`.
 - Sounds belonging only to later levels are outside the current TOWN slice.
-- TOKEN notes and GOOSE/BIGEXPL layers have correct waveforms, priorities and
-  coarse VBL boundaries, but their newly spawned sound/explosion tasks are
-  still submitted inline rather than at their exact priority-100 FIFO
-  continuation positions inside the same VBL.
+- `AMHITUNE.MOD` is decoded and included in the effect-census tests, but no
+  runtime scene currently starts it or switches to it. Its native
+  high-score/post-game call site remains to be connected.
 - GOOSE hit renders each IRQ rewrite as an atomic 24-byte scratch snapshot;
   exact in-place DMA/CPU overlap needs the original beam and Paula pointer
   phase.

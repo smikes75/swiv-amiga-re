@@ -29,6 +29,9 @@ jeste publikuje/renderuje i collision-sweepuje. Pri resume N+1 dobehne bit4
 scroll compensation, clear hit flash, orphan, SMART a event callbacky a az
 potom se zaznam a cost uklidi. Tento kontrakt plati pro generalizovane
 air/hazard/spawn/TOKEN nody stejne jako pro margin-0 pomocne objekty.
+Generation invalidace neni predcasny navrat: SMART smrt ani lethalni bit0
+nepotlaci ulozeny bit3. Resume zachovava `SMART -> bit0 -> bit3` (pak
+`4,1,2,5`) a fyzicky cleanup/cost release se provede pouze jednou.
 
 ## FODDERA — the air wave (`0x8008` spawner, `0x8066` member)
 
@@ -86,7 +89,9 @@ therefore `+348 = 0x800` means `1/32 px/t²`, not a constant speed.
   (`0x8ad0`–`0x8b1e`), takze uz prvni salva ma dva
 - extra life at 10,000 then every 30,000 (`0x7116`)
 - lives stored as −4×count in the player struct `+68`; score `+76`,
-  hi-score `+80`
+  hi-score `+80`. Browser drzi ekvivalentni kladnou zasobu pred aktualnim
+  spawnem: `g.lives=4` se zobrazi jako `HELI 3`, posledni aktivni stav
+  `g.lives=1` jako `HELI 0`
 - HELI start/respawn `0x9046` zkousi masku `JEEPHELI#0` v poradi
   x `160..280` po8, uvnitr y `192..104` po−8 proti terrain control
   plane1; prvni volne misto vyhraje. Je-li vsech 192 mist blokovanych,
@@ -210,7 +215,10 @@ kde `n=(tick&255)<128 ? tick&255 : 255-(tick&255)`.
   flash
 - kontakt je **pickup stitu**: handler `0x98c4` (sloty `+514`/`+522`)
   bez aktivniho stitu nastavi hraci `+106 = −1`; jadro pak 10 snimku
-  stoji bez BOBu a zmizi. Hracova smycka `0x92a0` zalozi cost5 child
+  stoji bez BOBu a zmizi. Pickup callback v N+1 vstoupi do `wait10`;
+  resume N+2 az N+11 pred waitem stale udela bit4 scroll compensation,
+  v N+10 cost5 jeste drzi a v N+11 jej uvolni prave jednou. Hracova
+  smycka `0x92a0` zalozi cost5 child
   `0x98f2`, nastavi `+106 = 500` a child hned zahraje jediny priority60
   activation tone. Orb strida `MINE#9/#10` kazdy tik na `z = player±2`,
   nema stin a je imunni vuci smart bombe. Po dobu stitu se `+108` drzi
@@ -458,7 +466,9 @@ uroven primo a hned ji zase smazou (`0xc12e` = 64 pri zasahu bosse)
 - **pohyb v boji**: vodorovne zrychleni `1536/65536` px/t² k hraci,
   `vx` orezane na ⟨−2, 1⟩ (`0xc888`); svisle `screen y < 64` → `vy = 4`,
   `> 192` → `vy = −0.25`, mezi tim drzi (`0xc8b2`). Pri mrtvem hraci
-  steering helper vraci x160; porovnani rychlosti pouziva high word 16.16
+  steering helper vraci x160. Ingress 72, volba smeru x, svisle hranice
+  64/192 i palebna hranice 128 porovnavaji pouze signed high WORD 16.16;
+  napr. `128.75` je pro `CMP.W #128` stale uvnitr palebne oblasti
 - **palba** jen pri `screen y <= 128`, kadence `(12 − D) × 4`
   (`0xc8da`): mireny kanonovy granat `0x95d2` + **dve navadene strely**
   `0x8530` s ofsety `+6` uhel 0 a `−6` uhel 128. Vsechny tri vzniknou
@@ -473,11 +483,22 @@ uroven primo a hned ji zase smazou (`0xc12e` = 64 pri zasahu bosse)
   dvojnasobny target uz s prvni 4px kontrakci. Escort se neroztahuje.
   `0xc97e -> 0x4e46` navic zkusi dva priority40 noise hlasy; jejich globalni
   RNG seed prijde az pri druhem CIAB resume, ne v hit callbacku
-- **smrt** (`0xc986`): odpoji deti (`0x60e0`), vytvori kruhy TOKENu,
-  zahraje custom dvojhlas `0x8838` i standardni BIGEXPL a pres vychozi
-  `+376 = 0x894a` zalozi maly EXPL1. Escort sirotci handler pritom zalozi
-  vlastni explozi. Boss ma `d4 = 0`, tedy dava **0 bodu**; smycka `0xc950`
-  je kontrolni soucet programu, ne skore
+- **smrt** (`0xc986`): odpoji deti (`0x60e0`), vytvori kruhy TOKENu a
+  zahraje custom dvojhlas `0x8838`. `a36a` pouze zaradi fresh priority100
+  child z vychoziho `+376 = 0x894a`; teprve jeho resume spusti dve BIGEXPL
+  zadosti a EXPL1#7..13 period4 se `z=33`. Escort ma vlastni orphan resume
+  a radi druhy `0x894a` se `z=34`, takze parent/escort efekty nejsou inline
+  ani sloucene. Boss ma `d4 = 0`, tedy dava **0 bodu**
+- **orphan poradi**: tri body childy na prvnim resume po unlinku potichu
+  uvolni svuj cost10. Escort exploze pouzije jeho posledni publikovanou
+  world pozici; az po jejim enqueue dobere zbytek snake callbacku, tedy
+  2 RNG ve stage0..3, 1 ve stage4..8 a 0 ve stage9. Dite, ktere jeste spi
+  v nahodnem pre-`a2c6` delay, jej po smrti parentu dokonci, spotrebuje
+  spawn RNG a cost10, publikuje jeden creation field a orphan cleanup
+  provede az pri pristim resume
+- **checksum tail** (`0xc950`): neni skore, ale kontrolni soucet programu.
+  Parent proto po poslednim viditelnem fieldu zustava jako priority100 task,
+  provede 107 yieldu a cost100 uvolni presne v N+108 ve sve FIFO pozici
 - **bonusy** (`0xc9a0`): za kazdeho zijiciho hrace jeden kruh — pocet
   urcuje volajici, krok uhlu `256/pocet`, pocatecni uhel nahodny, kazdy
   bonus je korutina TOKEN `0x96d8`. Znicen → **2** kruhy (3, kdyz uz
@@ -485,7 +506,13 @@ uroven primo a hned ji zase smazou (`0xc12e` = 64 pri zasahu bosse)
   podtece az po 2001 dekrementech. Nedotceny boss → **5** a timer0,
   skrabnuty → timer `0xffff`; oba pri timeout resume preskoci dalsi combat
   pohyb i palbu, rovnou publikuji prvni `vy=−4` escape field a culluji se
-  na y≤−64
+  na y≤−64. Pri HP1 a pending `bit0|bit3` se oba death callbacky provedou:
+  prvni pouzije puvodni timer a dropne 2 na ziveho hrace, `0xc9a0` zapise
+  timer0 a druhy proto dropne 3. Vysledek je **2+3 TOKENu**, dve parent
+  exploze a jedna escort exploze. Pocet zivych hracu se vzorkuje v kazdem
+  callbacku; player task proto muze stejnym kontaktem zemrit drive a druhy
+  kruh nedostat. Timeout/cull nema parent explozi ani death synth, ale
+  orphan escortu a parent checksum N+108 zustavaji
 
 ### Bonus TOKEN (`0x96d8`) a hracska pole
 
@@ -515,7 +542,9 @@ TOKEN neni v dispatchi — zaklada ho kod, v TOWN jedine boss.
 
 Pred vetvenim podle typu se zvysi statistika sebranych tokenu a `0x97ce`
 zachyti x konkretniho TOKENu pro ctyrnotovy pickup zvuk `0x5614`: periody
-159/212/159/141 v casech 0/5/10/15 VBL, priority120. Pak se vzdy zvysi
+159/212/159/141 v casech 0/5/10/15 VBL, priority120. `0x5614` nezahraje
+prvni notu inline; zalozi priority100 child `0x564c`, ktery se radi strictne
+podle creation order mezi ostatni tasky. Pak se vzdy zvysi
 samostatny HUD citac `+102`; hodnota 20 se vrati na 19, takze saturuje.
 Zobrazeny stupen je `2 + (+102 / 5)` a neni totozny se silou zbrane `+100`.
 
@@ -534,8 +563,12 @@ neprodlouzi. Pri prvnim zalozeni bound childa vola `0x98f2` jediny priority60
 activation tone `0x4ffe`; duplicate, zastreleny core ani TOKEN typ3 tento ton
 nevolaji.
 
-**Smart bomba** (`0x8852` → korutina `0x885a`): zvuk `0x4cb2`,
+**Smart bomba** (`0x8852` → korutina `0x885a`): `0x8852` pouze zalozi
+priority100 child; az jeho FIFO start provede zvuk `0x4cb2`,
 `st fp@(169)`, `fp@(11166) = 256` (plna bila), 50 snimku, `sf fp@(169)`.
+U TOKENu typ4 vznikne nejprve pickup-sound child a teprve potom SMART child,
+takze prvni nota 159 zazni pred ctyrmi SMART requesty (posledni ji muze
+preemptovat).
 Doznivani bile ridi `fp@(11168)`, ktere se za hry nikde nezapisuje —
 posledni zapisy z uvodni sekvence (`0xc9a`, `0x1028`) nechaji **−4**,
 tedy 64 snimku. Po dobu `fp@(169)` vola housekeeping `0x6468` slot
@@ -545,6 +578,9 @@ resident sweep v temze VBL uz frontoval player event. Imunni jsou objekty,
 ktere udelaly `st +534`: GOOSE telo, casti i pod, TOKEN, orb stitu,
 PLOP a hracova exploze. Kazdy trigger ma vlastni 50tikovy task a prvni
 dobihajici deadline muze globalni pulse vypnout i pri novejsim triggeru.
+Deadline task je sam priority100 a resumeuje ve svem creation-order miste:
+objekty starsi nez deadline jeste vidi SMART aktivni, deadline jej shodi a
+mladsi objekty uz jej ve stejnem VBL nevidi.
 Spousti ji TOKEN typ 4 (`0x985a`), sestreleni jadra miny (`0x98ba`) a
 sebrani jadra s uz aktivnim stitem (`0x98ec`).
 
@@ -570,10 +606,27 @@ sebrani jadra s uz aktivnim stitem (`0x98ec`).
   bitu 3 nastavi hit-flash bit 1 (`0x92e4`) — ochrana blika 8/8 tiku
 - smrt `0x9306`: `+108` nebo `+106` nenulove → nic; jinak exploze
   `0x88fc` (16 EXPL1 ve spirale po 2 ticich) a konec objektu
-- respawn: hracsky task `0x7090` ceka **100 snimku** (`0x714e`), zivoty
-  `+68` (−4/zivot, start −16 = 4), pak `0x70c8` (tabulka zbrane) a novy
-  `0x9410`. `0x9046` zkousi terrain masku v kandidatske mrizce popsane v
-  Player systems; `(288,192)` je az fallback pri uplnem zablokovani
+- respawn: hracsky task `0x7090` ceka **100 snimku** (`0x714e`), zatimco
+  svet i enemy scheduler dal bezi. Pak spotrebuje zasobu `+68`
+  (−4/zivot, start −16 = 4), zavola `0x70c8` (tabulka zbrane) a zalozi novy
+  `0x9410`. Browserovy kladny ekvivalent zacina `lives=4/HUD 3`, dovoluje
+  posledni aktivni `lives=1/HUD 0` a continue otevre az po dalsim pokusu,
+  ktery skonci na nule. `0x9046` zkousi terrain masku v kandidatske mrizce
+  popsane v Player systems; `(288,192)` je az fallback pri uplnem zablokovani
+- continue okno je **300 VBL s kreditem, 100 VBL bez nej**. Fire je
+  level-triggered, takze tlacitko drzene uz pri vstupu prijme continue v
+  prvnim VBL. Kredit obnovi `lives=4`, `score=0`, `nextLife=10000`; weapon
+  `+100`, TOKEN counter `+102` a mode `+104` preziji (nasledujici `0x70c8`
+  smi power clampnout dolu a obnovi reload)
+- po timeoutu se join uzavre, credit word se vrati na tri, TOWN prestane
+  zapisovat pulzujici `COLOR07` a nasleduje 16-VBL fade do cerne. Browser
+  nastavi `g.over` az pri vstupu do `stats`; death wait, continue i fade
+  ponechavaji tasky sveta bezet. Pixelove presna nativni stats obrazovka,
+  vsechny jeji citace a high-score tok jsou stale otevrene
+- inactive HUD strida pres bit 7 ticku po 128 VBL prompt a dynamicky status.
+  Podle faze je prompt `PRESS FIRE`, `NO CREDITS` nebo `PLEASE WAIT`;
+  nepripojeny pravy slot ma `jeepLives=1`, a proto v dynamicke pulce
+  zobrazuje `JEEP 0`
 - dvojity tap smeru (`0x7246`) / druhe tlacitko je **skok jeepu**
   (`0x91e8`), vrtulniku se netyka
 

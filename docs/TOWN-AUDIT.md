@@ -16,6 +16,53 @@ udalost 1 (`0x654c` instaluje pouze `+518`; `0x654a` je vedlejsi vstup,
 ktery pridava i `+526` — ten hrac nevola). Na tabulku „kdo zabije
 vrtulnik" to nema vliv.
 
+## 0. Vizualni addendum — baseline, objektova paleta a COLOR07 (2026-09-01)
+
+Uvodni PAM prikazy neposouvaji jen paletu: pred prvnim nepaletovym zaznamem
+spotrebuji 96 y pixelu. `parsePam.lead` je proto pro TOWN 96 a start
+viewportu je `3345 - 96 = 3249`, nikoli drivejsich 3345. Kontrolni snimek
+`t17` uz odpovida `row=3229`, protoze od startu probehlo dalsich 20 px
+scrollu.
+
+Pixel-fit proti originalu dal pro TOWN COLOR00-09 objektu stabilni canvas
+RGB12 radu:
+
+`000 333 465 598 765 666 9A9 800 ED6 EEE`
+
+Je aplikovana na vsech 13 TOWN PAM checkpointech, zatimco COLOR10-15 dal
+nesou rasterovou paletu terenu. Jde o fitted kompenzaci canvas rendereru
+z JEEPHELI, YELLOW, MEDTANK a GOOSE pixelu, **nikoli o dukaz konkretniho
+obsahu nativnich HW registru**. Scope je zamerne jen TOWN; pro ostatni
+levely se bez vlastniho mereni nic neodvozuje.
+
+Commit `abc853e` prinesl spravny prvni fit a `lead`, ale jeho propagace
+ukoncila override indexu, jakmile se raw PAM hodnota zmenila. Od `y=104`
+tak COLOR00-09 tvorila smisenou paletu; v pozdnim checkpointu byly mimo
+jine hodnoty `555/687/7BA/987/BCB/B30`, ktere nesedi GOOSE. Stabilni rada
+je ted aplikovana i tam. Dlouhy vizualni audit to overil na `t100`,
+`row=2199`, a `t130`, `row=1831`; druhy rez obsahuje GOOSE telo a casti
+`#5/#6/#7/#10`, jejichz indexy konzistentne mapuji na barvy originalu.
+
+Jedina casova vyjimka je nativni COLOR07 writer `0x2b3e..0x2b5a`.
+Z aktualniho `g.tick` vezme `phase = (g.tick >>> 2) & 15`, v druhe pulce
+ji zrcadli a zapise cervenou slozku `8 + (phase & 7)`. Vznikne 64-VBL
+sekvence `8,9,A,B,C,D,E,F,F,E,D,C,B,A,9,8`, kazda hodnota po ctyrech
+VBL. Gate z `0x28fe` zapis nepusti pri black fadu, takze se pouzije
+standardne zcerna paleta; pri nulove cerne jde zapis primo do COLOR07 a
+obchazi white fade. Runtime pouziva aktualni schedulerovy `g.tick`, ne
+vedlejsi render-frame citac.
+
+`tools/compare.py` meri nejen cely snimek, ale z trojice renderu
+`whole`, `withoutHeli`, `terrain` odvodi disjunktni masky HELI (telo se
+stinem), HUD a zbytek terenu. Vsechny varianty maji stejny tik a prvni-pass
+stav, takze tvorba masky neposune hru. Startovni mereni pri `t=17`,
+`row=3229` a toleranci 24/kanal je: **whole 22.5 %, terrain 21.3 %,
+HUD 100.0 %, HELI 99.7 %**. HUD se po pouziti zmereneho prevodu skutecnych
+registrovych slov do capture profilu shoduje ve vsech 639 pixelech masky;
+opaque COLOR16 soucasne zustava oddeleny od blikajicich COLOR17-31. Drobny
+zbytek HELI tvori dynamicky COLOR07 a profil prevodu, nikoli anchor nebo
+stin.
+
 ## 1. Odpovedi na tri hlaseni z hrani
 
 ### 1.1 „Ochranna bublina me v prepisu zabije, v originale chrani"
@@ -147,10 +194,15 @@ Objekty si ho meni (`0x820c` −90, `0x8410` −16, `clrw` = 0).
 
 ### 2.3 Smart bomba `0x8852` / `0x885a`
 
-Zalozi korutinu: zvuk `0x4cb2`, `st fp@(169)`, `fp@(11166) = 256`
+`0x8852` pouze zalozi priority100 korutinu; az `0x885a` na svem strictnim
+creation-FIFO startu provede zvuk `0x4cb2`, `st fp@(169)`, `fp@(11166) = 256`
 (plna bila), ceka 50 snimku, `sf fp@(169)`. Po tech 50 snimku kazdy
 objekt s aktivnim `+534` zemre pres `0xa36a` (i s body). Imunni v TOWN:
 GOOSE telo, casti i pod, TOKEN, orb stitu, hracova exploze.
+
+TOKEN typ4 pred nim v tomtez pickup callbacku zalozi vlastni sound child
+`0x564c`. Proto je nativni poradi prvni TOKEN nota a az potom ctyri SMART
+requesty; nejpozdejsi SMART vrstva muze tuto notu preemptovat.
 
 Doznivani bile: `fp@(11168)` se za hry nikde nezapisuje; posledni
 zapisy jsou v uvodni sekvenci (`0xc9a`, `0x1028`: **−4**). Bila tedy
@@ -229,7 +281,11 @@ Dvojity tap smeru / druhe tlacitko (`0x7246`, `0x71f2`) je **skok
 jeepu** (`0x91e8`: 3.5 px/t, `vz = 1.81`, `az = −1/16`); vrtulniku se
 netyka.
 
-## 4. TOWN boss GOOSE `0xc78a` — co prepis nema
+## 4. TOWN boss GOOSE `0xc78a` — nativni kontrakt (prepsano)
+
+Tato sekce vznikla jako rozdilovy audit. Stavovy automat byl prepsan
+2026-08-30 a jeho death/orphan/checksum scheduler 2026-09-01; aktualni
+otevrene mezery jsou v [GAPS](GAPS.md).
 
 Poradi v kodu:
 
@@ -267,7 +323,8 @@ rodic **hit-flash bit 1**, ofsety se na ten tik **zdvojnasobi**
 (`0xca66`), pak se vraceji po 4 px/tik (`0xca7a`). Kazdy zasah bosse
 tedy casti vizualne odhodi a ony se sjedou zpet. Casti maji `HP 0` →
 nezranitelne, ale trida 34 → **zabijou vrtulnik dotykem**. Sirotci
-handler `0x6db4` → po smrti tela **okamzite zmizi** (bez exploze).
+handler `0x6db4` → po smrti tela na vlastnim orphan resume zmizi bez
+exploze a uvolni svuj cost10.
 
 Ctvrty potomek `0xcaac` **neni doprovod na vlastni draze** (oprava
 `GAPS.md`): je to **pod pod telem**. `GOOSE#8..11` period 8 (`0xcae2`),
@@ -279,10 +336,16 @@ pod telem a kyve se. Sirotci handler `0xa36a` → pri smrti tela
 **exploduje** (0 bodu).
 
 Smrt tela (`0xc986`): `0x60e0` odpoji deti, 2 nebo 3 kruhy TOKENu,
-zvuk `0x8838`, `0xa36a` → standardni maly `EXPL1` (`+376 = 0x894a`),
-0 bodu. Zasah (`0xc974`): `−1 HP`, `negl vx`, zvuk `0x8834`, hit flash.
-Odlet po 2000 ticich bez zasahu: 5 kruhu, `vy = −4`, `sf +538` → zemre
-culovanim za horni hranou.
+zvuk `0x8838`; `a36a` zaradi samostatny `0x894a` child s malym EXPL1,
+dvojici BIGEXPL zadosti a `z=33`, 0 bodu. Escort radi vlastni `0x894a`
+se `z=34` z posledni publikovane world pozice a az potom dobere snake RNG.
+Pri HP1 masce `bit0|bit3` probehnou oba callbacky a daji kruhy 2+3, dve
+parent exploze a jednu escort explozi. Spici body child dokonci delay a
+publikuje jeden post-death creation field pred orphan cleanupem. Parent po
+107 checksum yieldech uvolni cost100 presne v N+108 ve sve FIFO pozici.
+Zasah (`0xc974`): `−1 HP`, `negl vx`, zvuk `0x8834`, hit flash. Odlet po
+2000 ticich bez zasahu: 5 kruhu, `vy = −4`, `sf +538` → cull za horni
+hranou; cull nema parent death efekt, ale escort orphan a checksum tail ano.
 
 ## 5. Exploze a efekty (pro spravne „vybuchy")
 
@@ -297,6 +360,11 @@ Exploze maji bit 0 v `+367` = **bez stinu** (`0x641a`); stin se kresli
 jen pri `z ≠ 0` na `(x + z/2, y + z)` s klicem −1 (pod vsim).
 
 ## 6. Prioritizovany seznam rozdilu `game.html` ↔ original (TOWN)
+
+Nasleduje historicke poradi implementace z auditu 2026-08-30, nikoli aktualni
+seznam otevrenych chyb. P0 body a schedulerove dodatky GOOSE jsou uzavrene;
+pro zbyvajici stav je autoritativni [GAPS](GAPS.md) a
+[TOWN-PARITY](TOWN-PARITY.md).
 
 ### P0 — herni mechanika, hrac to vidi hned
 

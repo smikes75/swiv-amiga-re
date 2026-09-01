@@ -103,11 +103,16 @@ buffer gives exactly 638 set bits and this SHA-256 over the 352 raw bytes:
 The dynamic player string is assembled at `0x737E..0x73EA`. Player structs
 start at `fp+11176` and `fp+11356` and are 180 bytes apart:
 
+The `HELI 4` string above is the cleared task's initial bitmap. The first
+player creation consumes one entry at `0x70A0`, so the first stable gameplay
+field is `HELI 3[ 2* 0000000`; later respawns consume the following entries.
+
 - the prefixes initialized at `0x6F46..0x6FA8` are `Heli ` and `Jeep `;
   the renderer displays them in upper case;
 - lives are the signed word at player `+68`, initialized to `-16` at
-  `0x707A`, and displayed as `(-value) >> 2`, hence the initial `4`, followed
-  by `[` and a space;
+  `0x707A`, and displayed as `(-value) >> 2`: this is stock `4` before the
+  first `0x70A0` consumption and stable gameplay `3`, followed by `[` and a
+  space;
 - the independent pickup counter at `+102` increments for every collected
   TOKEN, saturates at 19, is divided by five and offset from ASCII `2`, then
   followed by the custom `*` glyph and a space; it is not weapon strength
@@ -120,6 +125,57 @@ start at `fp+11176` and `fp+11356` and are 180 bytes apart:
 Alternative status text is assembled at `0x740C..0x743E`: `PRESS FIRE`
 at `0x7440`, `PLEASE WAIT` at `0x744B`, and `NO CREDITS` at `0x7457`.
 `GET READY!` is at `0x7400`; the pause message begins at `0x274A`.
+
+The browser keeps the same distinction between the stored life stock and
+the currently active vehicle. `g.lives` starts at 4, while
+`hudStatusText()` displays `g.lives - 1`; normal play therefore starts at
+`HELI 3`, and a live last vehicle is represented by `g.lives === 1` and
+shown as `HELI 0`. Only the following failed respawn decrements the stock to
+zero and enters the continue window.
+
+An inactive slot follows the native bit-7 cadence rather than displaying a
+fixed prompt. For 128 VBL it shows the state-dependent prompt (`PRESS FIRE`,
+`NO CREDITS`, or, after joining is closed, `PLEASE WAIT`), and for the next
+128 VBL it shows the dynamic player string. The cycle is 256 VBL. The
+unjoined second slot has stored `jeepLives = 1`, so its dynamic half is
+`JEEP 0`; this is not one remaining playable browser jeep.
+
+### Attract HUD
+
+The gameplay state-dependent text above is distinct from the attract
+renderer. Every attract scene reuses the same embedded font, 352 x 8 mask and
+opaque COLOR16 composition. While VBL bit 7 is clear, both slots read
+`PRESS FIRE`; while it is set, they read `HELI 0[ 2* 0000000` and
+`JEEP 0[ 2* 0000000`. The two halves therefore alternate every 128 VBL and
+repeat after 256 VBL.
+
+The mask is composited after the indexed scene palette and its black fade.
+Consequently the attract HUD retains the native blue-grey COLOR16 bands and
+does not fade or inherit moving lower-plane colours, which is the same rule
+that removed the former yellow/red title-text flicker.
+
+The implemented one-player post-life sequence is:
+
+- death leaves the world scheduler running for the full 100-VBL respawn
+  wait;
+- exhausting the stock opens a 300-VBL continue window when a credit is
+  available, or a 100-VBL window with no credits;
+- fire is level-triggered here: a button already held on entry accepts a
+  continue in its first VBL. A continue consumes one credit, resets the
+  stored stock/score/next-life threshold to `4 / 0 / 10000`, and respawns as
+  `HELI 3`. Weapon power, TOKEN pickup count and vehicle mode survive (the
+  normal weapon table may still clamp power down and refresh reload);
+- an expired window closes joining, restores the loader's three-credit
+  value, disables the per-VBL TOWN `COLOR07` writer and starts a 16-VBL
+  black fade. During the prompt half both inactive slots say `PLEASE WAIT`;
+- `g.over` is not used for the death wait, continue window or closing fade.
+  It becomes true only when the fade has reached black and the browser enters
+  its `stats` phase.
+
+The phase boundary is implemented, but the black native statistics page is
+not yet pixel-exact. Its complete counters, percentage computation,
+high-score update/entry and return-to-title flow remain open; the current
+Canvas statistics panel is explicitly a placeholder.
 
 ## Copper bands and COLOR16..31
 
@@ -212,7 +268,7 @@ general bitplane rule. Hardware sprites remain above the HUD
 (`BPLCON2 = 0x003F`), so composition order is software BOBs, effective HUD
 mask, then hardware sprites.
 
-## Runtime status (2026-08-30)
+## Runtime status (2026-09-01)
 
 `game.html` now reads this embedded font directly from `AMPROG.OBJ`, rebuilds
 the 352-byte mask and applies it on canvas rows 8..14 as the measured opaque
@@ -221,16 +277,24 @@ the incorrect `16|lower4` flicker. The first/steady COLOR16 bands and shifted
 COLOR17–31 sprite banks have browser fixtures; high sprite registers are
 retained while black fade suppresses their writer. `COLOR20/24/28` still use
 an explicit cold-boot zero policy for sprite-bank modelling only.
+Skutecna registrova slova zustavaji v modelu beze zmeny; jejich prevod na
+canvas pouziva z baseline zmerenou high-nibble radu
+`8..F -> 106,123,141,159,178,197,216,236` misto linearniho `n*17`.
+Na checkpointu `t17` tim HUD dosahuje 100 % shody vsech 639 pixelu masky.
 The shared TOWN hardware-sprite pass is composed afterwards and has separate
 fixtures for all four banks, white-fade invariance and channel 0-over-7 pixel
 priority, so a sprite/HUD overlap no longer depends on Canvas call-site order.
+The life/continue HUD state machine described above also has fixtures for the
+100-VBL death wait, active `HELI 0`, both continue timeouts, held-fire
+acceptance, the 128-VBL inactive alternation, `PLEASE WAIT`, the 16-step fade
+and the exact point at which `g.over` is set.
 
 ## Minimal parity tests
 
 1. Verify the 1,008-byte font-block SHA-256 above.
 2. Verify the seven rows of `[` and `*` and variable `width + 1` advances.
 3. Test score values around decimal boundaries and confirm the appended zero.
-4. Test lives `4` and a two-digit value.
+4. Test stored lives `4 -> HELI 3`, `1 -> HELI 0`, and a two-digit value.
 5. Rebuild a fresh 352-byte mask and verify 638 bits and the mask SHA-256.
 6. Verify right alignment ends at x=312 and no draw touches outside 352 x 8.
 7. Test both the first-pass and steady-state COLOR16 row sequences.
@@ -240,3 +304,10 @@ priority, so a sprite/HUD overlap no longer depends on Canvas call-site order.
    mask 1 always returns the row's COLOR16; moving terrain must not alter it.
 10. Verify a playfield fade leaves COLOR16 unchanged and a hardware sprite
     remains above the HUD.
+11. Verify the 100-VBL death wait does not freeze the world, continue lasts
+    300/100 VBL with/without credit, and held fire accepts it immediately.
+12. Verify inactive prompts alternate on tick bit 7, the unjoined slot's
+    dynamic half is `JEEP 0`, and closing alternates `PLEASE WAIT` with the
+    dynamic strings.
+13. Verify closing disables the TOWN COLOR07 writer, reaches black after 16
+    VBL, and only then sets `g.over` and enters `stats`.

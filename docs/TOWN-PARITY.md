@@ -23,14 +23,14 @@ specialni audio call-sites.
 
 | priorita | oblast | dnesni stav | dukaz / otevrena prace | podminka uzavreni |
 |---|---|---|---|---|
-| P0 | deterministicky baseline | runtime pouziva port PRNG `0x883c`, CIAB-IRQ high-word perturbaci a rucni 50Hz tiky; nulovy VHPOS vstup je opakovatelny | VAHeadless 5.0b1 kanonicky ADF nenabootuje; chybi zachyceny VHPOS/input trace a manifest checkpointu | stejny vstup a HW trace vyrobi opakovane shodne snimky originalu i prepisu |
-| P1 | rasterova paleta | produkcni viewport sklada mapu i dynamicke BOBy v indexech a RGB12 aplikuje az po slozeni pro kazdy scanline | `.PAM` prikazy meni barvy na presnem rasterovem radku | proti originalu zbyva kanonicky runtime capture, nikoli dalsi paletovy prepis |
+| P0 | deterministicky baseline | runtime pouziva port PRNG `0x883c`, CIAB-IRQ high-word perturbaci a rucni 50Hz tiky; `tools/baseline.sh` bootuje kanonicky ADF v headless vAmize a umi invulnerable capture | chybi zachyceny VHPOS/input trace a manifest vsech gameplay checkpointu | stejny vstup a HW trace vyrobi opakovane shodne snimky originalu i prepisu |
+| P1 | rasterova paleta | produkcni viewport sklada mapu i dynamicke BOBy v indexech a RGB12 aplikuje az po slozeni pro kazdy scanline; TOWN ma stabilni fitted COLOR00-09 a nativni VBL prepis COLOR07 | `.PAM` prikazy meni terrain barvy na presnem rasterovem radku; objektovy fit drzi vsech 13 checkpointu a GOOSE audity t100/t130 | fitted slova nejsou tvrzeni o nativnich HW registrech; zbyva rozsirit raw checkpoint ratchet |
 | P1 | HUD | runtime sklada embedded 7-row font do 352x8 masky; set bit dela zmereny opaque COLOR16 override nezavisly na lower4 | maska/anchory/Copper radky i nepruhlednost maji fixture; fyzicky OCS Denise trik zustava undocumented | raw checkpoint potvrdi gradient a sprite-over-HUD ve slozite scene |
 | P1 | poradi kresleni | jedna unsigned depth fronta podle `0x481a`, vcetne child ordinalu, equal-z stability a specialnich BOB operaci | regrese sklada prekryvajici se realne `.LIN` snimky a hlida poradi/hash | proti originalu zbyva checkpoint capture slozitych krizeni |
 | P1 | stiny | indexovy subtractive shadow s projekci `(x+z/2,y+z)` a skutecnym per-object z | `0x6364..0x638c`; zadna RGBA alpha aproximace v produkcni ceste | proti originalu zbyva checkpoint capture |
 | P2 | animace TOWN | podporovane TOWN tasky maji adresove overene sekvence, periody i resume hranice | tabulka nize a `tools/uitest.py` | rozsirit pouze pri nalezu nove odchylky z originalniho capture |
-| P3 | zbyvajici chovani | 155/155 hlavnich rout; GOOSE/TOKEN/core/HOMING/POPUP, terrain-mask respawn, dynamic difficulty, cost accounting, N+1 collision hranice a generalized ordinary last-field cull jsou prepsane | map reader nema per-record yield; zbyva plne priority100 FIFO, SMART/event arbitration pres invalidaci, GOOSE per-child orphan/explosion poradi, TOKEN sound child FIFO a GOOSE/TRAIN checksum cost-delay tails | pending event masky, callbacky a spawn/RNG interleaving sedi s nativnim schedulerem |
-| P4 | hudba a zvuk | bezi 4voice Paula/CIAB model; hlavni TOWN bojove efekty, `SMART.SND`, bound MINE shield, TOKEN pickup i GOOSE hit/death jsou napojene a collision zvuky respektuji N+1 | chybi zbyvajici special/player-transition call-sites a taskove FIFO poradi TOKEN/GOOSE explosion child efektu; viz [SOUND](SOUND.md) | cely TOWN od startu po bosse ma vsechny efekty, priority a RNG poradi z originalu; gameplay hudba je zdrojove ticho |
+| P3 | zbyvajici chovani | 155/155 hlavnich rout; SMART/event callbacky preziji generation invalidaci; MINE-core wait10; GOOSE scheduler, SMART deadline i TOKEN/SMART/explosion fresh children maji creation-order regrese | map reader nema per-record yield; zbyva obecna jednotna priority100 continuation/fresh-child fronta a TRAIN checksum tail | pending event masky, callbacky a spawn/RNG interleaving sedi s nativnim schedulerem |
+| P4 | hudba a zvuk | bezi 4voice Paula/CIAB model; hlavni TOWN bojove efekty, `SMART.SND`, bound MINE shield, TOKEN pickup i GOOSE hit/death jsou napojene; TOKEN noty a fresh SMART/`0x894a` childy maji FIFO poradi | chybi zbyvajici special/player-transition call-sites a hardwarove A/B overeni nejnizsich GOOSE period; viz [SOUND](SOUND.md) | cely TOWN od startu po bosse ma vsechny efekty, priority a RNG poradi z originalu; gameplay hudba je zdrojove ticho |
 
 ### Stav zakladu rendereru (2026-08-29)
 
@@ -49,6 +49,43 @@ indexovy viewport, provede decal prepass a celou dynamickou frontu, teprve
 pak `colorizeIndexedField` aplikuje paletu a oba fade levely po radcich.
 Zname okno pres hranici checkpointu ma proti spravnemu oracle 0 rozdilnych
 bajtu; paleta stredu okna zustala jen v diagnosticke Canvas vetvi.
+
+TOWN ma navic dve od palety terenu oddelene vrstvy barvoveho stavu:
+
+- `parsePam` vraci `lead`, tedy pocet y pixelu spotrebovanych uvodni davkou
+  PAM prikazu pred prvnim nepaletovym zaznamem. Pro TOWN je `lead = 96`;
+  startovni radek se proto posunul z 3345 na
+  `3345 - 96 = 3249`. Checkpoint `t17` na radku 3229 uz zachycuje
+  dvacet pixelu nasledujiciho scrollu, neni to druhy startovni anchor.
+- COLOR00-09 objektu pouzivaji v TOWN stabilni fitted canvas RGB12 radu
+  `000 333 465 598 765 666 9A9 800 ED6 EEE` na vsech 13 PAM
+  checkpointech. COLOR10-15 zustavaji scanline barvami terenu z PAM.
+  Hodnoty vznikly pixel-fitem JEEPHELI/YELLOW/MEDTANK/GOOSE proti vystupu
+  emulatoru; jsou kompenzaci rendereru, **ne tvrzenim, ze prave tato slova
+  lezi v nativnich HW registrech**.
+
+Prvni verze z commitu `abc853e` spravne vytezila `lead` i uvedeny fit,
+ale nechavala pozdejsi PAM zapis stejneho indexu znovu vyhrat. Uz od
+checkpointu `y=104` tim vznikla smesena COLOR00-09 a pozdni GOOSE dostal
+barvy `555/687/7BA/987/BCB/B30`. Aktualni TOWN-only aplikace drzi fitted
+desitku ve vsech checkpointech; mimo TOWN nic neprepisuje.
+
+COLOR07 je z teto stabilni zakladni palety vedoma dynamicka vyjimka.
+Nativni writer `0x2b3e..0x2b5a` ji v aktivnim levelu prepise kazdy VBL
+cervenym RGB12 slovem: `phase = (g.tick >>> 2) & 15`, pri `phase & 8`
+se `phase` bitove obrati a vysledek je `(8 + (phase & 7)) << 8`.
+Cela 64-VBL perioda je
+`8,9,A,B,C,D,E,F,F,E,D,C,B,A,9,8`, kazda hodnota drzi ctyri VBL, a faze
+se bere z aktualniho `g.tick`, nikoli z poctu renderu. Volani podle
+`0x28fe` bezi jen pri nulovem black fadu: pri black fadu se pouzije bezna
+zcerna paleta. Protoze CPU zapis jde primo do COLOR07 az za paletovym
+compilerem, pri nulove cerne naopak obchazi i pripadny white fade.
+
+Vizualni audit dlouheho prujezdu potvrdil stejnou desitku v `t100` na
+`row=2199` i v `t130` na `row=1831`. Druhy checkpoint obsahuje sestaveny
+GOOSE; indexovane snimky tela a casti `#5/#6/#7/#10` davaji modalni barvy
+originalu bez zlomu na `y=104`. Regrese navic hlida vsechny checkpointy,
+64-VBL COLOR07 sekvenci, black-fade gate i white-fade bypass.
 
 **D1 je zapnut v produkcnim runtime:** ciste helpery reprodukuji
 unsigned depth klic a poradi fronty `0x481a`, projekci stinu z
@@ -81,7 +118,7 @@ Stateless decal prepass je pro vysledny viewport ekvivalent mapove mutaci,
 `z` explozi i ctyrdilny GOOSE uz fronta nese. Pomocny `0xA0` save-under
 prepass nema ve stateless indexovem framebufferu samostatny viditelny efekt.
 
-### Stav zvuku (2026-08-31)
+### Stav zvuku (2026-09-01)
 
 Produkcni runtime uz nema jednorazovy `snd(...,8000)` fallback. Modeluje
 ctyri persistentni Paula hlasy, CIAB tempo, strict priority guard, stereo-pair
@@ -92,7 +129,10 @@ dvouvrstve standardni exploze, ctyrvrstve exploze hrace a custom smrti
 GOOSE i jeho neletalniho hitu s deferred IRQ seedem. White flash navic hraje
 ctyrvrstvy `SMART.SND`, bound MINE bublina vlastni priority60 ton a kazdy
 TOKEN pickup ctyri priority120 noty v rozestupu peti VBL. Presne adresy,
-casy a exkluze jsou v [SOUND](SOUND.md).
+casy a exkluze jsou v [SOUND](SOUND.md). Pickup pouze zalozi priority100
+sound child; prvni note, dalsi resume i soubeh s fresh SMART/`0x894a` childy
+se radi creation FIFO. Regrese navic hlida, ze uz existujici GOOSE callback
+probehne pred nove zalozenym TOKEN childem a ze typ4 spusti TOKEN pred SMART.
 
 TOWN jeste neni zvukove uzavren: zbyvajici special/player-transition
 call-sites (zejmena extra-life `0x5600`) zustavaji otevrene. Collision-driven
@@ -111,13 +151,18 @@ test je ale az za navratem z posledniho publikovaneho `0x62d2` fieldu.
 Producing VBL N provede pohyb a cull invalidaci, ale jeste publikuje a
 collision-sweepuje posledni field. Resume N+1 zachovava poradi bit4 scroll
 compensation, clear flash, orphan, SMART a event callbacku a az potom uvolni
-zaznam i cost. Fresh PROXMINE/FLAME/TRAIN children pritom dostanou prvni
+zaznam i cost. Generation invalidace uvnitr SMART/bit0 nezastavi zbytek
+masky: `SMART -> bit0 -> bit3` dobehne a cleanup je jen jeden. Sebrany
+MINE core stejne provadi bit4 compensation pred kazdym resume sveho presneho
+wait10. Fresh PROXMINE/FLAME/TRAIN children pritom dostanou prvni
 movement a `seq[0]` animacni publikaci uz v creation VBL; generic-cull childy
 v nem vyhodnoti i bounds, TRAIN az na dalsim resume.
 Generalized ordinary last-field mezera je uzavrena regresi;
-otevrene zustava plne priority100 FIFO, presna SMART/event arbitration pres
-invalidovanou generaci, GOOSE child orphan/explosion tasky, TOKEN sound child
-FIFO a checksum cost-delay tails GOOSE parentu a TRAIN lokomotivy.
+GOOSE child orphan/explosion tasky, SMART deadline a parent checksum N+108
+jsou rovnez serazeny vlastnimi creation ordinaly. Otevrene zustava obecne
+prokladani vsech kategorii do jedine priority100 continuation/fresh-child
+fronty a TRAIN checksum/map-reader yield. TOKEN sound-child FIFO vcetne
+fresh SMART/`0x894a` soubehu je uz uzavreno.
 
 ## Audit animaci TOWN
 
@@ -154,7 +199,14 @@ FIFO a checksum cost-delay tails GOOSE parentu a TRAIN lokomotivy.
   Stavove fixture pokryvaji vsechny ctyri deti vcetne
   ingress/overshoot/snap; N+1 fixture navic hlidaji oddeleny producing
   field, hit-spread, smrt, zvuky a prvni field TOKEN child tasku. Timeout
-  uz ve stejnem resume publikuje prvni `-4 px` escape field
+  uz ve stejnem resume publikuje prvni `-4 px` escape field.
+- **GOOSE — death scheduler uzavren 2026-09-01**: `a36a` radi `0x894a`
+  jako fresh explosion task, parent a escort maji oddelene efekty a HP1
+  maska `bit0|bit3` dava tokenove kruhy 2+3. Orphan fixture hlida cost10,
+  posledni publikovanou pozici escortu, post-callback snake RNG 2/1/0 i
+  jeden creation field opozdeneho body childa. Parent cost100 zustava do
+  presneho N+108 checksum resume ve sve FIFO pozici; timeout nema parent
+  explozi ani death synth.
 
 Obecny `scanAnims` je zatim inventarni pomucka, ne uplny runtime interpreter:
 zahazuje `END/KILL`, flagy a offsety a sekvence bezpodminecne cykli. Pro TOWN
@@ -182,6 +234,16 @@ vstupni sekvence (emulovane sekundy od zapnuti):
 | 85 | `joystick2 press 1` + `unpress 1` | attract (kredity/hi-score/COVER) |
 | ~101 | — | **start urovne TOWN** (fade z cerne; fire+17 uz bezi) |
 
+Pro dlouhy vizualni audit pouzij
+`SWIV_BASELINE_INVULNERABLE=1 tools/baseline.sh <prefix> <sekundy...>`.
+Skript pak na traineru pred startem prepne presne pojmenovane volby
+**F1 UNLIMITED LIVES** a **F3 NO COLLISIONS** na YES; meni to herni
+podminky, proto je tento rezim urceny pro prujezd/checkpointy celeho levelu,
+ne jako kanonicky cisty gameplay baseline.
+Pro kontrolu nepratelske palby a kolizi lze misto toho pouzit
+`SWIV_BASELINE_UNLIMITED_LIVES=1`: prepne pouze **F1 UNLIMITED LIVES**,
+zatimco F3 zustane na NO.
+
 Overene detaily: `mouse1 press` je press+release, `joystick2 press 1`
 tlacitko **drzi** (uvolneni je `unpress 1`); smery jsou `pull
 left/right/up/down` + `release x/y`, takze jde skriptovat cely input
@@ -190,33 +252,56 @@ regression rezim u `wait` vypisuje, je kosmeticke — ceka se spravne.
 `screenshot save` ulozi raw RGB24 716x285 a proces ukonci (jeden beh =
 jeden snimek; determinismus dava serie opakovanym behem). Prvni snimky:
 start ma velkou budovu vlevo nahore a diagonalni silnici; HUD originalu
-po spawnu ukazuje **3 zivoty** (spotreba jednoho pri spawnu, `0x70a0`),
+po spawnu ukazuje **3 zivoty** (spotreba jednoho pri spawnu, `0x709a`),
 ne 4; bile blikani spawn ochrany 8/8 je na snimcich videt.
 
-**Prvni vytezky baseline (2026-09-01, vse prepsano):**
+### Prvni vytezky baseline (2026-09-01)
 
 - **objektova paleta COLOR00-09** pro TOWN, zmerena pixel-fitem spritu
   proti snimkum (JEEPHELI#0 kotva presne (160,192), YELLOW#0 a MEDTANK;
   neshoda 0.000): `000 333 465 598 765 666 9a9 800 ed6 eee`. Uvodni
-  davka PAM tyto barvy NEurcuje (ma 5=888, 9=fff a zbytek 0) — engine je
-  prepise po nacteni urovne. V prepisu je aplikuje `startGame` s
-  propagaci pres checkpointy (pozdejsi PAM zapis stejneho indexu plati).
-  V AMPROG tabulka techto slov neni (hleda se dal — zrejme ji sklada
-  kod nebo lezi v loaderu).
+  davka PAM tyto barvy neurcuje (ma 5=888, 9=fff a zbytek 0). Aktualni
+  TOWN-only aplikace drzi fitted desitku ve vsech 13 checkpointech;
+  prvni implementace z `abc853e` nechavala pozdejsi PAM zapis stejneho
+  indexu znovu vyhrat, coz je uz opraveno (podrobne vyse). V AMPROG
+  tabulka techto slov neni; zrejme ji sklada kod nebo lezi v loaderu.
 - **start okna**: uvodni davka prikazu spotrebuje `parsed.lead` px
-  (TOWN 96) a original je nikdy neukaze; start = spodek obsahu − lead
-  (korelace snimku t16–t23 na radky mapy: 3245±8 = 3345−96).
-- **HUD zivoty**: zobrazene cislo je pocet PO spotrebe spawnu
-  (`0x709a`) — 4 zivoty se ukazuji jako „3".
+  (TOWN 96) a original je nikdy neukaze. Presny start je
+  `3345 - 96 = 3249`; korelace snimku t16–t23 dala `3245 ± 8`.
+- **HUD zivoty**: zobrazene cislo je pocet po spotrebe spawnu
+  (`0x709a`) — 4 zivoty se ukazuji jako „3“.
 - **`tools/compare.py`** — treti kontrakt: snimek originalu vs prepis
-  na presne zmerenem radku mapy, tolerance 24/kanal (vAmiga pridava
-  ~+4 na kanal), prah checkpointu jen roste. Checkpoint `start`
-  zaveden na 20.1 % shody.
+  na presne zmerenem radku mapy, tolerance 24/kanal a ratchet, ktery smi
+  jen rust. Prvni verze mela na checkpointu `start` whole shodu 20.1 %;
+  po kalibraci palety a HUD je aktualni shoda 22.5 % a ratchet 22.0 %.
 - **dominantni zbytkovy rozdil**: sumova textura terenu. Roviny 0 a 2
-  nesou predgenerovany sum, ktery se sklada i PRES dlazdice (silnice:
+  nesou predgenerovany sum, ktery se sklada i pres dlazdice (silnice:
   original index 14 = 10|sum2, prepis 11 = 10|sum1) — nas LCG neni
   generator hry. Dalsi krok: najit generator (okoli `0x34f2`), nebo
   sum vytezit ze snimku (je staticky ve strip prostoru).
+
+### Regionalni vizualni kontrakt (`tools/compare.py`, 2026-09-01)
+
+`tools/compare.py` porovnava raw 320x256 vyrez originalu s prepisem na
+presne zmerenem mapovem radku a drzi whole-frame minimum jako jednosmerny
+ratchet. Pro kazdy checkpoint vytvori bez posunu scheduleru tri varianty
+stejneho renderu: cely snimek, snimek bez HELI a snimek bez HELI i HUD.
+Jejich rozdily tvori navzajem disjunktni masky:
+
+- `HELI` = pixely zmenene odebranim hrace, vcetne tela a stinu,
+- `HUD` = pixely zmenene vynulovanim HUD bitplane po odebrani hrace,
+- `terrain` = zbytek bez HUD/HELI; `whole` obsahuje vsech 320x256 pixelu.
+
+Aktualni checkpoint `start` (`t=17`, `row=3229`, tolerance 24 na kanal)
+dava **whole 22.5 %, terrain 21.3 %, HUD 100.0 %, HELI 99.7 %**. HELI tak
+ma v tomto kontrolovanem stavu presny anchor, fitted barvy i stin; nepatrny
+zbytek je dynamicky COLOR07/capture profil. HUD se po kalibraci skutecnych
+COLOR16 slov na zmereny headless-vAmiga vystup shoduje ve vsech 639
+pixelech masky. Opaque COLOR16 reseni zaroven zustava oddelene od
+blikajicich COLOR17-31 a je kryte samostatnou fixture.
+Nizkou whole/terrain shodu stale dominantne tvori jina sumova textura
+terenu; regionalni vypis zabranuje, aby tento znamy rozdil zakryl regresi
+hrace nebo HUD.
 
 Plan jednoho checkpointu:
 
