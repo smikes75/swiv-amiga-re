@@ -193,6 +193,31 @@ start ma velkou budovu vlevo nahore a diagonalni silnici; HUD originalu
 po spawnu ukazuje **3 zivoty** (spotreba jednoho pri spawnu, `0x70a0`),
 ne 4; bile blikani spawn ochrany 8/8 je na snimcich videt.
 
+**Prvni vytezky baseline (2026-09-01, vse prepsano):**
+
+- **objektova paleta COLOR00-09** pro TOWN, zmerena pixel-fitem spritu
+  proti snimkum (JEEPHELI#0 kotva presne (160,192), YELLOW#0 a MEDTANK;
+  neshoda 0.000): `000 333 465 598 765 666 9a9 800 ed6 eee`. Uvodni
+  davka PAM tyto barvy NEurcuje (ma 5=888, 9=fff a zbytek 0) — engine je
+  prepise po nacteni urovne. V prepisu je aplikuje `startGame` s
+  propagaci pres checkpointy (pozdejsi PAM zapis stejneho indexu plati).
+  V AMPROG tabulka techto slov neni (hleda se dal — zrejme ji sklada
+  kod nebo lezi v loaderu).
+- **start okna**: uvodni davka prikazu spotrebuje `parsed.lead` px
+  (TOWN 96) a original je nikdy neukaze; start = spodek obsahu − lead
+  (korelace snimku t16–t23 na radky mapy: 3245±8 = 3345−96).
+- **HUD zivoty**: zobrazene cislo je pocet PO spotrebe spawnu
+  (`0x709a`) — 4 zivoty se ukazuji jako „3".
+- **`tools/compare.py`** — treti kontrakt: snimek originalu vs prepis
+  na presne zmerenem radku mapy, tolerance 24/kanal (vAmiga pridava
+  ~+4 na kanal), prah checkpointu jen roste. Checkpoint `start`
+  zaveden na 20.1 % shody.
+- **dominantni zbytkovy rozdil**: sumova textura terenu. Roviny 0 a 2
+  nesou predgenerovany sum, ktery se sklada i PRES dlazdice (silnice:
+  original index 14 = 10|sum2, prepis 11 = 10|sum1) — nas LCG neni
+  generator hry. Dalsi krok: najit generator (okoli `0x34f2`), nebo
+  sum vytezit ze snimku (je staticky ve strip prostoru).
+
 Plan jednoho checkpointu:
 
 1. zaznamenat vstup jako PAL tik + joystick/fire stav,

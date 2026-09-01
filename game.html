@@ -278,7 +278,7 @@ const IMPLEMENTED_BEHAVIORS = new Map([
 function parsePam(pam, dico) {
   const dv = new DataView(pam.buffer, pam.byteOffset, pam.byteLength);
   const tiles = [], objs = [], checks = [];
-  let pal = new Array(16).fill(0), y = 0;
+  let pal = new Array(16).fill(0), y = 0, lead = -1;
   for (let o = 0; o + 4 <= pam.length; o += 4) {
     const d = dv.getUint32(o);
     if (d === 0) break;
@@ -293,6 +293,7 @@ function parsePam(pam, dico) {
       continue;
     }
     const typ = d & 15, loc = (d >> 4) & 0xFF;
+    if (lead < 0) lead = y;          // dy spotrebovane uvodni davkou prikazu
     y += (d >> 12) & 0xFF;
     let x = d >>> 20, layer = 4;
     while (x >= 416) { x -= 512; layer--; }
@@ -303,7 +304,7 @@ function parsePam(pam, dico) {
   tiles.forEach((t, i) => t.seq = i);
   const prio = t => t.layer === 0 ? 5 : t.layer;
   tiles.sort((a, b) => (prio(b) - prio(a)) || (b.seq - a.seq));
-  return { tiles, objs, checks, height: y };
+  return { tiles, objs, checks, height: y, lead: Math.max(0, lead) };
 }
 
 /* Presne RGB12 skalovace z 0x4a48/0x4a40. Uroven 0 je beze zmeny,
@@ -2912,7 +2913,10 @@ function damageHazard(g, h) {
 /* 0x737e..0x73ea: stejny text, ktery nativni renderer sklada do BPL5.
    Skore je sest internich cislic a literalni nula, tedy zobrazene x10. */
 function hudStatusText(g, prefix = "HELI") {
-  const lives = Math.max(0, Math.trunc(g.lives || 0));
+  // 0x709a: spawn nejprve pricte fp@(12524) k +68, takze HUD ukazuje
+  // zivoty zbyvajici PO teto spotrebe - pri ctyrech na zacatku "3"
+  // (overeno baseline snimkem t17: "HELI 3♥ 2★").
+  const lives = Math.max(0, Math.trunc(g.lives || 0) - 1);
   const tokenCount = (g.player && g.player.tokenCount) || 0;
   const weapon = 2 + Math.trunc(tokenCount / 5);
   const score = String(Math.max(0, Math.trunc(g.score || 0))).padStart(6, "0") + "0";
@@ -3501,6 +3505,26 @@ function startGame(lv) {
   const parsed = parsePam(pam, dico);
   // paleta pro sprity: prvni kompletni checkpoint
   const rgb = v => [((v >> 8) & 15) * 17, ((v >> 4) & 15) * 17, (v & 15) * 17];
+  // COLOR00-09 (barvy objektu) nastavuje engine az po nacteni urovne a
+  // uvodni davka mapy je neurcuje. Hodnoty pro TOWN jsou zmerene
+  // pixel-fitem JEEPHELI#0 / YELLOW#0 / MEDTANK proti baseline snimkum
+  // originalu (tools/baseline.sh, neshoda 0.000; docs/TOWN-PARITY.md).
+  // PAM prikaz, ktery stejny index prepise pozdeji v mape, plati dal.
+  {
+    const TOWN_OBJECT_COLORS = [0x000, 0x333, 0x465, 0x598, 0x765,
+                                0x666, 0x9A9, 0x800, 0xED6, 0xEEE];
+    const overridden = TOWN_OBJECT_COLORS.map(() => true);
+    let prev = null;
+    for (const c of parsed.checks) {
+      const orig = c.pal.slice();
+      if (prev)
+        for (let i = 0; i < TOWN_OBJECT_COLORS.length; i++)
+          if (orig[i] !== prev[i]) overridden[i] = false;
+      for (let i = 0; i < TOWN_OBJECT_COLORS.length; i++)
+        if (overridden[i]) c.pal[i] = TOWN_OBJECT_COLORS[i];
+      prev = orig;
+    }
+  }
   state.copperChecks = parsed.checks;
   state.checks = parsed.checks.map(c => ({ y: c.y, pal: c.pal.map(rgb) }));
   state.pal = state.checks[0] ? state.checks[0].pal : [];
@@ -3541,7 +3565,11 @@ function startGame(lv) {
   const g = state.g = {
     lv, big, mapIndex: m.mapIndex, terrainOpen: m.terrainOpen,
     mapW: m.w, spawns, mapH: m.h,
-    scroll: m.h - MARGIN - 256,    // start = spodek obsahu urovne (bez okraje)
+    // Start okna: spodni hrana lezi na prvnim skutecnem obsahu mapy -
+    // uvodni davka prikazu spotrebuje parsed.lead px (TOWN: 96) a original
+    // je nikdy neukaze. Zmereno korelaci baseline snimku t16-t23 na radky
+    // mapy (start ~3245+-8 = 3345 - 96); docs/TOWN-PARITY.md.
+    scroll: m.h - MARGIN - 256 - parsed.lead,
     frac: 0,
     // Hracsky struct fp@(11176): +98 prodleva, +100 sila (0x6fde: start 2),
     // +102 citac pickupu, +104 rezim, +106 stit, +108 ochrana (0x9424: 200).

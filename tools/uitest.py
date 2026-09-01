@@ -324,15 +324,19 @@ def main():
                    },
                    "BOB depth/shadow/clear fixture nesedi s 0x481a/0x6364: %s" %
                    renderer_core["bob"])
+            # RGB hodnoty zahrnuji zmerene COLOR00-09 (pixel-fit proti
+            # baseline snimkum originalu; budova na startu je 333/666/9a9,
+            # ne 888/fff z uvodni davky PAM) - proto se korektni cesta
+            # lisi od legacy na 772 pixelech, ne 21.
             expect(renderer_core["mapIndex"] == {
                      "size": [320, 3761],
                      "full": "3d426f35", "initial": "5870b220",
-                     "initialRgb": "89a47b97",
+                     "initialRgb": "b4254f7a",
                      "legacyRgba": "b6e13bf7",
                      "differing": {
                        "top": 1454, "rows": 21,
-                       "correct": "7f08f24f", "legacy": "2813671f",
-                       "pixels": 21
+                       "correct": "69aac980", "legacy": "2813671f",
+                       "pixels": 772
                      }
                    },
                    "TOWN mapIndex/Copper RGB nema presny obsah: %s" %
@@ -343,7 +347,7 @@ def main():
                    colorizer["rejected"] == 3,
                    "indexovy colorizer nema bezpecne horni/dolni hranice: %s" %
                    colorizer)
-            expect(colorizer["runtime"] == "7f08f24f" and
+            expect(colorizer["runtime"] == "69aac980" and
                    colorizer["runtimeMismatches"] == 0,
                    "viditelny runtime nepouziva presnou scanline paletu: %s" %
                    colorizer)
@@ -1348,7 +1352,7 @@ def main():
                    % token["eff"]["power"])
             expect(token["eff"]["counter"] == {
                      "afterFive": {"count": 5, "weapon": 0,
-                                   "text": "HELI 4[ 3* 0000000"},
+                                   "text": "HELI 3[ 3* 0000000"},
                      "capped": 19
                    }, "HUD token counter +102 nesedi nebo neni oddelen od "
                       "sily +100: %s" % token["eff"]["counter"])
@@ -3085,8 +3089,8 @@ def main():
             expect(summary["dispatch"] == 73, "dispatch nema 73 zaznamu")
             expect(summary["mapObjects"] == 155, "TOWN nema 155 mapovych objektu")
             expect(summary["lives"] == 4 and summary["hudTexts"] == [
-                     "HELI 4[ 2* 0000000", "HELI 12[ 3* 0000090",
-                     "HELI 4[ 2* 0100000", "HELI 4[ 2* 0999990"
+                     "HELI 3[ 2* 0000000", "HELI 11[ 3* 0000090",
+                     "HELI 3[ 2* 0100000", "HELI 3[ 2* 0999990"
                    ], "HUD nema nativni lives/weapon/score x10 format: %s" %
                    summary["hudTexts"])
             expected_behaviors = {"wave": 60, "yellow": 12, "bird": 9,
