@@ -1190,3 +1190,55 @@ do BOB fronty) zacina `btst #7,%a0@(21)` a pri nastavenem bitu zaznam
 - Simulace: obe varianty zrozeny 5976 (x 53 typ 0, x 267 typ 1); vozidlo
   vyjizdi z x 36 (resp. 284) a za 190 tiku ujede 95 px, vez ho sleduje
   s ofsetem ∓11 a po 300 ticich strili kazdych ~150 tiku.
+
+### DADA (0x0059 → 0x7a2c)
+
+- `a2c6(DADA#0, 34, −48, HP 12, 70 bodu, cost 15)`, `+376 = 0x88ec`,
+  `+328 z = 32`, `+336 vy = 1` (slovo). Po `0x9afa(0)`: `+344 ax =
+  ±2048/65536 = ±0.03125` (kladne, kdyz `x <= 160`, jinak zaporne, tedy
+  ke stredu — nastavi se **jednou**, takze stroj stred prejede) a
+  `+367 |= 16` (obrazovka).
+- Smycka: wait `(14 − fp@(182)) × 2` tiku, pak **dve** navadene strely
+  `0x8530(−22, 20, 64)` a `0x8530(+22, 20, 64)` (d0/d1 jsou ofsety od
+  objektu, d2 absolutni uhel — zmereno na `0x8530`).
+- **Smrt `0x88ec`:** zvuk `0x4c3c`, `0x6d96`, pak 8× { dite `0x8952`
+  posunute o aktualni rychlost, `+358 += 100`, `+356 += 1536`, `0x65f2`,
+  raw wait 2 } — tentyz kod jako smrt hrace `0x88fc`, jen 8 chvostu a
+  krok rychlosti 6 px/t. Prepis: `spawnPlayerBurst(..., 8, 0x600, z+1)`.
+- Simulace: zrozeni 5448 (x 34), po radku 0 zrychluje vpravo, v tiku +80
+  vx 1.28 px/t.
+
+### _CORN#7 (0x0e41 → 0x820c)
+
+- `+364 = −90` **jeste pred** `a2c6(_CORN#7, 36, −80, HP 0, 0 bodu,
+  cost 25)`; `z = 0`, `0x65a4` (maska `+508 &= ~24`). Po `0x9afa(80)`:
+  `+504 = 34` (smrtici kontakt), `+340 vz = 0.25`, zvuk `0x54ac`
+  (**neprepsan**), smycka do `z >= 32`, pak `vz = 0`, `+348 ay =
+  2048/65536` a `0x62cc` — vez se zvedne a odleti dolu.
+- HP 0 = `a2c6` neinstaluje handlery, takze je nezasazitelna.
+- Simulace: zrozeni 3404 (x 99, sy −80), zvedani od radku 80 (tik +640),
+  z 32 v tiku +800, pak zrychluje dolu a v +1000 je za okrajem.
+
+### JEEPHELI#23 (0x2e00 → 0xac6a) — druha SWAP plosina
+
+- `a2c6(SWAP#0, 0, −16, HP 0, 0 bodu, cost 10)`, `+534 = −1`,
+  `+397 |= 1`; po `0x9afa(32)` zapise `fp@(3550) = x`, `fp@(3552) = y`,
+  vynuluje `fp@(3554)` a ceka na `fp@(3548)` (logika jeepu). Druha
+  varianta teze plosiny je `0xacb6` (JEEPHELI#31, SWAP#1, globaly
+  `fp@(3554)/(3556)`).
+
+### JEEPHELI#43 (0x5600 → 0xad30) — pasmo stop pasu
+
+- **Nema `a2c6`**: jen `0x5ee0` (rezervace grafiky JEEPHELI#40) a
+  `0x9ac8(0)`, takze se nic nekresli. Po aktivaci nastavi
+  `fp@(150) = y`, `fp@(152) = y − 600`, `fp@(154) = −1` a drzi je,
+  dokud `fp@(3530) + 256 >= fp@(152)`; pak `fp@(154) = 0` a konci.
+- Uvnitr pasma nechavaji stopy: **vez tanku** (`0xa000` v `0x9faa`,
+  tedy MEDTANK i FLATTANK) kazdych 20 tiku a **jeep** (`0x9172`)
+  kazde 3 tiky. Dite `0xad98` ma `+397 |= 65` (bit 6 = dekal do mapy),
+  `+367 |= 1`, smerovou grafiku `0xa252` z tabulky `0xade2`
+  (JEEPHELI#40..#43 po osmi sektorech uhlu, s uhlem **rodice**), a
+  vykresli se do obou mapovych stran (`y -= 320` mezi dvema fieldy).
+- Prepis: `g.trackZone`, dekal v `stepTankTurret` (jeep se nemodeluje).
+  Simulace: pasmo 16959..16359, tank typ 3 (uhel 64) klade JEEPHELI#42
+  kazdych 10 px.
