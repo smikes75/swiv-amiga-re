@@ -1114,3 +1114,79 @@ nese `a2c6` snimek.
   model jako kanonovy granat (bolt hrace ji neznici).
 - Simulace: prvni kus zrozen v tiku 128 (x 201), deset kusu po ~24
   ticich, kazdy odhodi jednu bombu na radku 40.
+
+### BOB se skryva pres +397 bit 7 (zmereno)
+
+`+397` je bajt priznaku animacniho bloku (`+380 + 17`). `0x481a` (vlozeni
+do BOB fronty) zacina `btst #7,%a0@(21)` a pri nastavenem bitu zaznam
+**nevlozi**. Animacni skripty proto pouzivaji `andflag(128)` /
+`orflag(128)` jako „zobraz" / „skryj" (napr. hlaven XEVIOUS#0). Prepis:
+`h.hidden` v kompozitoru hazardu.
+
+### TRILO (0x0822 → 0x826a)
+
+- PAM kresli TRILO#4, korutina vola `a2c6(TRILO#0, 36, −16, HP 4,
+  35 bodu, cost 10)`, `+397 |= 1`, `z = 0`.
+- `0x9afa(8)` → `+336 vy = 0.5` (mapove) → `0x9afa(64)` → anim `0x082a6`
+  TRILO#1..#4 perioda 8 s `end(0)` (drzi #4) → wait 20 → `+397 &= ~1`,
+  `0x65ae` (maska `+508 &= ~16`), `0x6566` s `0xa362`, `+504 = 34`
+  (smrtici kontakt) → `vz 0.5` do `z >= 32` → `vz 0`, `+356 = 0`.
+- Lovecka smycka (`0x82f4`, kazdych 10 tiku): uhel na hrace
+  (`0x7312` + `0x65be` s d2 = 0 = absolutne); **je-li vysledek 160..224
+  (bajt `+359`, bez znamenka), prepise se na 64** — tvor nikdy nemiri
+  primo vzhuru; pak `+358 += ±16` podle znamenka slova `0x883c`; je-li
+  `+356 < 768`, `+356 += 48`; `0x65f2`. Rychlost tedy roste po 0.1875
+  px/t az na 3 px/t.
+- Simulace: zrozeni 3284 (x 308), vzlet od radku 64, v tiku +320 uhel
+  151 pri rychlosti 1.12 px/t.
+
+### XEVIOUS#0 (0x002e → 0xadf2) — letoun se skriptem drahy
+
+- `a2c6(XEVIOUS#0, 36, −16, HP 30, 95 bodu, cost 13)` (trida 36 = **neni**
+  smrtici kontakt), po `0x9afa(64)` vazana hlaven `0x6144(0xae88)` a
+  skript drahy podle `+276` z PAM: typ 1 → `0xae68`, typ 2 → `0xae72`,
+  jinak `0xae7e`. Rychlost `+356 = 128` = 0.5 px/t.
+- Skript je pole dvojic **[uhel, delka/2]** (`0xae36`): `+359 = bajt`,
+  `0x65f2`, dalsi bajt × 2 = `0x629c`; bajt 255 = konec (`0x6d96` +
+  `0x62cc`). Typ 1: 127(314), 112(20), 96(20), 81(20), 65(508) a dale
+  pokracuje daty typu 2: 128(78), 144(20), 159(20), 175(20), 190(200),
+  konec. Typ 2 zacina az u 128. Typ 3: 192(96), 208(20), 224(20),
+  240(20), 0(508) — jeho tabulka konci bez 0xff, ale objekt do te doby
+  odleti z obrazu (prepis po poslednim zaznamu jen leti dal).
+- **Hlaven `0xae88`:** `a2c6(XEVIOUS#1, 0x8000 = bez sweepu, 0, HP 0,
+  0 bodu, cost 3)`, `0x6d96`, `+367 |= 13` (bez stinu, blika s rodicem,
+  vazane dite), `+340 vz = 1` = ofset nad rodicem. Smycka: anim
+  `0x0aeb0` `andflag(128)` #1, #2, #2, #1 perioda 4 `orflag(128)`
+  (viditelna 16 tiku), wait 8, bomba `0x6178(0x7f9a)` (stejna jako u
+  XEVIOUS#9), wait 100.
+- Simulace: zrozeni 116 (x 253), aktivace na radku 64, typ 1 leti vlevo
+  0.5 px/t s hlavni na hrbete.
+
+### _PLAT#9/#10 (0x1242/0x1442 → 0xa3b2/0xa3b8) — plosina se ctyrmi urovnemi
+
+- Vstupni bod urcuje typ: `0xa3b2` (z #9) dela `st +276` (bajt 0xff),
+  `0xa3b8` (z #10) `sf +276` (0) — **hodnota typu z PAM se prepise**.
+  Podle nej i grafika: `+276 != 0` → _PLAT#9, jinak #10.
+- Plosina: `a2c6(_PLAT#9|#10, 36, −16, HP 0, 0 bodu, cost 5)` (HP 0 =
+  `a2c6` neinstaluje handlery, tedy nezasazitelna), `+397 |= 1`,
+  `0x9afa(16)`, `+364 = −16`; smycka: wait 100, vozidlo
+  `0x6144(0xa462)` (typ se kopiruje do ditete), zvuk `0x5138` (stejny
+  jako otevirani FLAME), 18× { yield, `x += typ ? +1 : −1` }, wait 100,
+  18× { yield, `x -= …` }, pak ceka (`0x62d2`), dokud `+312` (dite)
+  neni nula, a opakuje.
+- **Vozidlo `0xa462`:** `a2c6(_PLAT#18|#17, 36, −16, HP 10, 60 bodu,
+  cost 10)`, `+397 |= 1`, vez `0x6144(0xa4d6)`, `x = 284 | 36`
+  (absolutne), `y -= 2`, wait 50, `vx = −0.5 | +0.5`, wait 190, `vx = 0`,
+  `0x62cc`.
+- **Vez `0xa4d6`:** `a2c6(_PLAT#19, 0x8000, −16, HP 0, 0 bodu, cost 4)`,
+  `+397 |= 1`, `+367 |= 12` (blika s rodicem + vazane dite),
+  `+332 vx = ±11` = pevny ofset; wait 300, pak smycka { anim `0x0a512`
+  #20, #21, #22, #22, #21, #20, #19 perioda 8 (drzi #19), wait 24, zvuk
+  `0x4d6a` (**neprepsan**), strela `0x617a(0xa548)`, wait 120 }.
+- **Strela `0xa548`:** `a2c6(_PLAT#23, 6, −16, HP 0, 0 bodu, cost 3)`,
+  `+367 |= 1`, `+364 = 0`, anim `0x0a568` #23, #24, #25, #24 perioda 1
+  loop, rychlost `+356 = 256` = 1 px/t na hrace (`0x7312` + `0x65be`),
+  `0x62cc`.
+- Simulace: obe varianty zrozeny 5976 (x 53 typ 0, x 267 typ 1); vozidlo
+  vyjizdi z x 36 (resp. 284) a za 190 tiku ujede 95 px, vez ho sleduje
+  s ofsetem ∓11 a po 300 ticich strili kazdych ~150 tiku.

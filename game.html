@@ -346,6 +346,10 @@ const IMPLEMENTED_BEHAVIORS = new Map([
   [0x0023, { coroutine: 0x8344, id: "vtol" }],
   [0x0A2E, { coroutine: 0x791A, id: "xevdrift" }],
   [0x122E, { coroutine: 0x7ED8, id: "xevswarm" }],
+  [0x0822, { coroutine: 0x826A, id: "trilo" }],
+  [0x002E, { coroutine: 0xADF2, id: "xevplane" }],
+  [0x1242, { coroutine: 0xA3B2, id: "plat" }],
+  [0x1442, { coroutine: 0xA3B8, id: "plat" }],
 ]);
 
 function parsePam(pam, dico, pal0) {
@@ -1871,7 +1875,8 @@ function composeTownBobs(g, top) {
     }
     if (s.beh === "fish" || s.beh === "goose7" || s.beh === "skyeye" ||
         s.beh === "jetfly" || s.beh === "airplane" || s.beh === "vtol" ||
-        s.beh === "xevdrift" || s.beh === "xevswarm") {
+        s.beh === "xevdrift" || s.beh === "xevswarm" ||
+        s.beh === "trilo" || s.beh === "xevplane" || s.beh === "plat") {
       bob(s.beh, s.file, s.fr, s.x, sy, Math.floor(s.z) | 0, {
         ordinal: s.bobOrdinal,
         objectFlags: s.noShadow ? 1 : 0,        // +367 bit 0
@@ -1922,7 +1927,7 @@ function composeTownBobs(g, top) {
   }
 
   for (const h of g.hazards || []) {
-    if (!h.alive || h.consumed) continue;
+    if (!h.alive || h.consumed || h.hidden) continue;   // +397 bit 7 = 0x481a
     const idx = h.seq ? h.seq[h.apos] : h.frame;
     const z = h.z != null ? (Math.floor(h.z) | 0)
             : h.kind === "minecore" || h.kind === "proxfrag" ? 32
@@ -4095,6 +4100,13 @@ const NODE_GRAPHIC = {
   xevdrift: ["XEVIOUS.LIN", 3],                              // 0x791a
   xevswarm: ["XEVIOUS.LIN", 9],                              // 0x7eee
   xevbomb: ["BULLET.LIN", 3],                                // 0x7fa2
+  trilo: ["TRILO.LIN", 0],                                   // 0x826a
+  xevplane: ["XEVIOUS.LIN", 0],                              // 0xadf2
+  xevgun: ["XEVIOUS.LIN", 1],                                // 0xae88
+  plat9: ["_PLAT.LIN", 9], plat10: ["_PLAT.LIN", 10],        // 0xa3bc
+  platveh18: ["_PLAT.LIN", 18], platveh17: ["_PLAT.LIN", 17],// 0xa462
+  platturret: ["_PLAT.LIN", 19],                             // 0xa4d6
+  platshot: ["_PLAT.LIN", 23],                               // 0xa548
   tank: ["MEDTANK.LIN", 0],                                  // 0x9eec
   tankTurret: ["MEDTANK.LIN", 4],                            // 0x9fba
   roto: ["ROTOBASE.LIN", 4],                                 // 0x995c
@@ -4105,7 +4117,8 @@ const NODE_GRAPHIC = {
   hom: ["HOMING.LIN", 4],                                    // 0x8578
   plop: ["PLOP.LIN", 0],                                     // 0x8600
 };
-const NODE_NO_SWEEP = new Set(["plop", "tankTurret"]);      // trida bit15
+const NODE_NO_SWEEP = new Set(["plop", "tankTurret",        // trida bit15
+                               "platturret", "xevgun"]);
 const DEFAULT_NODE = Object.freeze({ ex: 8, ey: 8, sweeps: true });
 const PLAYER_NODE = DEFAULT_NODE, BOLT_NODE = DEFAULT_NODE;
 const nodeExtentCache = new Map();
@@ -4144,7 +4157,8 @@ function deathBoomZ(s) {                       // 0x894a: z rodice + 1
   if (["mill", "airmine", "tilt", "egg", "goose7", "skyeye", "jetfly",
        "mama"].includes(s.beh)) return 33;
   if (s.beh === "factory") return 17;
-  if (["fish", "onerig", "airplane", "vtol", "xevswarm"].includes(s.beh))
+  if (["fish", "onerig", "airplane", "vtol", "xevswarm",
+       "trilo"].includes(s.beh))
     return Math.floor(s.z || 0) + 1;
   return 1;
 }
@@ -4367,6 +4381,82 @@ function spawnFormationCopies(g, s, count, dx, dy, dtyp) {   // 0xa2a2
     g.spawns.push(c);
     s.x += dx; s.y += dy; s.typ = (s.typ | 0) + dtyp;
   }
+}
+/* 0xae68/0xae72/0xae7e: dvojice [uhel, delka/2]. Skript typu 1 pokracuje
+   do skriptu typu 2 (spolecny konec 0x00,0xff = 0x6d96 + 0x62cc); skript
+   typu 3 konci 0x00,0xfe = 508 tiku vpravo, tedy v praxi cull. */
+const XEVPLANE_SCRIPTS = {
+  1: [[127, 157], [112, 10], [96, 10], [81, 10], [65, 254],
+      [128, 39], [144, 10], [159, 10], [175, 10], [190, 100]],
+  2: [[128, 39], [144, 10], [159, 10], [175, 10], [190, 100]],
+  3: [[192, 48], [208, 10], [224, 10], [240, 10], [0, 254]],
+};
+function spawnXevGun(g, s) {                  // 0xae88 (dite 0x6144)
+  // a2c6(XEVIOUS#1, 0x8000 = bez sweepu, 0, HP 0, 0 bodu, cost 3),
+  // 0x6d96, +367 |= 13 (bez stinu + blika s rodicem + vazane dite),
+  // +340 vz = 1 = ofset nad rodicem. Anim 0x0aeb0 zacina andflag(128)
+  // (zobrazit) a konci orflag(128) (skryt) - hlaven je videt jen behem
+  // ctyr snimku palby. Cyklus: anim, wait 8, bomba 0x6178(0x7f9a),
+  // wait 100.
+  const h = { kind: "xevgun", file: "XEVIOUS.LIN", parent: s,
+              x: s.x, y: s.y, z: (s.z || 0) + 1, vx: 0, vy: 0,
+              alive: true, dead: false, hp: 0, cost: 3, budgeted: true,
+              scoreValue: 0, castShadow: false, flashWithParent: true,
+              seq: [1, 2, 2, 1], per: 4, apos: 0, at: 0, animFresh: true,
+              hidden: false, st: 0, t: 8 };
+  g.activeCost = (g.activeCost || 0) + h.cost;
+  assignBobOrdinal(g, h); g.hazards.push(h);
+  s.gunTask = h;
+}
+function spawnPlatVehicle(g, s) {              // 0xa462 (dite 0x6144)
+  // a2c6(_PLAT#18 | #17 podle +276, 36, -16, HP 10, 60 bodu, cost 10),
+  // +397 |= 1, vez 0x6144(0xa4d6), x = 284 | 36 (absolutne), y -= 2,
+  // wait 50, vx = -0.5 | +0.5, wait 190, vx = 0, 0x62cc.
+  const two = !!s.platType;
+  const h = { kind: "platveh", nodeKey: two ? "platveh18" : "platveh17",
+              file: "_PLAT.LIN", parent: s, platType: s.platType,
+              x: two ? 284 : 36, y: s.y - 2, z: 0, vx: 0, vy: 0,
+              alive: true, dead: false, hp: 10, cost: 10, budgeted: true,
+              scoreValue: 60, seq: [two ? 18 : 17], per: 1, apos: 0, at: 0,
+              animFresh: true, castShadow: false, st: 0, t: 50 };
+  g.activeCost = (g.activeCost || 0) + h.cost;
+  assignBobOrdinal(g, h); g.hazards.push(h);
+  s.platChild = h;
+  spawnPlatTurret(g, h);
+}
+function spawnPlatTurret(g, veh) {             // 0xa4d6 (dite 0x6144)
+  // a2c6(_PLAT#19, 0x8000, -16, HP 0, 0 bodu, cost 4), +397 |= 1,
+  // +367 |= 12 (blika s rodicem + vazane dite), +332 vx = 11 | -11 =
+  // ofset; wait 300, pak smycka { anim 0x0a512 (#20,#21,#22,#22,#21,
+  // #20,#19 perioda 8, drzi #19), wait 24, zvuk 0x4d6a (neprepsan),
+  // strela 0x617a(0xa548), wait 120 }.
+  const h = { kind: "platturret", file: "_PLAT.LIN", parent: veh,
+              platType: veh.platType, ox: veh.platType ? 11 : -11,
+              x: veh.x + (veh.platType ? 11 : -11), y: veh.y, z: 0,
+              vx: 0, vy: 0, alive: true, dead: false, hp: 0,
+              cost: 4, budgeted: true, scoreValue: 0,
+              castShadow: false, flashWithParent: true,
+              seq: [19], per: 1, apos: 0, at: 0, animFresh: true,
+              st: 0, t: 300 };
+  g.activeCost = (g.activeCost || 0) + h.cost;
+  assignBobOrdinal(g, h); g.hazards.push(h);
+}
+function spawnPlatShot(g, t) {                 // 0xa548 (dite 0x617a)
+  // a2c6(_PLAT#23, 6, -16, HP 0, 0 bodu, cost 3), +367 |= 1 (bez stinu),
+  // +364 = 0, anim 0x0a568 #23,#24,#25,#24 perioda 1 loop, rychlost
+  // 256/256 = 1 px/t na hrace (0x7312 + 0x65be bez omezeni), 0x62cc.
+  const p = g.player;
+  const sy = t.y - scrollTop(g);
+  const ang = angTo(t.x, sy, p.alive ? p.x : 160, p.alive ? p.y : 192);
+  const v = angVel(ang, 1);
+  const h = { kind: "platshot", file: "_PLAT.LIN", x: t.x, y: t.y, z: 0,
+              vx: v.vx, vy: v.vy, ang,
+              alive: true, dead: false, hp: 0, cost: 3, budgeted: true,
+              scoreValue: 0, lethal: true, castShadow: false,
+              seq: [23, 24, 25, 24], per: 1, apos: 0, at: 0,
+              animFresh: true };
+  g.activeCost = (g.activeCost || 0) + h.cost;
+  assignBobOrdinal(g, h); g.hazards.push(h);
 }
 function spawnXevBomb(g, s) {                  // 0x7f9a (dite 0x6178)
   // Zvuk 0x4cf8 (neprepsan); a2c6(BULLET#3, trida 6, -16, HP 0, 0 bodu,
@@ -4777,9 +4867,35 @@ function advanceTownHazardField(g, h) {
   } else if (h.kind === "beam") {
     if (h.lethalT > 0 && --h.lethalT <= 0) h.lethal = false;   // trida 0
     if (--h.life <= 0) h.retireAfterField = true;              // kill anim
+  } else if (h.kind === "platveh") {
+    if (!h.parent.alive) { releaseHazard(g, h); return; }   // +542 = 0x6db4
+    h.x += h.vx;
+    if (h.st < 2 && --h.t <= 0) {
+      if (h.st === 0) {                        // wait 50 -> rozjezd
+        h.vx = h.platType ? -0.5 : 0.5; h.st = 1; h.t = 190;
+      } else { h.vx = 0; h.st = 2; }           // wait 190 -> stoji
+    }
+  } else if (h.kind === "platturret") {
+    if (!h.parent.alive) { releaseHazard(g, h); return; }
+    h.x = h.parent.x + h.ox; h.y = h.parent.y;  // vazane dite (+367 bit 3)
+    if (h.st === 1 && h.apos < h.seq.length - 1 && ++h.at >= h.per) {
+      h.at = 0; h.apos++;
+    }
+    if (--h.t <= 0) {
+      if (h.st === 0) {                        // wait 300 -> prvni palba
+        h.st = 1; h.seq = [20, 21, 22, 22, 21, 20, 19];
+        h.per = 8; h.apos = 0; h.at = 0; h.t = 24;
+      } else if (h.st === 1) {
+        spawnPlatShot(g, h); h.st = 2; h.t = 120;
+      } else {
+        h.st = 1; h.seq = [20, 21, 22, 22, 21, 20, 19];
+        h.per = 8; h.apos = 0; h.at = 0; h.t = 24;
+      }
+    }
   }
   if (h.kind === "mamadrone" || h.kind === "pistonrod" ||
-      h.kind === "launcher" || h.kind === "beam") {
+      h.kind === "launcher" || h.kind === "beam" ||
+      h.kind === "platveh" || h.kind === "platturret") {
     if (h.animFresh) h.animFresh = false;
     else if (++h.at >= h.per) { h.at = 0; h.apos = (h.apos + 1) % h.seq.length; }
     const sy = h.y - scrollTop(g);
@@ -4791,6 +4907,20 @@ function advanceTownHazardField(g, h) {
     if ((h.consumedTick | 0) === (g.tick | 0)) return;
     if (--h.consumed <= 0) releaseHazard(g, h);
     return;                                    // wait10: bez BOB/motion/anim
+  }
+  if (h.kind === "xevgun") {
+    if (!h.parent.alive) { releaseHazard(g, h); return; }   // +542 = 0x6db4
+    h.x = h.parent.x; h.y = h.parent.y; h.z = (h.parent.z || 0) + 1;
+    if (h.apos < h.seq.length - 1) {
+      if (++h.at >= h.per) { h.at = 0; h.apos++; }
+    } else if (++h.at >= h.per) {              // orflag(128) po ctvrtem
+      h.at = 0; h.hidden = true;
+    }
+    if (--h.t <= 0) {
+      if (h.st === 0) { spawnXevBomb(g, h); h.st = 1; h.t = 100; }
+      else { h.st = 0; h.t = 8; h.apos = 0; h.at = 0; h.hidden = false; }
+    }
+    return;
   }
   if (h.kind === "eggchild") {
     // 0xa936..0xa998: +542 = 0xa36a, sirotek po smrti hnizda umira
@@ -5831,7 +5961,9 @@ function step(g) {
                  s.beh === "egg" || s.beh === "flattank" ||
                  s.beh === "rig" || s.beh === "onerig" ||
                  s.beh === "swappad" ||
-                 s.beh === "vtol" || s.beh === "xevdrift") margin = -16;
+                 s.beh === "vtol" || s.beh === "xevdrift" ||
+                 s.beh === "trilo" || s.beh === "xevplane" ||
+                 s.beh === "plat") margin = -16;
         else if (s.beh === "flame") margin = 128;
         else if (s.beh === "train") margin = 100;
         else if (s.beh === "boss") margin = 0;   // 0xc7ae: a2c6 d2 = 0
@@ -5910,6 +6042,34 @@ function step(g) {
         s.cost = 13; s.hp = 0; s.scoreValue = 200;
         accountCost(g, s);
         s.fr = 2; s.at = 0; s.st = 0; s.z = 0; s.vz = 0; s.vx = 0; s.vy = 0;
+      } else if (s.beh === "trilo") {
+        // 0x826a (GRASS): a2c6(TRILO#0, 36, -16, HP 4, 35 bodu, cost 10),
+        // +397 |= 1, z = 0; faze v kroku.
+        s.cost = 10; s.hp = 4; s.scoreValue = 35;
+        accountCost(g, s);
+        s.fr = 0; s.at = 0; s.st = 0; s.z = 0; s.vz = 0;
+        s.vx = 0; s.vy = 0; s.spd = 0; s.ang = 0;
+      } else if (s.beh === "xevplane") {
+        // 0xadf2 (GRASS): a2c6(XEVIOUS#0, 36, -16, HP 30, 95 bodu,
+        // cost 13); po radku 64 vazana hlaven 0x6144(0xae88) a skript
+        // uhlu podle typu z PAM, rychlost +356 = 128 = 0.5 px/t.
+        s.cost = 13; s.hp = 30; s.scoreValue = 95;
+        accountCost(g, s);
+        s.fr = 0; s.st = 0; s.z = 0; s.vx = 0; s.vy = 0; s.spd = 0.5;
+        s.scriptPos = 0; s.t = 0;
+      } else if (s.beh === "plat") {
+        // 0xa3b2/0xa3b8 (GRASS): +276 = 0xff (z #9) nebo 0 (z #10) -
+        // typ z PAM se prepise. a2c6(_PLAT#9 | #10, 36, -16, HP 0,
+        // 0 bodu, cost 5), +397 |= 1, po radku 16 cull margin -16 a
+        // smycka { wait 100, vozidlo 0x6144(0xa462), zvuk 0x5138,
+        // 18x x += dir, wait 100, 18x x -= dir, cekej na konec ditete }.
+        s.cost = 5; s.hp = 0; s.scoreValue = 0;
+        accountCost(g, s);
+        s.platType = s.idx === 9 ? 1 : 0;        // 0xa3b2 vs 0xa3b8
+        s.nodeKey = s.platType ? "plat9" : "plat10"; s.nodeExt = null;
+        s.fr = s.platType ? 9 : 10;
+        s.dir = s.platType ? 1 : -1;
+        s.st = 0; s.t = 0; s.n = 0;
       } else if (s.beh === "vtol") {
         // 0x8344 (GRASS): a2c6(VTOL#0, 36, -16, HP 8, 35 bodu, cost 10),
         // anim 0x0835a VTOL#0/#1 perioda 4 loop, z = 0 (clrl +328) a
@@ -6270,6 +6430,75 @@ function step(g) {
         s.t = 40; s.st = 3;
       } else if (s.st === 3 && --s.t <= 0) {
         if (--s.beams > 0) s.st = 2; else { s.st = 1; s.t = 100; }
+      }
+    } else if (s.beh === "trilo") {
+      // 0x826a: po radku 8 vy 0.5 (mapove), po radku 64 anim 0x082a6
+      // TRILO#1..#4 perioda 8 (drzi #4) a wait 20; pak trida 34
+      // (0x65ae + 0x6566 s 0xa362), vz 0.5 do z >= 32, rychlost 0 a
+      // kazdych 10 tiku mireni na hrace (0x7312 + 0x65be) s korekci
+      // "nikdy nahoru" (uhel 160..224 -> 64), rozptylem +-16 podle
+      // znamenka 0x883c a zrychlenim +48/256 do stropu 768/256.
+      if (s.st >= 1) s.y += s.vy;
+      if (s.st >= 2 && s.fr < 4 && ++s.at >= 8) { s.at = 0; s.fr++; }
+      if (s.st === 0) {
+        if (s.sy >= 8) { s.st = 1; s.vy = 0.5; }
+      } else if (s.st === 1) {
+        if (s.sy >= 64) { s.st = 2; s.fr = 1; s.at = 0; s.t = 20; }
+      } else if (s.st === 2) {
+        if (--s.t <= 0) { s.st = 3; s.vz = 0.5; s.lethal = true; }
+      } else if (s.st === 3) {
+        s.z += s.vz;
+        if (s.z >= 32) { s.vz = 0; s.spd = 0; s.st = 4; s.t = 10; }
+      } else {
+        s.x += s.vx;                             // vy uz je v s.y vyse
+        if (--s.t <= 0) {
+          s.t = 10;
+          let a = angTo(s.x, s.sy, p.alive ? p.x : 160, p.alive ? p.y : 192);
+          if (a >= 160 && a <= 224) a = 64;      // 0x8306: jen ne nahoru
+          a = (a + (signedWord(random32(g) & 0xFFFF) < 0 ? -16 : 16)) & 255;
+          s.ang = a;
+          if (s.spd < 3) s.spd += 48 / 256;      // 0x832c: strop 768/256
+          const v = angVel(s.ang, s.spd); s.vx = v.vx; s.vy = v.vy;
+        }
+      }
+    } else if (s.beh === "xevplane") {
+      s.x += s.vx; s.y += s.vy;
+      if (s.st === 0) {
+        if (s.sy >= 64) {                        // 0x9afa(64)
+          s.st = 1; spawnXevGun(g, s);
+          s.script = XEVPLANE_SCRIPTS[(s.typ | 0) === 1 ? 1
+                                    : (s.typ | 0) === 2 ? 2 : 3];
+          s.scriptPos = 0; s.t = 0;
+        }
+      } else if (s.st === 1 && --s.t <= 0) {
+        const e = s.script[s.scriptPos];
+        if (!e) {                                // 0x00,0xff -> 0x6d96
+          s.vx = 0; s.vy = 0; s.st = 2;
+        } else {
+          s.scriptPos++;
+          s.ang = e[0];
+          const v = angVel(s.ang, s.spd); s.vx = v.vx; s.vy = v.vy;
+          s.t = e[1] * 2;                        // 0xae54: delka x 2
+        }
+      }
+    } else if (s.beh === "plat") {
+      if (s.st === 0) {
+        if (s.sy >= 16) { s.st = 1; s.t = 100; } // 0x9afa(16)
+      } else if (s.st === 1) {
+        if (--s.t <= 0) {
+          spawnPlatVehicle(g, s); sfxOpening(g, s.x);   // 0x5138
+          s.st = 2; s.n = 18;
+        }
+      } else if (s.st === 2) {
+        s.x += s.dir;
+        if (--s.n <= 0) { s.st = 3; s.t = 100; }
+      } else if (s.st === 3) {
+        if (--s.t <= 0) { s.st = 4; s.n = 18; }
+      } else if (s.st === 4) {
+        s.x -= s.dir;
+        if (--s.n <= 0) s.st = 5;
+      } else if (!s.platChild || !s.platChild.alive) {
+        s.st = 1; s.t = 100;                     // 0xa456: az po smrti dite
       }
     } else if (s.beh === "vtol") {
       if (s.st === 0) {                          // stoji, jen anim + scroll
