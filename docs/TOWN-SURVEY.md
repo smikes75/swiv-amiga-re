@@ -50,11 +50,12 @@ pyramida na konci.
 
 Nesedi nebo neoverene:
 
-- **MEDTANK**: prvni tank (zaznam img 3039, x 305, typ 1) v prepisu jede od
-  x 352 na zapad (t33 x 238, t41 x 92, t49 x −54). Original v t33 na tomto
-  radku tank nema, v t41 ma tank na (91,126) jako prepis, v t49 ma tank na
-  (169,126), ktery v prepisu chybi. Kinematika/nacasovani tanku se lisi;
-  chce zachyt po 1 s v t33..t57 a precist `0x9eca` znovu (typ z `+276`).
+- ~~**MEDTANK**~~ — **sedi** (zabery po 1 s t34..t56, dvojice zarovnane
+  na radek): typ-1 tank jede od x 352 na zapad shodne v obou (t36 (200,70)
+  vs (202,74), t40 (120,125) vs (118,125), t42 (60,155) vs (66,151), v t48
+  uz mimo obraz), typ-3 tank (165, 154→242) i plamenomet (95, 150) rovnez.
+  Dřívější „rozdil" z 8s prochodu byl spatne prectený terenni blob
+  26×24 px na x 306 a jiný beh (RNG smrti).
 - ~~**GOOSE**~~ — **vyreseno tyz den**: prepis respawnoval hrace presne
   pod bossem a chraneny hrac mu kontaktem (0xc974 −1 HP za VBL, handler
   i pro bit 3 pres `0x6566`) sebral 25 HP za 25 VBL. Original tak nedela,
@@ -77,7 +78,7 @@ Nesedi nebo neoverene:
 
 1. ~~Retezeni map (bod 1)~~ — hotovo tyz den (`parseMapChain`, viz
    GAPS 9); dvojice t273..t321 sedi na teren DESERTu i jeho prvni objekty.
-2. Zachyt tanku po 1 s a oprava MEDTANK.
+2. ~~Zachyt tanku po 1 s a oprava MEDTANK~~ — sedi, nic k oprave.
 3. Vrstva vylepseni (interpolace poloh mezi tiky, subpixelovy scroll, volba
    50/60/120 Hz, skalovani), prepinac original/vylepseno.
 4. Rozhodnout, zda modelovat zpomaleni scrollu pri zatezi.

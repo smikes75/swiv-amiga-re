@@ -363,7 +363,7 @@ Pruchod celym levelem (`TOWN-SURVEY.md`) ukazal dva systemove rozdily:
   Rozhodnuti o modelovani zatim otevrene; porovnavani snimku se zarovnava
   podle radku mapy, ne casu.
 
-Dilci: MEDTANK nacasovani/jizda (typ z `+276`), TRAIN v t145. GOOSE
+Dilci: TRAIN v t145 (neprukazne); MEDTANK sedi (1s zabery). GOOSE
 kontaktni HP drain je vyresen sondou respawnu proti BOBum (`0x3dd4` kresli
 do obrazovky `fp@(256)`, viz BEHAVIORS); zustava nemodelovane zpozdeni
 respawnu pri plne pameti (`0x6162` ceka na 546 B z loaderoveho alokatoru
