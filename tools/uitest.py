@@ -2893,7 +2893,8 @@ def main():
               killPlayer(gr);
               gr.shots = [{ kind: 'can', x: 50, y: 50, ang: 0, spd: 0,
                             st: 0, accel: false, phase: 0 }];
-              for (let i = 0; i < 99; i++) step(gr);
+              // 0x9306 (D) -> +54 smazano D+1 -> rodic ceka od D+2 100 VBL
+              for (let i = 0; i < 101; i++) step(gr);
               const wait99 = [gr.player.alive, gr.player.respawnT, gr.lives];
               step(gr);
               const respawn = [gr.player.alive, gr.player.respawnT,
@@ -2903,7 +2904,7 @@ def main():
               const heli0WaitGame = makeGame();
               heli0WaitGame.lives = 2;
               killPlayer(heli0WaitGame);
-              for (let i = 0; i < 99; i++) step(heli0WaitGame);
+              for (let i = 0; i < 101; i++) step(heli0WaitGame);
               const heli0Wait99 = [heli0WaitGame.player.alive,
                 heli0WaitGame.player.respawnT, heli0WaitGame.lives,
                 heli0WaitGame.playerPhase];

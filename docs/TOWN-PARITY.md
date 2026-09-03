@@ -341,10 +341,39 @@ citace (`vblBase`) a RNG prvni vlny (`fodder.x/vx`).
   HELI 99.7** (ratchet 99.0); `wave` (T=184) **99.0 % / 99.0 / 100 /
   99.9** (ratchet 98.5). Historie `wave`: 97.6 (8/8, plovouci scroll) →
   97.7 (boxy z hlavicky) → 98.5 (uzel z resume) → 99.0 (HUD faze).
-- **dalsi snimky**: t20 (T≈234) ukazuje smrt hrace (`0x88fc` spirala
-  16× EXPL1, skore 360 = tri FODDERA), t21 spiralu dal, t23 (T≈384)
-  bily obrys vrtulniku pri respawnu, zivoty 2, PRESS FIRE — kandidati
-  na checkpointy `death` a `respawn`.
+- **jitter zachytu**: kazdy snimek je samostatny beh emulatoru a jeho
+  absolutni T kolisa o nekolik snimku (radky z korelace s mapou: t20
+  3191, t21 3177, t22 3164, t23 3151, t24 3139, t25 3130, t26 3118, t28
+  3092, t30 3066; dlouhodoby prumer je presne 0.25 px/VBL). T kazdeho
+  checkpointu se proto fituje z obsahu (radek → okno 4 tiku, rotor,
+  blikani, objekty), ne z casu.
+
+### Treti vytezky baseline — smrt a respawn (2026-09-03)
+
+- **smrt hrace** (t20, T = 232, radek 3191): clen 2 prvni vlny se dotkne
+  po vyprseni ochrany (+108 = 200), prepis umira v tiku 211. Spirala
+  `0x88fc`: 16 deti `0x8952` (EXPL1#7..13, perioda 4) po 2 VBL; emitor
+  meni uhel `+358 += 100` a rychlost `+356 += 768`, ale ceka pres
+  `0x5f22`/`0x5f0a`, ktere rychlost NEintegruji — spirala je staticka
+  (`puff_i = O + int(v_i)`), driftovy model dal 71 % proti 81 %. Uhel
+  dedi hracovo `+358`, ktere se pise jen pri pohybu (`0x948e`) — cerstvy
+  objekt ma 0, ne 192; oprava zvedla shodu z 96.3 na 98.3 %.
+- **respawn** (t23, T = 390, radek 3151): callback `0x9306` v D pouze
+  zneplatni generaci; telo smaze `+54` az pri dalsim resume (`0x8f74`,
+  D+1); rodic `0x7090` je starsi task, `+54` cte v D+2 (`0x7130`), ceka
+  100 VBL (`0x714e` → `0x5f22`) a novy `0x9410` vznika v **D+102** s
+  `+108 = 200` klesajicim tymz tikem. Prepis mel D+100. Ochrana blika po
+  8 VBL (`0x92e4`, bit 3 zbytku): bile siluety t23/t24/t25 = JEEPHELI
+  #3/#0/#4 (presna shoda masky), t22 barevny — spolecne reseni R = 313,
+  rotor `index = T − R − 1`, tj. D = 212 v originale (prepis 211; 1 tik
+  je v nejistote fitu vlny). Druha vlna jde v originale doprava (t22:
+  x 264..288, y 111..238) a hraci se vyhne; RNG nezname, checkpoint ji
+  proto zadava jako druhe volani `0x813a` (map reader zaklada prvnich
+  sest formaci uz v tiku 1; `fodder` v receptu je seznam podle poradi
+  volani) x0 = 195, vx = +0.7.
+- Stav: `death` **98.3 %** (ratchet 98.0), `respawn` **99.9 % / HELI
+  100 % / HUD 100 %** (ratchet 99.5). Otevrene: t25/t26 ukazuji treti
+  vlnu v sloupci x ≈ 130..150 (opet RNG), hrac ji prezije.
 
 ### Regionalni vizualni kontrakt (`tools/compare.py`, 2026-09-01)
 

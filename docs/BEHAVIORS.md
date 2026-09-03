@@ -611,7 +611,10 @@ sebrani jadra s uz aktivnim stitem (`0x98ec`).
 - smrt `0x9306`: `+108` nebo `+106` nenulove → nic; jinak exploze
   `0x88fc` (16 EXPL1 ve spirale po 2 ticich) a konec objektu
 - respawn: hracsky task `0x7090` ceka **100 snimku** (`0x714e`), zatimco
-  svet i enemy scheduler dal bezi. Pak spotrebuje zasobu `+68`
+  svet i enemy scheduler dal bezi. Cekani zacina az kdyz rodic uvidi
+  smazane `+54`: callback `0x9306` (tik D) jen zneplatni generaci, telo
+  `+54` smaze pri dalsim resume (`0x8f74`, D+1) a starsi rodic to cte v
+  D+2 — novy `0x9410` tedy vznika v **D+102** (baseline t22..t25). Pak spotrebuje zasobu `+68`
   (−4/zivot, start −16 = 4), zavola `0x70c8` (tabulka zbrane) a zalozi novy
   `0x9410`. Browserovy kladny ekvivalent zacina `lives=4/HUD 3`, dovoluje
   posledni aktivni `lives=1/HUD 0` a continue otevre az po dalsim pokusu,

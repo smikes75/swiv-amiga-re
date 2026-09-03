@@ -4430,7 +4430,7 @@ function placePlayerSpawn(g) {                 // 0x9046 -> 0x9410
   releasePlayerBubble(g);
   p.alive = true; p.respawnT = 0;
   const pos = findPlayerRespawn(g);
-  p.x = pos.x; p.y = pos.y; p.ang = 192;
+  p.x = pos.x; p.y = pos.y; p.ang = 0;        // novy objekt: +358 = 0
   p.weaponX = p.x; p.weaponY = p.y;
   p.inv = 200;
   p.cool = 0;
@@ -4499,7 +4499,12 @@ function respawnPlayer(g) {                    // 0x714e -> 0x9046 -> 0x9410
 function killPlayer(g) {                       // 0x9306 + 0x714e
   const p = g.player;
   if (!p.alive) return;
-  p.alive = false; p.respawnT = 100; p.rank = 0;
+  // Retez respawnu (baseline t22..t25, blikani bit3 + rotor bile siluety):
+  // callback 0x9306 v tiku D jen zneplatni generaci (0x6db4); telo tasku
+  // smaze +54 az pri dalsim resume (0x8f74, D+1); rodic 0x7090 je starsi
+  // task, cte +54 v D+2 (0x7130) a ceka 100 VBL (0x714e -> 0x5f22);
+  // novy 0x9410 tedy vznika v D+102 a +108 = 200 zacina klesat tymz tikem.
+  p.alive = false; p.respawnT = 102; p.rank = 0;
   spawnPlayerBurst(g, p.x, p.y + scrollTop(g), p.ang);
 }
 
@@ -4781,7 +4786,10 @@ function startGame(lv) {
     vblBase: 0,                 // faze VBL citace fp@(-68) pri startu urovne
     // Hracsky struct fp@(11176): +98 prodleva, +100 sila (0x6fde: start 2),
     // +102 citac pickupu, +104 rezim, +106 stit, +108 ochrana (0x9424: 200).
-    player: { x: 160, y: 192, ang: 192, alive: true, inv: 200,
+    // +358 (uhel) hrace se pise jen pri pohybu (0x948e z JOY tabulky
+    // 0x959e); cerstvy objekt ma 0. Smrtici spirala 0x88fc jej dedi
+    // (0x61d0), baseline t20 sedi s a0 = 0, ne 192.
+    player: { x: 160, y: 192, ang: 0, alive: true, inv: 200,
               bubbleTimer: 0, bubbleFrame: 9, bubbleZ: 0, bubblePhase: 0,
               bubbleBound: null,
               bank: 0, cool: 0,

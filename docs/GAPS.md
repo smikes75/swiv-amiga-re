@@ -172,9 +172,12 @@ Doplneno 2026-09-03 (baseline t19): kolizni boxy nejsou 8/8, ale bajty
 z RESUME (`0x6430`), tedy o jeden pohyb starsi nez callback v N+1. Viz
 `ENGINE.md` „Collision scheduling" a `TOWN-PARITY.md` „Druhe vytezky".
 Otevrene: zda animator hrace startuje 4 VBL pred scrollem nebo scroll
-4 VBL po nem (zmerena jen faze `index = (T+3)&7`), a presna hodnota
-`vblBase` (okno 172..199) — obojí chce vzorkovani po snimcich, ktere
-RetroShell `wait` v sekundach nedava.
+4 VBL po nem (zmerena jen faze `index = (T+3)&7`; kandidat je tyz retez
+`0x7090 -> 0x70c8 -> 0x7156` jako u respawnu), presna hodnota `vblBase`
+(okno 172..199) a tik smrti v baseline (blikani po respawnu dava D = 212,
+prepis umira v 211 — jeden tik v nejistote fitu prvni vlny). Vsechno chce
+vzorkovani po snimcich, ktere RetroShell `wait` v sekundach nedava; navic
+kazdy zachyt je samostatny beh s jitterem nekolika snimku.
 
 Browser sweep ted stejne pouze ORuje pending masku do kazdeho zasazeneho
 nodu a oznaci player bolty ke spotrebovani. Na zacatku N+1 existujici tasky

@@ -75,7 +75,21 @@ CHECKPOINTS = {
     # box FODDERA#2 = 10/20 z hlavicky .LIN a uzel z resume (0x6430) davaji
     # EXPL1#8 na (157,175) proti originalu (157,176).
     "wave": {"t": 19, "row": 3203, "floor": 98.5, "ticks": 184,
-             "vblBase": 186, "fodder": {"x": 257, "vx": -0.8125}},
+             "vblBase": 186, "fodder": [{"x": 257, "vx": -0.8125}]},
+    # Smrt hrace: clen 2 prvni vlny jej zasahne po vyprseni ochrany (+108
+    # = 200), spirala 0x88fc (16x EXPL1 po 2 ticich, uhel dedi +358 = 0,
+    # cekani 0x5f22 rychlost neintegruje). Radek 3191 => T 229..232.
+    "death": {"t": 20, "row": 3191, "floor": 98.0, "ticks": 232,
+              "vblBase": 186, "fodder": [{"x": 257, "vx": -0.8125}]},
+    # Respawn: novy 0x9410 v D+102 (viz killPlayer), ochrana blika po 8
+    # VBL (0x92e4, bila silueta = JEEPHELI#3 v t23). Druha vlna jde v
+    # originale doprava (t22: x 264..288), hraci se vyhne; RNG nezname.
+    # `fodder` je seznam podle poradi volani 0x813a (map reader zaklada
+    # prvnich sest formaci uz v tiku 1, posledni polozka se opakuje).
+    # Radek 3151 => T 389..392.
+    "respawn": {"t": 23, "row": 3151, "floor": 99.5, "ticks": 390,
+                "vblBase": 186,
+                "fodder": [{"x": 257, "vx": -0.8125}, {"x": 195, "vx": 0.7}]},
 }
 
 
@@ -125,9 +139,13 @@ def remake_frames(checkpoint):
               const g = state.g, p = g.player;
               g.scrollMul = 1;
               g.vblBase = cp.vblBase | 0;
-              if (cp.fodder)
-                window.fodderInitial = () => ({ x: cp.fodder.x,
-                                                vx: cp.fodder.vx });
+              if (cp.fodder) {
+                let n = 0;
+                window.fodderInitial = () => {
+                  const f = cp.fodder[Math.min(n++, cp.fodder.length - 1)];
+                  return { x: f.x, vx: f.vx };
+                };
+              }
               for (let i = 0; i < cp.ticks; i++) step(g);
               if (Math.floor(g.scroll) !== cp.row)
                 throw new Error("scroll " + g.scroll + " != row " + cp.row);
