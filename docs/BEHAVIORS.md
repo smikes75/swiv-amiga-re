@@ -96,6 +96,14 @@ therefore `+348 = 0x800` means `1/32 px/t²`, not a constant speed.
   x `160..280` po8, uvnitr y `192..104` po−8 proti terrain control
   plane1; prvni volne misto vyhraje. Je-li vsech 192 mist blokovanych,
   pouzije uz nekontrolovany fallback `(288,192)`
+  **Sonda `0x3dd4` kresli masku v testovacim rezimu (zaznam +21 bit 7 →
+  varianta `0x416a`) do bufferu `fp@(256)`, tj. do OBRAZOVKY** (bit 6 by
+  mirila do stripu `fp@(264)`), a kolizi hlasi pres `fp@(162)` proti vsemu,
+  co v ni je — terenu i BOBum posledniho renderu. GOOSE nad (160,192) proto
+  respawn zablokuje a hrac vznikne o sloupec/radek dal; boss pak ztraci HP
+  jen pri skutecnem doteku. Zmereno baseline t281..t289 (2026-09-03):
+  po smrti pod bossem hrac 4 s neni na (160,192), boss prezije do timeoutu.
+  Prepis: `respawnBobField` sklada aktualni BOBy bez vlastniho hrace.
 - pohybova smycka clampuje starou pozici na x `4..316`, y `4..252`
   **pred** aplikaci vstupu; kardinalni krok muze proto v prave publikovanem
   framu dosahnout x `1..319` nebo y `1..255`

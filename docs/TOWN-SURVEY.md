@@ -55,12 +55,19 @@ Nesedi nebo neoverene:
   radku tank nema, v t41 ma tank na (91,126) jako prepis, v t49 ma tank na
   (169,126), ktery v prepisu chybi. Kinematika/nacasovani tanku se lisi;
   chce zachyt po 1 s v t33..t57 a precist `0x9eca` znovu (typ z `+276`).
-- **GOOSE**: v tomto behu prepis bosse zabil kontaktem chraneneho
-  respawnuteho hrace (0xc974 ubira 1 HP za kazdy VBL dotyku, handler je
-  nainstalovan i pro bit 3 pres `0x6566`), original prezil do timeoutu 2000
-  VBL, protoze jeho hrac pod bossem nikdy nebyl (stred tela vs. hrac
-  dy ≥ 20 > box 19). Kod sedi, ale stoji za cileny test s paskou joysticku
-  (hrac drzeny pod bossem).
+- ~~**GOOSE**~~ — **vyreseno tyz den**: prepis respawnoval hrace presne
+  pod bossem a chraneny hrac mu kontaktem (0xc974 −1 HP za VBL, handler
+  i pro bit 3 pres `0x6566`) sebral 25 HP za 25 VBL. Original tak nedela,
+  protoze sonda respawnu `0x3dd4` testuje masku proti OBRAZOVCE vcetne
+  BOBu, hrac se rodi o sloupec/radek dal a boss ztraci HP jen pri
+  skutecnem doteku (2s zabery t275..t297). Prepis ted sklada BOBy do
+  sondy (`respawnBobField`); zbytek je zavisly na historii (v simulaci
+  prezije boss 3–4 cykly misto jednoho). Druhy mechanismus originalu se
+  nemodeluje: novy task hrace se alokuje blokujicim `0x6162` (yield kazdy
+  VBL, dokud loaderovy alokator `fp@(-1502)` nevyda 546 B), takze pri
+  plne pameti (boss + casti + exploze) se respawn zpozdi — v baseline
+  t281→t287 o ~4 s. Alokator lezi v loaderu, jeho heap a obsazeni grafikou
+  nejsou v `AMPROG.OBJ`; bez emulace pameti to presne nejde.
 - **TRAIN**: t145 original bez vlaku, prepis dva vlaky mimo obraz; t137 oba
   s vlakem. Neprukazne.
 - Mala staticka odchylka terenu 26×24 px na mape (293..319, 3029..3053),

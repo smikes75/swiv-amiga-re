@@ -4451,14 +4451,53 @@ function heliTerrainBlocked(g, x, screenY) {
   return false;
 }
 
+/* 0x3dd4 kresli masku v testovacim rezimu (zaznam +21 bit 7 -> varianta
+   0x416a) do bufferu fp@(256), coz je OBRAZOVKA (bit 6 by mirila do
+   stripu fp@(264)); kolize se hlasi pres fp@(162) proti vsemu, co v ni
+   je: terenu i BOBum posledniho renderu. GOOSE nad mistem respawnu tedy
+   kandidata zablokuje a hrac vznikne jinde. Zmereno baseline t281..t289:
+   po smrti pod bossem hrac 4 s neni na (160,192) a boss neztraci HP,
+   zatimco prepis bez tohoto testu respawnul pod bossem a zabil jej
+   kontaktem (25 HP za 25 VBL). Skladame aktualni BOBy (jeden snimek
+   rozdilu proti bufferu originalu). */
+function heliBobBlocked(g, x, screenY, bobs) {
+  if (!bobs || !g.mapIndex) return false;
+  const spr = indexedFrameFor(state, "JEEPHELI.LIN", 0);
+  if (!spr) return false;
+  const W = 320, top = Math.floor(g.scroll);
+  const left = Math.floor(x + spr.ox), ty0 = Math.floor(screenY + spr.oy);
+  for (let sy = 0; sy < spr.h; sy++) {
+    const y = ty0 + sy;
+    if (y < 0 || y >= 256) continue;
+    for (let sx = 0; sx < spr.w; sx++) {
+      if (spr.pix[sy * spr.w + sx] === 0xFF) continue;
+      const tx = left + sx;
+      if (tx < 0 || tx >= W) continue;
+      if (bobs[y * W + tx] !== g.mapIndex[(top + y) * W + tx]) return true;
+    }
+  }
+  return false;
+}
+function respawnBobField(g) {
+  if (!g.mapIndex || !g.spawns || !Number.isInteger(g.mapH)) return null;
+  // Novy hrac v bufferu originalu jeste neni (jeho BOB vznikne az po
+  // 0x9046); vlastni BOB proto pri sondovani skryjeme.
+  const p = g.player, wasAlive = p ? p.alive : false;
+  if (p) p.alive = false;
+  try { return composeTownBobs(g, Math.floor(g.scroll)).index; }
+  catch (e) { return null; }                    // izolovane fixture
+  finally { if (p) p.alive = wasAlive; }
+}
 /* 0x9046: sloupce jsou vnejsi smycka. Pri plnem zablokovani vsech
    16*12 kandidatu zustane puvodni nekontrolovany fallback (288,192). */
 function findPlayerRespawn(g) {
   let probes = 0;
+  const bobs = respawnBobField(g);
   for (let x = 160; x <= 280; x += 8) {
     for (let y = 192; y >= 104; y -= 8) {
       probes++;
-      if (!heliTerrainBlocked(g, x, y)) return { x, y, probes };
+      if (!heliTerrainBlocked(g, x, y) && !heliBobBlocked(g, x, y, bobs))
+        return { x, y, probes };
     }
   }
   return { x: 288, y: 192, probes };
@@ -5688,6 +5727,7 @@ function step(g) {
   const contactMill = new Set(), contactFrag = new Set(), contactCore = new Set();
   const playerAttribution = new Set();
   let lethalContact = false;
+  const lethalSources = [];                    // diagnostika: kdo zabil
   if (p.alive) {
     for (const sh of g.shots) {
       const hn = nodePos(g, sh, sh.x, sh.y);
@@ -5695,6 +5735,7 @@ function step(g) {
                                   PLAYER_NODE, pn.x, pn.y);
       if (!sh.dead && overlaps) {
         contactShots.push(sh); playerAttribution.add(sh); lethalContact = true;
+        lethalSources.push("shot:" + sh.kind);
       }
     }
     for (const a of g.air) {
@@ -5702,6 +5743,7 @@ function step(g) {
       if (a.alive && nodesTouch(PLAYER_NODE, pn.x, pn.y,
                                 nodeExtent(a), an.x, an.y)) {
         contactAir.add(a); playerAttribution.add(a); lethalContact = true;
+        lethalSources.push("air:" + a.kind);
       }
     }
     for (const s of g.spawns) {
@@ -5712,14 +5754,16 @@ function step(g) {
             nodesTouch(PLAYER_NODE, pn.x, pn.y,
                        nodeExtentKey("boss"), sn.x, sn.y)) {
           contactBoss.add(s); lethalContact = true;
+          lethalSources.push("boss");
         }
         for (const q of s.parts || []) {
           if (!q.entered || q.alive === false) continue;
           const qp = bossPartPosition(s, q, scrollTop(g));
           const qn = nodePos(g, q, qp.x, qp.y);
           if (nodesTouch(PLAYER_NODE, pn.x, pn.y,
-                         nodeExtentKey("bossPart"), qn.x, qn.y))
-            lethalContact = true;
+                         nodeExtentKey("bossPart"), qn.x, qn.y)) {
+            lethalContact = true; lethalSources.push("bossPart:" + q.id);
+          }
         }
         continue;
       }
@@ -5730,7 +5774,7 @@ function step(g) {
                                  nodeExtent(s), sn.x, sn.y);
       if (overlap) playerAttribution.add(s);
       if (s.beh === "mill" && overlap) {
-        contactMill.add(s); lethalContact = true;
+        contactMill.add(s); lethalContact = true; lethalSources.push("mill");
       }
     }
     for (const h of g.hazards) {
@@ -5740,7 +5784,7 @@ function step(g) {
                                  nodeExtent(h), hn.x, hn.y);
       if (overlap) playerAttribution.add(h);
       if (h.kind === "proxfrag" && overlap) {
-        contactFrag.add(h); lethalContact = true;
+        contactFrag.add(h); lethalContact = true; lethalSources.push("frag");
       } else if (h.kind === "minecore" && !h.consumed && overlap) {
         contactCore.add(h);
       }
@@ -5806,6 +5850,7 @@ function step(g) {
       !((p.bubbleTimer | 0) || (p.inv | 0))) {
     queueTownCollisionEvent(p, TOWN_EVENT_PLAYER_CONTACT);
     p.collisionLethal = true;
+    p.lethalSource = lethalSources.join(",");
   }
 
   for (const bm of g.booms) bm.t++;
