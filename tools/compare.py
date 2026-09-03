@@ -147,7 +147,8 @@ def remake_frames(checkpoint):
                 };
               }
               for (let i = 0; i < cp.ticks; i++) step(g);
-              if (Math.floor(g.scroll) !== cp.row)
+              // radek je v souradnicich prvni mapy (nad ni jsou dalsi zony)
+              if (Math.floor(g.scroll) - (g.rowOffset | 0) !== cp.row)
                 throw new Error("scroll " + g.scroll + " != row " + cp.row);
 
               const canvas = document.querySelector('#game');

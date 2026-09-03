@@ -68,8 +68,8 @@ Nesedi nebo neoverene:
 
 ## Co delat dal (poradi)
 
-1. Retezeni map (bod 1) — nejvetsi viditelny strukturalni rozdil a nutna
-   podminka pro „hrat jako original".
+1. ~~Retezeni map (bod 1)~~ — hotovo tyz den (`parseMapChain`, viz
+   GAPS 9); dvojice t273..t321 sedi na teren DESERTu i jeho prvni objekty.
 2. Zachyt tanku po 1 s a oprava MEDTANK.
 3. Vrstva vylepseni (interpolace poloh mezi tiky, subpixelovy scroll, volba
    50/60/120 Hz, skalovani), prepinac original/vylepseno.

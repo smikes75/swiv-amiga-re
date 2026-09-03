@@ -26,8 +26,11 @@ Engine maze pas stripu do rovin 1 a 3 hodnotou -1 (0x34f2, strip je
 kruhovy 320 radku, 0x341a).
 
 Slovnik urovne (tabulka 0x384c v AMPROG, 6 B na uroven: word ID pam
-souboru 90+n, word offset slovniku, word krok map-readeru -> fp@(144),
-0x35d4: fp@(3586) += fp@(144); rychlost scrollu je konstantni 0x4000
+souboru 90+n, word offset slovniku, word MEZERA k dalsi mape -> fp@(144):
+0x35d4 ji po konci PAM pricte k citaci ctecky jednou, tj. zaznamy dalsi
+mapy zacinaji `vyska - mezera` pred koncem predchozi (TOWN 225, DESERT/
+GRASS/ICE 96, RIVER 97, SCIFI 32); zony na sebe navazuji bez preruseni,
+viz docs/TOWN-SURVEY.md; rychlost scrollu je konstantni 0x4000
 z 0x1da6 = 0.25 px/VBL) preklada
 lokalni ID na graficke slovo `snimek<<9 | soubor` (dekoduje 0x48c0).
 

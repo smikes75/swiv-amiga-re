@@ -489,7 +489,11 @@ def main():
                 id: "ground", primary: popup, x: 100, y: 70, z: 0
               }, 0);
 
+              // nad TOWN jsou zretezene dalsi zony: hashe jen z vyrezu TOWN
               const mapIndex = state.g.mapIndex, width = 320;
+              const off = state.g.rowOffset | 0, townH = state.g.mapH - off;
+              const townIndex = mapIndex.subarray(off * width,
+                                                  (off + townH) * width);
               const colorRows = (top, rows) => {
                 const rgba = colorizeIndexedRows(
                   mapIndex, width, state.mapMeta.height, margin,
@@ -521,10 +525,10 @@ def main():
               // Toto okno skutecne protina tile pres checkpoint y=2127.
               // Stary RGBA vystup musi v kroku B zustat jiny; indexova cesta
               // uz ale musi dat spravnou scanline paletu pro dalsi krok.
-              const diffTop = 1454, diffRows = 21;
-              const correctRgb = colorRows(diffTop, diffRows);
+              const diffTop = 1454, diffRows = 21;   // radky TOWN
+              const correctRgb = colorRows(diffTop + off, diffRows);
               const legacyRgba = state.g.big.getContext('2d').getImageData(
-                0, 0, width, state.g.mapH).data;
+                0, off, width, townH).data;
               const legacyRgb = new Uint8Array(width * diffRows * 3);
               let paletteMismatches = 0;
               for (let i = 0; i < width * diffRows; i++) {
@@ -570,7 +574,7 @@ def main():
               };
               let runtimeRgb;
               try {
-                g.scroll = diffTop - runtimeScreenY;
+                g.scroll = diffTop + off - runtimeScreenY;
                 g.frac = 0; g.fadeBlack = 0; g.fadeWhite = 0;
                 g.fadeDir = 0; g.over = false; g.won = false;
                 g.spawns = []; g.effects = []; g.hazards = []; g.air = [];
@@ -603,7 +607,8 @@ def main():
               return {
                 town: {
                   name: pamName, height: parsed.height,
-                  lead: parsed.lead, startScroll: state.g.scroll,
+                  lead: parsed.lead,
+                  startScroll: state.g.scroll - (state.g.rowOffset | 0),
                   objectColors: Array.from(
                     state.copperChecks[0].pal.slice(0, 10)),
                   objectColors104: Array.from(
@@ -655,7 +660,7 @@ def main():
                   sum: bobDst.reduce((n, color) => n + color, 0)
                 },
                 mapIndex: {
-                  size: [width, state.g.mapH], full: fnv1a(mapIndex),
+                  size: [width, townH], full: fnv1a(townIndex),
                   initial: fnv1a(initialIndex), initialRgb: fnv1a(initialRgb),
                   legacyRgba: fnv1a(legacyRgba),
                   differing: {
@@ -746,11 +751,15 @@ def main():
             # RGB hodnoty jdou cistě z PAM checkpointu (vcetne objektovych
             # barev z ry 104); legacy varianta se lisi jen na hranici
             # checkpointu (21 pixelu na kontrolnich 21 radcich).
+            # Hashe vyrezu TOWN z retezene mapy: hornich 289 radku (MARGIN +
+            # prekryv 225 px z tabulky urovni, prvni dlazdice DESERTu na
+            # y 3312) uz patri DESERTu, proto se full/legacyRgba lisi od
+            # samostatne TOWN (3d426f35 / b6e13bf7).
             expect(renderer_core["mapIndex"] == {
                      "size": [320, 3761],
-                     "full": "3d426f35", "initial": "5870b220",
+                     "full": "0838b308", "initial": "5870b220",
                      "initialRgb": "89a47b97",
-                     "legacyRgba": "b6e13bf7",
+                     "legacyRgba": "885adf87",
                      "differing": {
                        "top": 1454, "rows": 21,
                        "correct": "7f08f24f", "legacy": "2813671f",
@@ -3396,7 +3405,8 @@ def main():
               // zahrnuji i neviditelny _STOP#3/flag0x14 na scrollu1553.
               const terrainRespawns = [3345, 827, 843, 1553, 1607]
                 .map(scroll => {
-                  const r = findPlayerRespawn({ scroll,
+                  const r = findPlayerRespawn({
+                    scroll: scroll + (live.rowOffset | 0),
                     terrainOpen: live.terrainOpen, mapW: live.mapW });
                   return [scroll, r.x, r.y, r.probes];
                 });
@@ -3412,7 +3422,7 @@ def main():
                 terrainOpen: fullyBlocked, mapW: 320 });
               const integratedRespawn = makeGame({ alive: false,
                 respawnT: 1, x: 40, y: 40 });
-              integratedRespawn.scroll = 1607;
+              integratedRespawn.scroll = 1607 + (live.rowOffset | 0);
               integratedRespawn.terrainOpen = live.terrainOpen;
               integratedRespawn.mapW = live.mapW;
               respawnPlayer(integratedRespawn);
@@ -4340,10 +4350,10 @@ def main():
                    "TRAIN sy=272 nema posledni N field a N+1 frozen cleanup: %s"
                    % fresh_hazard_fields["trainBoundary"])
 
-            summary = page.evaluate("""() => ({
+            summary = page.evaluate("""() => { const townSpawns = state.g.spawns.filter(s => !s.mapIndex); return ({
               dispatch: state.behaviorDispatch.size,
               mapObjects: state.mapMeta.objects,
-              spawns: state.g.spawns.length,
+              spawns: townSpawns.length,
               lives: state.g.lives,
               firstSpawnHud: hudStatusText({ lives: state.g.lives,
                 player: { tokenCount: 0 }, score: 0 }),
@@ -4353,23 +4363,23 @@ def main():
                 hudStatusText({ lives: 4, player: { tokenCount: 0 }, score: 10000 }),
                 hudStatusText({ lives: 4, player: { tokenCount: 0 }, score: 99999 })
               ],
-              behaviors: state.g.spawns.reduce((counts, s) => {
+              behaviors: townSpawns.reduce((counts, s) => {
                 counts[s.beh] = (counts[s.beh] || 0) + 1;
                 return counts;
               }, {}),
-              missing: state.g.spawns.filter(s => s.coroutine === null).length,
-              camoguns: state.g.spawns.filter(s => s.beh === 'camogun').length,
-              camType1: state.g.spawns.filter(s => s.beh === 'camogun' &&
+              missing: townSpawns.filter(s => s.coroutine === null).length,
+              camoguns: townSpawns.filter(s => s.beh === 'camogun').length,
+              camType1: townSpawns.filter(s => s.beh === 'camogun' &&
                                                s.typ === 1).length,
-              camType2: state.g.spawns.filter(s => s.beh === 'camogun' &&
+              camType2: townSpawns.filter(s => s.beh === 'camogun' &&
                                                s.typ === 2).length,
-              wrongCam: state.g.spawns.filter(s => s.beh === 'camogun' &&
+              wrongCam: townSpawns.filter(s => s.beh === 'camogun' &&
                                                 s.coroutine !== 0xac12).length,
               animActual: [0xA6E8, 0xA72A, 0xC7FC, 0xC82E, 0xCAE2]
                 .filter(o => state.anims.some(a => a.offset === o)).length,
               animFalse: [0xA6E6, 0xA728, 0xC7FA, 0xC82C, 0xCAE0]
                 .filter(o => state.anims.some(a => a.offset === o)).length
-            })""")
+            }); }""")
             expect(summary["dispatch"] == 73, "dispatch nema 73 zaznamu")
             expect(summary["mapObjects"] == 155, "TOWN nema 155 mapovych objektu")
             expect(summary["lives"] == 4 and

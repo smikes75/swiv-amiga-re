@@ -349,10 +349,14 @@ Otevrene zustava:
 
 Pruchod celym levelem (`TOWN-SURVEY.md`) ukazal dva systemove rozdily:
 
-- Original po konci `TOWN.PAM` streamuje `DESERT.PAM` bez preruseni (teren
-  DESERTu od t≈289, jeho objekty vcetne GOOSE nosice uz v t273). Prepis
-  konci na `scroll <= 0` napisem LEVEL COMPLETE. Chybi retezeni map podle
-  tabulky `0x384c` se slovnikem a paletou dalsiho PAM.
+- ~~Original po konci `TOWN.PAM` streamuje `DESERT.PAM` bez preruseni~~ —
+  **uzavreno 2026-09-03**: `parseMapChain` retezi vsech sedm PAM podle
+  tabulky `0x384c` (mezera = treti slovo, paleta se nenuluje, dalsi mapa
+  prekresli prekryv), `g.rowOffset` drzi radky TOWN pro checkpointy a
+  testy, `g.levelPhase` roste jako `fp@(184)` (ctecka 256 px nad oknem).
+  Dvojice t273..t321 sedi na teren DESERTu. Chovani objektu DESERTu a dal
+  zustava neprepsane (779 „unimplemented" spawnu), LEVEL COMPLETE zbyva
+  jen na konci FINAL.
 - Scroll originalu se pricita jednou za iteraci hlavni smycky (`0x291e`),
   objekty integruji rychlost × ubehle VBL (`0x62fe`); pri zatezi A500 scroll
   zpomali (64–98 px za 8 s misto 100). Prepis bezi konstantne 50 Hz.

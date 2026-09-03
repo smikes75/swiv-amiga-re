@@ -270,7 +270,10 @@ function levelInfo(prog, lv) {
   const end = lv < 6 ? LEVTAB + dv.getUint16(LEVTAB + (lv + 1) * 6 + 2) : tab + 512;
   const dico = [];
   for (let o = tab; o < end; o += 2) dico.push(dv.getUint16(o));
-  return { fid, dico };
+  // treti slovo: 0x35d4 jej po konci PAM pricte k citaci ctecky = mezera
+  // (prekryv) k dalsi mape, ne rychlost scrollu
+  const step = dv.getUint16(LEVTAB + lv * 6 + 4);
+  return { fid, dico, step };
 }
 
 /* Originalni lookup 0x758a: tabulka na 0x7462 obsahuje dvojice
@@ -314,10 +317,11 @@ const IMPLEMENTED_BEHAVIORS = new Map([
   [0x0017, { coroutine: 0xC78A, id: "boss" }],
 ]);
 
-function parsePam(pam, dico) {
+function parsePam(pam, dico, pal0) {
   const dv = new DataView(pam.buffer, pam.byteOffset, pam.byteLength);
   const tiles = [], objs = [], checks = [];
-  let pal = new Array(16).fill(0), y = 0, lead = -1;
+  // registry palety se mezi mapami nenuluji: dalsi PAM dedi posledni stav
+  let pal = pal0 ? pal0.slice() : new Array(16).fill(0), y = 0, lead = -1;
   for (let o = 0; o + 4 <= pam.length; o += 4) {
     const d = dv.getUint32(o);
     if (d === 0) break;
@@ -479,14 +483,52 @@ function colorizeIndexedField(fieldIndex, width, rows, mapHeight, margin,
   return out;
 }
 
-function renderMap(state, lv, withObjects) {
+/* Zony na sebe navazuji bez preruseni (streamovaci task 0x356e): po konci
+   PAM (D == 0 -> st fp@(167), ctecka 0x35a2 skonci) 0x35d4 pricte k citaci
+   ctecky treti slovo tabulky urovni (TOWN 225, DESERT/GRASS/ICE 96,
+   RIVER 97, SCIFI 32, FINAL 1000) a 0x3800 nacte dalsi PAM i se slovnikem;
+   jeho uvodni prikazy spotrebuji vlastni lead. Zaznamy dalsi mapy tedy
+   zacinaji `vyska - mezera` pred koncem predchozi, jeji dlazdice se kresli
+   pres konec te predchozi a paleta pokracuje bez nulovani. Smycka urovne
+   0x1db4 konci jen bez hracu (0x27de), zadny "level complete" neexistuje.
+   Zmereno baseline (docs/TOWN-SURVEY.md): teren DESERTu od t~289, jeho
+   objekty (GOOSE nosic, TILT, MEDTANK) uz v t273 nad koncem TOWN. */
+const CHAIN_MAPS = 7;
+function parseMapChain(state, lv, count = CHAIN_MAPS) {
+  const maps = [];
+  let base = 0, pal = null, prevStep = 0, prevHeight = 0;
+  for (let k = lv; k < Math.min(7, lv + count); k++) {
+    const { fid, dico, step } = levelInfo(state.prog, k);
+    const name = state.order[fid];
+    const pam = unpackFile(state.adf, state.files.find(f => f.name === name));
+    const parsed = parsePam(pam, dico, pal);
+    if (maps.length) base += prevHeight - prevStep;
+    maps.push({ lv: k, name, parsed, base, step });
+    if (parsed.checks.length) pal = parsed.checks[parsed.checks.length - 1].pal;
+    prevStep = step; prevHeight = parsed.height;
+  }
+  const last = maps[maps.length - 1];
+  const height = last.base + last.parsed.height;
+  const shift = (arr, b, extra) =>
+    arr.map(o => Object.assign({}, o, { y: o.y + b }, extra));
+  const tilesByMap = maps.map(m => shift(m.parsed.tiles, m.base));
+  const objs = [].concat(...maps.map((m, i) =>
+    shift(m.parsed.objs, m.base, { mapIndex: i })));
+  const checks = [].concat(...maps.map(m => shift(m.parsed.checks, m.base)))
+    .sort((a, b) => a.y - b.y);
+  return { maps, tilesByMap, objs, checks, height,
+           lead: maps[0].parsed.lead, name: maps[0].name,
+           firstObjects: maps[0].parsed.objs.length,
+           // radky prvni mapy jsou posunute o vysku map nad ni
+           rowOffset: height - maps[0].parsed.height,
+           // konce map v y (ctecka je pak 256 px nad oknem: fp@(184)++)
+           mapEnds: maps.slice(0, -1).map(m => m.base + m.parsed.height) };
+}
+function renderMap(state, lv, withObjects, count = CHAIN_MAPS) {
   const prog = state.prog, order = state.order || (state.order = gameOrder(prog));
-  const { fid, dico } = levelInfo(prog, lv);
-  const pamName = order[fid];
-  const pam = unpackFile(state.adf, state.files.find(f => f.name === pamName));
-  const parsed = parsePam(pam, dico);
-  // Zmerena objektova paleta je zatim prokazana pouze pro level 1/TOWN.
-  const { tiles, objs, checks, height } = parsed;
+  const parsed = parseMapChain(state, lv, count);
+  const pamName = parsed.name;
+  const { tilesByMap, objs, checks, height } = parsed;
   // viditelne okno hry = hriste x 0..320: pointer bez posunu, fetch
   // 40 B, modulo 4 na konci radky -> skryty okraj je cely vpravo
   const XOFF = 0, MARGIN = 160;
@@ -571,14 +613,17 @@ function renderMap(state, lv, withObjects) {
       }
     }
   }
-  for (const t of tiles) {
-    paintTerrainControl(t.x, t.y, t.gfx);
-    blit(t.x, t.y, t.gfx);
-  }
+  // mapy v poradi ctecky: dalsi mapa prekresli prekryv predchozi
+  let ntiles = 0;
+  for (const tiles of tilesByMap)
+    for (const t of tiles) {
+      paintTerrainControl(t.x, t.y, t.gfx);
+      blit(t.x, t.y, t.gfx); ntiles++;
+    }
   if (withObjects !== false)
     for (const t of objs) blit(t.x, t.y, t.gfx);
-  return { px, mapIndex, terrainOpen, w: W, h: H, name: pamName,
-           tiles: tiles.length, objs: objs.length };
+  return { px, mapIndex, terrainOpen, w: W, h: H, name: pamName, parsed,
+           tiles: ntiles, objs: objs.length };
 }
 
 /* ---- ProTracker prehravac (podmnozina efektu, ktere SWIV moduly
@@ -4733,9 +4778,7 @@ function startGame(lv) {
   big.width = m.w; big.height = m.h;
   big.getContext("2d").putImageData(new ImageData(m.px, m.w, m.h), 0, 0);
 
-  const { fid, dico } = levelInfo(state.prog, lv);
-  const pam = unpackFile(state.adf, state.files.find(f => f.name === state.order[fid]));
-  const parsed = parsePam(pam, dico);
+  const parsed = m.parsed;                    // retez map od `lv` dal
   // paleta pro sprity: prvni kompletni checkpoint
   const rgb = v => [((v >> 8) & 15) * 17, ((v >> 4) & 15) * 17, (v & 15) * 17];
   state.copperChecks = parsed.checks;
@@ -4745,7 +4788,9 @@ function startGame(lv) {
 
   const MARGIN = 160, XOFF = 0;
   state.mapMeta = { height: parsed.height, margin: MARGIN,
-                    objects: parsed.objs.length };
+                    objects: parsed.firstObjects,
+                    objectsTotal: parsed.objs.length,
+                    rowOffset: parsed.rowOffset };
   // spawny -> herni souradnice (img prostor mapy)
   if (!state.anims)
     state.anims = scanAnims(state.prog, state.order,
@@ -4771,13 +4816,18 @@ function startGame(lv) {
         x: o.x + XOFF, y: (parsed.height + MARGIN - o.y),
         typ: o.typ, alive: true, born: false, beh, st: 0, t: 0, hp: 2,
         cool: 60 + ((o.x * 7) % 90),
-        anim: an, apos: 0, at: 0, fr: -1,
+        anim: an, apos: 0, at: 0, fr: -1, mapIndex: o.mapIndex | 0,
       };
     });
 
   const g = state.g = {
     lv, big, mapIndex: m.mapIndex, terrainOpen: m.terrainOpen,
     mapW: m.w, spawns, mapH: m.h,
+    // radky prvni mapy = img radek - rowOffset (checkpointy, testy)
+    rowOffset: parsed.rowOffset,
+    // fp@(184) roste, kdyz ctecka (256 px nad oknem) projde konec mapy
+    levelPhase: 0,
+    junctionRows: parsed.mapEnds.map(e => parsed.height + MARGIN - e + 256),
     // Uvodni davka PAM spotrebuje parsed.lead px drive, nez prijde prvni
     // skutecny mapovy zaznam. Original tento prazdny usek neukazuje
     // (TOWN: 3345 - 96, potvrzeno korelaci baseline t16..t23).
@@ -4917,6 +4967,10 @@ function step(g) {
     g.scroll = 0; scrollDelta = -oldTop;
     g.won = true; g.over = true;
   }
+  // 0x35d4: kazdy konec mapy zvysi fp@(184) (obtiznost 0x1cd4, max 6)
+  while ((g.levelPhase | 0) < (g.junctionRows || []).length &&
+         scrollTop(g) <= g.junctionRows[g.levelPhase | 0])
+    g.levelPhase = (g.levelPhase | 0) + 1;
   const p = g.player;
   ensureSmartPulseTasks(g);
   const collisionResumeTasks = townCollisionResumeTasks(g);

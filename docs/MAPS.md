@@ -10,11 +10,21 @@ renderer is `tools/map.py`, and the same code in JS powers the
 
 7 entries of 6 B: `word` map file ID (90–96 = TOWN…FINAL in the order
 of the internal name table at `0x0004`), `word` tile-dictionary offset
-(relative to `0x384C`), `word` map-reader prefetch step — it lands in
-`fp@(144)` (`0x381c`) and `0x35d4` adds it to the reader's lookahead
-counter `fp@(3586)`; TOWN has `0xe1`. It is **not** the scroll speed:
+(relative to `0x384C`), `word` **gap to the next map** — it lands in
+`fp@(144)` (`0x381c`) and `0x35d4` adds it to the reader counter
+`fp@(3586)` exactly once, after the PAM's end record (streaming task
+`0x356e`: `0x3800` load → `0x3596` read to `D == 0` → `0x35d4` advance
+and `fp@(184)++` → next PAM). The next map's records therefore start
+`height − gap` before the end of the previous one (TOWN 0xe1 = 225,
+DESERT/GRASS/ICE 96, RIVER 97, SCIFI 32, FINAL 1000), its own leading
+palette commands consume its lead, palette registers are not reset, and
+its tiles overwrite the overlap. Zones chain without any break; the level
+loop `0x1db4` ends only when no player is in the game (`0x27de`). Verified
+on baseline frames t273..t321 (DESERT terrain from t≈289, DESERT objects
+already visible over TOWN's end). It is **not** the scroll speed:
 that is the constant `0x4000` written to `fp@(3528)` at `0x1da6`
-(0.25 px per VBL = 12.5 px/s, confirmed by baseline frames).
+(0.25 px per VBL = 12.5 px/s nominal; the A500 skips frames under load,
+see `TOWN-SURVEY.md`).
 
 The **tile dictionary** is an array of words; the map addresses tiles
 with an 8-bit local ID and the dictionary translates it to a
