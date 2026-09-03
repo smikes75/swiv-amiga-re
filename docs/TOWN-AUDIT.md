@@ -136,8 +136,9 @@ Nejvetsi merene rozdily (podrobne v sekci 3 a 6):
 
 Hrac: vrtulnik `0x9410` ma tridu `0x48` (bity 3, 6 = P1), jeep `0x9090`
 tridu `0x50` (bity 4, 6) a pri skoku prepina na `0x48`. Vrtulnik
-instaluje smrt `0x9306` do udalosti 1 i 2 (`0x654c`); jeep do udalosti
-2 normalne a do udalosti 1 pri skoku. Tridy nepratel v TOWN:
+instaluje smrt `0x9306` jen do udalosti 1 (`0x654c` → `+518`); jeep do
+udalosti 2 normalne (`0x6558` → `+526`) a do udalosti 1 pri skoku.
+Tridy nepratel v TOWN:
 
 | objekt (a2c6) | trida | HP | body | cost | zabije vrtulnik? |
 |---|---|---|---|---|---|
@@ -262,7 +263,7 @@ neni prectene. Pro prepis: **boss nedava zadne body** (`d4 = 0` na
 | blikani ochrany | bit 3 `+108` → hit-flash (`0x92e4`): 8 tiku bile / 8 normalne | `inv > 40` bile, pak `tick & 4` |
 | smrt | udalost 1/2 → `0x9306`: bez ochrany i stitu → exploze `0x88fc` (16 EXPL1 ve spirale po 2 ticich) | ano |
 | respawn | citac zivotu `+68` (−4/zivot, start −16 = 4), cekani **100 snimku** (`0x714e`) | 1200 ms |
-| start zbrane | `+100 = 2`, `+98 = 12` (`0x6fde`); pri spawnu tabulka `0x70c0` podle `+102/5` → `+98 = 11` | 1 strela |
+| start zbrane | `0x6fde` zapisuje `+100 = 2`, `+98 = 12`; MEGA TRAINER (MISSILES, vychozi 1) to prepise na **1** (zmereno 2026-09-01: 1 strela, s MISSILES=3 tri); pri spawnu tabulka `0x70c0` podle `+102/5` → `+98 = 11` | 1 strela |
 | pocet strel | `= +100` (`0x8ad0`–`0x8b1e`: `subq #1` + `dbf`) → **2** na start | 1 |
 | zbran | potomek `0x939c`: uhel 192, pali na bit 5 vstupu pres `0x8aa0` | — |
 | extra zivot | 10 000, pak +30 000 (`0x7084`, `0x7116`) | shodne |
@@ -376,8 +377,8 @@ pro zbyvajici stav je autoritativni [GAPS](GAPS.md) a
 3. **Smart bomba**: bily zablesk 256 → −4/snimek a smrt vsech objektu s
    aktivnim `+534` (vcetne bodu); imunity podle `st +534`.
 4. **Hrac**: 3 px/t, snimky 0..4 period 1, clamp 4..316 / 4..248,
-   ochrana 200 + blikani 8/8, respawn 100 snimku, start 2 strely, stin
-   `(+16,+32)`.
+   ochrana 200 + blikani 8/8, respawn 100 snimku, start 1 strela
+   (trainer MISSILES; kod sam by dal 2), stin `(+16,+32)`.
 5. **HOMING sestrelitelna** (1 HP, 7 bodu).
 6. **GOOSE**: HP od `sy 72` (ne az po slozeni); dokovani podle `0xcb78`
    (75 snimku dolu, homing 2 px/t, dvojity krok, snap); pod `0xcaac`;
@@ -415,7 +416,8 @@ pro zbyvajici stav je autoritativni [GAPS](GAPS.md) a
 - `BEHAVIORS.md` MINE jadro: chybi pickup/stit (1.1).
 - `BEHAVIORS.md` zbran: „tier = weapon counter / 5" → tier = `+102 / 5`
   (pocet sebranych bonusu) a aplikuje se jen pri spawnu; „start 1"
-  vs kod `+100 = 2`.
+  vs kod `+100 = 2` — vyreseno 2026-09-01: trainer SWIVFIX prepisuje
+  start na 1, kod sam by dal 2.
 - `BEHAVIORS.md` GOOSE: „dokud se sklada, nema HP" → HP 25 od `0xc842`
   (po zastaveni, pred dokoncenim skladani); doplnit dokovani a pod.
 - `ENGINE.md` `+364` „draw priority" → cull margin; `+376` „handler" →

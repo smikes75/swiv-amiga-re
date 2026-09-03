@@ -10,7 +10,11 @@ renderer is `tools/map.py`, and the same code in JS powers the
 
 7 entries of 6 B: `word` map file ID (90–96 = TOWN…FINAL in the order
 of the internal name table at `0x0004`), `word` tile-dictionary offset
-(relative to `0x384C`), `word` scroll speed.
+(relative to `0x384C`), `word` map-reader prefetch step — it lands in
+`fp@(144)` (`0x381c`) and `0x35d4` adds it to the reader's lookahead
+counter `fp@(3586)`; TOWN has `0xe1`. It is **not** the scroll speed:
+that is the constant `0x4000` written to `fp@(3528)` at `0x1da6`
+(0.25 px per VBL = 12.5 px/s, confirmed by baseline frames).
 
 The **tile dictionary** is an array of words; the map addresses tiles
 with an 8-bit local ID and the dictionary translates it to a

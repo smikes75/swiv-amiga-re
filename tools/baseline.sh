@@ -13,10 +13,12 @@
 # <sekundy> se pocitaji OD STISKU FIRE (t=85). Vystup <prefix>_tN.png
 # a syrovy <prefix>_tN.raw (RGB24 716x285 vyrez textury emulatoru).
 # Emulator je deterministicky: stejny cas = bitove stejny snimek.
-# Pro dlouhy vizualni audit lze nastavit SWIV_BASELINE_INVULNERABLE=1;
-# na MEGA TRAINERU tim prepneme F1 UNLIMITED LIVES a F3 NO COLLISIONS.
-# Rezim SWIV_BASELINE_UNLIMITED_LIVES=1 prepne pouze F1, takze zachova
-# nativni kolize a palbu pro audit nepratelskych projektilu.
+# Pro dlouhy vizualni audit lze nastavit SWIV_BASELINE_TRAINER=1: na
+# MEGA TRAINERU prepne F1 UNLIMITED LIVES a F3 KEEP WEAPONS (overeno
+# snimkem traineru po klavesach 80/82 - zadne "no collisions" trainer
+# nema, hrac v tomto rezimu normalne umira). SWIV_BASELINE_UNLIMITED_LIVES=1
+# prepne pouze F1. Oba rezimy meni herni podminky (zivoty, sila zbrane po
+# smrti), takze nejsou kanonicky cisty gameplay baseline.
 set -e
 D=$(cd "$(dirname "$0")/.." && pwd)
 HL="/Users/mik/claude46/Amiga/reference/tools-bin/VAHeadless"
@@ -32,7 +34,7 @@ for t in "$@"; do
     echo "wait 32"
     echo "mouse1 press left"
     echo "wait 8"
-    if [ "${SWIV_BASELINE_INVULNERABLE:-0}" = 1 ]; then
+    if [ "${SWIV_BASELINE_TRAINER:-0}" = 1 ]; then
       echo "keyboard press 80"
       echo "wait 1"
       echo "keyboard press 82"

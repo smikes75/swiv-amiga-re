@@ -24,7 +24,9 @@ tmave krapani terenu. Hustoty zmerene z videa skutecne hry: rovina 0
 render pouziva deterministicky LCG (v Pythonu i JS tentyz).
 
 Slovnik urovne (tabulka 0x384c v AMPROG, 6 B na uroven: word ID pam
-souboru 90+n, word offset slovniku, word rychlost scrollu) preklada
+souboru 90+n, word offset slovniku, word krok map-readeru -> fp@(144),
+0x35d4: fp@(3586) += fp@(144); rychlost scrollu je konstantni 0x4000
+z 0x1da6 = 0.25 px/VBL) preklada
 lokalni ID na graficke slovo `snimek<<9 | soubor` (dekoduje 0x48c0).
 
 Scroll citac klesa; mapa se tedy stavi ODSPODU a soucasti kresleni je

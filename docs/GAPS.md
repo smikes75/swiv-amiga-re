@@ -148,7 +148,8 @@ Hloubkovy audit je v [TOWN-AUDIT](TOWN-AUDIT.md). Prepsano tehoz dne:
   granaty); pozemni objekty ho uz nezabiji
 - jadro miny = stit (`0x98c4`, `0x92a0`, orb `0x98f2`) a smart bomba
 - hrac `0x9410`: 3 px/t, snimky 0..4, clamp, ochrana 200 s blikanim 8/8,
-  respawn 100 snimku, start 2 strely, stin `(+16,+32)`
+  respawn 100 snimku, start 1 strela (MEGA TRAINER MISSILES=1 prepise
+  `0x6fde`; zmereno baseline), stin `(+16,+32)`
 - HOMING sestrelitelna (1 HP, 7 bodu); hit flash u nepratel
 
 GOOSE (dokovani `0xcb78`, pod `0xcaac`, odhozeni casti, HP od zastaveni,

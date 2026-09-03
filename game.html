@@ -4732,7 +4732,13 @@ function startGame(lv) {
               bubbleTimer: 0, bubbleFrame: 9, bubbleZ: 0, bubblePhase: 0,
               bubbleBound: null,
               bank: 0, cool: 0,
-              weapon: 2 /* 0x6fde +100; bonus typu 4 dava 6 */,
+              // +100: 0x6fde zapisuje 2, ale MEGA TRAINER cracku SWIVFIX
+              // (F5/F6 MISSILES, vychozi 1) startovni hodnotu prepisuje.
+              // Zmereno baseline snimky s drzenym fire: vychozi = jedna
+              // strela (hires sloupce 320-323), MISSILES=3 = tri strely na
+              // 156/160/164 = licha tabulka 0x8d46. Baseline i hrac maji
+              // vychozi trainer, proto 1; cisty kod by dal 2.
+              weapon: 1 /* +100; bonus typu 4 dava 6 */,
               tokenCount: 0 /* +102: vsechny pickupy, strop 19; HUD /5 + 2 */,
               mode: 0 /* +104 */, reload: 12 /* 0x6fde +98 */,
               rank: 0 /* +110: difficulty accumulator */,

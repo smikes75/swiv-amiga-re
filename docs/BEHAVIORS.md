@@ -340,9 +340,13 @@ Countdown bezi i mimo viewport az do bezneho cullu na `sy>=320`.
 - vrtulnik i jeep pouzivaji stejny dart system; vrtulnik ma smer zamceny
   nahoru (dir 6), jeep otaci vezi (`0x93b2`, vychozi uhel 192)
 - **9 px/t** (zmereno: rozestup salv 97 px = 9 px/t × kadence 11 ✓)
-- pocet strel = sila `+100` (`0x8ad0`: `subq #1` + `dbf`); start je
-  **2** (`0x6fde`; drivejsi „1 z videa" byl omyl — sude sily jsou pary
-  4 px od sebe) a po `0x70c8` ma kadenci 11. Tabulka
+- pocet strel = sila `+100` (`0x8ad0`: `subq #1` + `dbf`). Kod na
+  `0x6fde` zapisuje **2**, ale MEGA TRAINER cracku SWIVFIX (volba F5/F6
+  MISSILES, vychozi **1**) startovni hodnotu prepise: baseline snimek
+  s drzenym fire ukazuje jednu strelu (hires sloupce 320–323), s
+  MISSILES=3 tri strely na x 156/160/164 = licha tabulka `0x8d46`.
+  Puvodni „start 1 z videa" bylo tedy spravne pozorovani; prepis
+  startuje s 1 a po `0x70c8` ma kadenci 11. Tabulka
   (2,11)(3,10)(4,10)(5,8) se podle `+102/5` pouzije jen pri (re)spawnu
   jako `power=min(power,cap)`; pri 2P je efektivni kadence
   `max(ulozena,10)` (`0x728a`)

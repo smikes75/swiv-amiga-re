@@ -235,14 +235,20 @@ vstupni sekvence (emulovane sekundy od zapnuti):
 | ~101 | — | **start urovne TOWN** (fade z cerne; fire+17 uz bezi) |
 
 Pro dlouhy vizualni audit pouzij
-`SWIV_BASELINE_INVULNERABLE=1 tools/baseline.sh <prefix> <sekundy...>`.
-Skript pak na traineru pred startem prepne presne pojmenovane volby
-**F1 UNLIMITED LIVES** a **F3 NO COLLISIONS** na YES; meni to herni
-podminky, proto je tento rezim urceny pro prujezd/checkpointy celeho levelu,
-ne jako kanonicky cisty gameplay baseline.
-Pro kontrolu nepratelske palby a kolizi lze misto toho pouzit
-`SWIV_BASELINE_UNLIMITED_LIVES=1`: prepne pouze **F1 UNLIMITED LIVES**,
-zatimco F3 zustane na NO.
+`SWIV_BASELINE_TRAINER=1 tools/baseline.sh <prefix> <sekundy...>`.
+Skript pak na traineru pred startem prepne **F1 UNLIMITED LIVES** a
+**F3 KEEP WEAPONS** na YES (overeno snimkem traineru po klavesach
+80/82; volba „no collisions" v traineru neexistuje — drivejsi popis byl
+chybny a hrac v tomto rezimu normalne umira). Meni to herni podminky
+(zivoty, sila zbrane po smrti), proto je rezim urceny jen pro
+prujezd/checkpointy celeho levelu, ne jako kanonicky cisty baseline.
+`SWIV_BASELINE_UNLIMITED_LIVES=1` prepne pouze **F1 UNLIMITED LIVES**.
+Trainer ma dale **F5/F6 MISSILES** (vychozi 1; F5 snizuje, F6 zvysuje)
+a **F7/F8 AUTOFIRE RATE** (vychozi 1). **MISSILES je startovni sila
+zbrane `+100`**: s vychozim 1 leti jedna strela, s MISSILES=3 tri na
+x 156/160/164 (licha tabulka `0x8d46`) — zmereno snimky s drzenym fire.
+Kod `0x6fde` sam zapisuje 2; trainer ho prepisuje, a protoze kanonicky
+baseline bezi s vychozim trainerem, prepis startuje s 1.
 
 Overene detaily: `mouse1 press` je press+release, `joystick2 press 1`
 tlacitko **drzi** (uvolneni je `unpress 1`); smery jsou `pull
