@@ -1333,3 +1333,51 @@ polohuji v kroku hazardu, tedy o tik za rodicem (0.5 px pri 0.5 px/t).
   po hladine (parabola ~43 tiku, vrchol z 21).
 - Simulace: zrozeni 3980 na radku 64, vez v tiku +40, pet strel v tiku
   +66, ponor a tichy zanik v +180; odrazy s cakanci po ~43 ticich.
+
+### JUNTANK#1 (0x022b → 0xa0d2) — tank s vazanou vezi
+
+- `a2c6(JUNTANK#1, 36, −48, HP 15, 90 bodu, cost 18)`, `+397 |= 1`,
+  `+376 = 0x88ec` (osm chvostu), vez `0x6144(0xa12e)`, `+336 vy = 0.25`
+  a `+276 = 384`. Smycka `0xa108`: **je-li `+312` (dite) nula, `vy = 0`**
+  — zniceni veze tank zastavi; jinak jede, dokud `+276` neklesne pod
+  nulu, pak `vy = 0` a `0x62cc`.
+- **Vez `0xa12e`:** `a2c6(JUNTANK#20, 36, −48, HP 12, 90 bodu, cost 10)`,
+  `+538 = −1` (bez cullu), `+367 |= 13` (bez stinu, blika s rodicem,
+  vazane dite s ofsetem `+332/+336/+340 = (−2, −18, +1)`), rychlost 0,
+  uhel 64, `+276 = 100`. Kazdy tik `−−+276`; pri nule rovny granat
+  `0x95ca` a `+276 = 50`; je-li `+276 <= 10`, mireni na hrace
+  (`0x7312` + `0x65be` s limitem 16) a novy smerovy snimek `0xa27c`
+  (zaklad JUNTANK#20, osm smeru → #20..#27, meni i uzel).
+- Simulace: zrozeni 10260, jizda 0.25 px/t, prvni granat v tiku +100,
+  dalsi po 50 ticich; po 384 ticich stoji.
+
+### JUNTANK#2 (0x042b → 0xa592) — poklop s dronem
+
+- `a2c6(JUNTANK#2, **0**, −32, HP 0, 0 bodu, cost 5)` — trida 0, tedy
+  bez kolizi a nezasazitelny; `+397 |= 1`. Po `0x9afa(48)` smycka:
+  anim `0x0a5b4` (perioda 4, #3..#8, drzi #8) = otevreni, wait 30, dron
+  `0x6178(0xa60e)`, wait 50, anim `0x0a5e0` (#7..#2) = zavreni, wait 100;
+  dalsi kolo jen dokud je `sy <= 192` (`0xa5f8`), jinak `0x62cc`.
+- **Dron `0xa60e`:** `a2c6(JUNTANK#12, 34, −32, HP 4, 70 bodu, cost 10)`,
+  `+364 = −10`, anim `0x0a630` (perioda 8: #9, #10, #11, #14, drzi #14),
+  `+340 vz = 1` do `z >= 32`, pak `+397 &= ~1`, `vz = 0`, uhel 64 a
+  rychlost `+356 = 768` = 3 px/t. Smycka `0xa672`: mireni na hrace s
+  limitem **33** (`0x65be`), pak **zaokrouhleni uhlu na osminy**
+  (`(uhel + 16) & 224`), `0x65f2`, smerovy snimek `0xa27c` (zaklad
+  JUNTANK#12 → #12..#19) a `0x629c(+276)`, kde `+276` po kazdem kole
+  roste o 1 (10, 11, 12, …) — korekce kurzu se postupne zpomaluji.
+- Simulace: zrozeni 8744, otevreni na radku 48 (tik +330), dron v +360,
+  zavreni v +400, dalsi kolo po 100 ticich.
+
+### LAKEGUN#0 / #7 (0x0028 → 0xb26c, 0x0e28 → 0xb2dc) — pobrezni dela
+
+- Obe varianty: `a2c6(LAKEGUN#0 | #7, 36, **100**, HP 4, 75 bodu,
+  cost 10)` — aktivace az na radku 100; `+374 = 5` (dekal EXPL1#0).
+- `#0` (`0xb26c`): anim `0x0b288` (perioda 6, #1..#6, drzi #6) = otevreni,
+  wait 50, pak `+276 = 6`× { wait 30, navadena strela
+  `0x8530(−8, 0, **128**)` = doleva }, pak anim `0x0b2c4` (#5..#1,
+  **kill(0)**) — delo se zavre a tise zanikne bez skore.
+- `#7` (`0xb2dc`): zrcadlo — snimky #8..#13, strela `0x8530(+8, 0, 0)`
+  doprava, zaviraci anim `0x0b332` (#12..#8, kill).
+- Simulace: zrozeni 4600 na radku 100, prvni strela v tiku +80, dalsi po
+  30 ticich, po sesti se delo zavira (tik +260).
