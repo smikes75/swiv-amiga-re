@@ -760,3 +760,84 @@ startuje v jednom JS passu; nativni per-record yield poradi je otevrene.
   ticich (`0xaf48`, `d = min(3, D)`: bit 0 → homing (0,−2,192) + wait 8,
   bit 1 → homing (−4,2,160), wait 8, (4,2,224), wait 8); pak vy 0 a ceka
   na smrt (`0x62cc`). Pri D = 0 nestrili vubec
+
+### EGGS — vejce (0x041d → 0x8478) a hnizdo (0x181d → 0xa8e4)
+
+Velke ovalne „skorapky" na zemi jsou EGGS#0 (staticka grafika mapy);
+objekt s chovanim je maly tvor EGGS#2 (24×38, hitbox z hlavicky 11/19),
+ktery v nich sedi. Snimky overeny archem `build/sheets/080_eggs.png` a
+zabery originalu t437..t447 (`build/survey/shoot/`).
+
+- **Vejce `0x8478`:** `a2c6(EGGS#2, 32, −16, HP 0, 200 bodu, cost 13)`,
+  `+328 z = 0`. Ceka na radek 128 (`0x9afa`), pak anim `0x0849e`
+  (perioda 10: EGGS#3..#7, drzi #7 = tvor 19×19; docs/ANIMS.md) soubezne
+  s wait 50 (`0x629c`); potom `+340 vz = 0x8000` (0.5 px/t) a smycka
+  `0x62d2`, dokud `z < 32` (64 tiku). Pak `vz 0`, `HP 15`, handler
+  `0x8510` pro bit 0 i bit 3 (`0x653e`/`0x6566`), trida 34 (smrtici
+  kontakt), rychlost `+356 = 128` (0.5 px/t) smerem na
+  `(96 + (0x883c & 127), fp@(3530))` = nahodny sloupec horniho okraje
+  (`0x65be`/`0x65f2`), `0x62cc` do zabiti. Stin kruhovy (z 32) — v
+  originale t437 vedle skorapky.
+- **Smrt `0x8510`:** HP−1; pri > 0 jen `0xa35a` (flash + zvuk); pri 0 se
+  `+358` vynuluje a 16× `0x95ca` (rovna kanonova strela) s krokem 16 v
+  `+359` = uhly 0,16,…,240, pak `0xa36a` (200 bodu, oblacek `0x894a` v
+  z 33). To je „hodne strel jako z tanku" po rozstreleni.
+- **Hnizdo `0xa8e4`:** nejprve tri deti `0x614a` (kopie zaznamu rodice):
+  `0xa92a` (−51,−13) EGGS#9, `0xa93c` (0,+65) EGGS#10, `0xa948`
+  (+51,−13) EGGS#11; kazde `a2c6(…, 36, −20, HP 8, 75 bodu, cost 10)`,
+  `+367 |= 4`, `+542 = 0xa36a` (sirotek po smrti hnizda umira s kreditem
+  a oblackem). Dite ceka na radek 8 (`0x9afa`) a pak 16× { strela
+  `0xa9a0` pres `0x6178`, wait 100 } a `0x62cc`. Rodic: zamek
+  `0x5eda(6)` (nemodelovano), `a2c6(EGGS#12, 36, −32, HP 18, 75 bodu,
+  cost 20)`, `+376 = 0x8876`, `0x62cc`.
+- **Strela vejce `0xa9a0`:** dite zdedi polohu, `+324 += 16`, zvuk
+  `0x5436(x)` (zatim bez prepisu), `a2c6(BULLET#56, 6, 0, HP 0, 0 bodu,
+  cost 5)`, `+367 |= 1` (bez stinu), `z += 1`, PLOP `0x85f0`, `+336 vy =
+  6` v mapovych souradnicich (na obrazovce 6.25 px/t), `0x62cc`; cull
+  `0x6480` s marginem 0. Trida 6 = smrtici kontakt, HP 0 = bolt ji
+  neznici.
+- **Velky vybuch `0x8876`** (`+376` velkych objektu): zvuk `0x4c3c`, anim
+  `0x888c` EXPL2#0..#6 perioda 6 + kill (42 tiku), `+367 |= 1`; kazdych
+  15 tiku (`0x629c`) oblacek `0x8952` (EXPL1#7..#13 bez zvuku) na ofsetu
+  `((0x883c & 63) − 31, (horni slovo & 63) − 31)` — jedno `0x883c` na
+  oblacek, tedy t 0, 15, 30. Prepis: `queueTownExplosionTask(..., "big")`
+  + `boom.puffs`.
+- Prepis: `IMPLEMENTED_BEHAVIORS` egg/eggnest, hazard `eggchild`
+  (nodeKey `eggchild9..11`), strela `eggshot`, `spawnEggChildren`,
+  `fireEggShot`; simulace DESERT (`build/survey/egg/`): hnizdo zrozeno v
+  tiku 592 se tremi detmi, prvni strela hned (spodni dite je uz na radku
+  33), vejce zrozeno 1036, anim od radku 128 (tik 1612), stoupani
+  1662..1726, 15 zasahu → 16 strel.
+
+### DIAGUN — diagonalni delo (0x041a → 0xa76e, 0x081a → 0xa788)
+
+- Typ podle grafiky z PAM (`+276`): `0xa76e` DIAGUN#2 klid / `+278` =
+  DIAGUN#3 palba, uhel `+358 = 32` (vpravo dolu); `0xa788` DIAGUN#4 / #5,
+  uhel 96 (vlevo dolu). Spolecne `0xa7a0`: zamek `0x5eda(6)`,
+  `a2c6(+276, 36, −48, HP 7, 80 bodu, cost 18)`, `+376 = 0x8876`, wait
+  100, `+280 = 15`× `0xa7e0` { `0x6d7c(+278)` = palebny snimek i hitbox z
+  jeho hlavicky, laser `0xa804` pres `0x6178`, wait 5, `0x6d7c(+276)`
+  zpet, wait 30 }, pak `0x62cc`.
+- **Laser `0xa804`:** `a2c6(DIAGUN#6, 38, −48, HP 1, 6 bodu, cost 5)`,
+  `+328 z = 33`, `+367 |= 1` (bez stinu), rychlost `+356 = 640` (2.5 px/t)
+  ve zdedenem uhlu (`0x65f2`), potom `+320/+324 += 16×` rychlost
+  (`0xa82c..0xa848`, tj. start 28 px diagonalne od dela), anim `0xa850`
+  DIAGUN#6..#9 perioda 1 loop, `0x62cc`. Mapove souradnice, trida 38 =
+  smrtici kontakt i zasazitelny (jeden bolt, 6 bodu, oblacek v z 33).
+- Prepis: `IMPLEMENTED_BEHAVIORS` diagun (oba gfx), hazard `laser`
+  (`spawnDiagunLaser`), `nodeKey` diagun2..5 podle aktualniho snimku.
+  Simulace (`build/survey/dpy/`): zrozeni tik 4420 (x 84, sy −48), prvni
+  laser 4519 na (114, 6) s v = (1.77, 1.77), druhy 4554, 7 zasahu → BIGEXPL.
+
+### PYRAMID (0x0221 → 0xa866)
+
+- Cihlova podstava je PYRAMID#0 (mapova grafika); objekt je poklop
+  PYRAMID#1. Zamek `0x5eda(6)`, `a2c6(PYRAMID#1, 36, −32, HP 10, 75 bodu,
+  cost 15)`, `0x9ae8(64)` = wait na radek 64 s vynulovanou tridou `+508`
+  (do te doby bez kolizi; prepis drzi HP 0), `+376 = 0x8876`, anim
+  `0xa890` PYRAMID#2..#8 perioda 8 a drzi (poklop se otevre za 48 tiku),
+  wait 100, `(2 + fp@(182))`× { `notw +276` → x-ofset −6/+6 stridave
+  (prvni −6, protoze `+276 = 0x0221` je kladne), homing `0x8530` na
+  (x ± 6, y + 20, uhel 64), wait 20 }, `0x62cc`.
+- Simulace: zrozeni tik 2484 (x 253), aktivace na radku 64 (tik 2868),
+  poklop #8 v 2916, homing 2968 a 2988 (D = 0), 10 zasahu → BIGEXPL.

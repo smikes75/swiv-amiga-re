@@ -356,9 +356,11 @@ Pruchod celym levelem (`TOWN-SURVEY.md`) ukazal dva systemove rozdily:
   testy, `g.levelPhase` roste jako `fp@(184)` (ctecka 256 px nad oknem).
   Dvojice t273..t321 sedi na teren DESERTu. LEVEL COMPLETE zbyva jen na
   konci FINAL. Chovani DESERTu se prepisuje podle cetnosti: hotovo AIRMINE
-  (48), BLACKJET (7), TILT (11), DESTRAIN (3), TINYTRUK (7) — viz
-  BEHAVIORS „DESERT"; zbyva FISH 17, SKYEYEB 14, _ONERIG 11, FLATTANK 9,
-  GOOSE#7 7, EGGS 7, DIAGUN 6, JETS 6, _AIRPORT 4, _RIGS 4, PYRAMID#1 4,
+  (48), BLACKJET (7), TILT (11), DESTRAIN (3), TINYTRUK (7), EGGS vejce +
+  hnizdo + strela + velky vybuch `0x8876` (7), DIAGUN + laser (6),
+  PYRAMID (4) — viz BEHAVIORS „DESERT";
+  zbyva FISH 17, SKYEYEB 14, _ONERIG 11, FLATTANK 9,
+  GOOSE#7 7, JETS 6, _AIRPORT 4, _RIGS 4,
   MAMA 3, INST1 5, TRUCK 1, JEEPHELI#31 1 (v poradi prvniho vyskytu:
   EGGS 43 s, PYRAMID 80 s, DIAGUN 120 s, INST1 244 s, ...).
 - Scroll originalu se pricita jednou za iteraci hlavni smycky (`0x291e`),
