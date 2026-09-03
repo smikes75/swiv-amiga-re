@@ -362,7 +362,10 @@ Pruchod celym levelem (`TOWN-SURVEY.md`) ukazal dva systemove rozdily:
   _ONERIG (11), JETS (6), _AIRPORT (4), _RIGS (4), TRUCK (1), INST1#9
   (2), JEEPHELI#31 = SWAP pad (1), MAMA + roj (3), INST1#14 pist +
   odpalovac (2), INST1#11 tovarna + paprsek (1) — **vsechna chovani
-  DESERTu prepsana** (viz BEHAVIORS „DESERT"). Overeno zatim jen
+  DESERTu prepsana** (viz BEHAVIORS „DESERT"). GRASS podle
+  `docs/ZADANI-GRASS.md`: hotovo VTOL (42), XEVIOUS#5 (20), XEVIOUS#9 +
+  bomba (16); zbyva TRILO 5, _PLAT#10 4, XEVIOUS#0 3, _PLAT#9 3,
+  JEEPHELI#23 1, JEEPHELI#43 1, _CORN#7 1, DADA 1. Overeno zatim jen
   simulaci a archy snimku; porovnani s baseline vAmigy po objektech
   (jako u TOWN) zbyva. Zvuky DESERTu (`0x5436` strela vejce, `0x541e`
   paprsek, `0x4e2e` zasah tovarny) zatim bez prepisu.

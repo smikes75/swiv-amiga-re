@@ -1052,3 +1052,65 @@ zabery originalu t437..t447 (`build/survey/shoot/`).
   `t = −1 − 20·kolo`), `addDecal(INST1#2)`, `startWhiteFlash`.
 - Simulace: zrozeni 10540 (x 110), aktivace radek 84 (tik +590), tank
   z (289, −16) v +690, 3 paprsky po 40 ticich, 90 zasahu → 16 vybuchu.
+
+## GRASS (prepsano 2026-09-03; overeno simulaci `build/survey/grass/`)
+
+### Animator uzel nemeni (zmereno)
+
+`0x6c88` uklada snimek do bloku animatoru (`%a0@(18)`), nikoli do `+368`;
+kolizni rozmery (`+500/+502`) prepisuje jen `0x6d7c`. **Uzel objektu tedy
+po celou dobu drzi snimek z `a2c6`** (nebo z posledniho explicitniho
+`0x6d7c`), i kdyz animace kresli jine snimky. `NODE_GRAPHIC` proto vzdy
+nese `a2c6` snimek.
+
+### VTOL (0x0023 → 0x8344)
+
+- `a2c6(VTOL#0, 36, −16, HP 8, 35 bodu, cost 10)` (bez `0x8822`), anim
+  `0x0835a` VTOL#0/#1 perioda 4 loop, `+328 z = 0` (`clrl`), pak
+  `0x9afa(16 + (0x883c & 31))` = ceka na nahodny radek 16..47.
+- Vzlet: `+397 &= ~1` (neprepisuje se), `0x65ae` = maska udalosti
+  `+508 &= ~16` (rusi kontakt tridy 36), `0x6566` zapne bit 3 s vychozim
+  `0xa362`, `+504 = 34` (smrtici kontakt); `+340 vz = 0.5` a smycka
+  `0x839e` do `z >= 32` (cele slovo), pak `vz 0`.
+- Let: anim `0x083b4` VTOL#2, #3, #4 perioda 8 a `end(0)` = drzi #4;
+  `+348 ay = 4096/65536 = 0.0625 px/t²` (bez bitu 4, tedy mapove
+  souradnice) — stroj se rozjizdi dolu; po `0x9afa(192)` jeden mireny
+  kanon `0x95d2` a `0x62cc`.
+- Simulace: tri kusy zrozeny v tiku 5972 (x 163/198/233, sy −16),
+  kazdy vzletne na svem nahodnem radku (v tiku +220 byl jeden ve
+  fazi 2, druhy ve fazi 1 se z 14, treti jeste na zemi), 8 zasahu = smrt.
+
+### XEVIOUS#5 (0x0a2e → 0x791a) — rotujici disk
+
+- PAM kresli XEVIOUS#5, ale korutina vola `a2c6(XEVIOUS#3, 34, −16,
+  HP 0, 0 bodu, cost 13)`; `+367 |= 1` (bez stinu), `+328 z = 32`,
+  handler bitu 0 = `0x7968` (jen zvuk `0x55b0` podle x — **neprepsan**),
+  `+336 vy = 0.5` (mapove, na obrazovce 0.75 px/t), anim `0x0794c`
+  XEVIOUS#3..#8 perioda 7 loop, `0x62cc`.
+- HP 0 znamena, ze `a2c6` **neinstaluje zadny vychozi handler**
+  (`0xa2fc beqs`), takze objekt nelze znicit; vlastni handler bitu 0 ale
+  uzel drzi, takze bolt hrace na nem zanikne. Prepis: `s.boltPing`
+  (rozsirena podminka `collectBulletEvent` pro spawny) a v dispatchi
+  navrat bez poskozeni. Trida 34 = smrtici kontakt.
+
+### XEVIOUS#9 (0x122e → 0x7ed8) — roj s bombami
+
+- `0x7ed8`: devet kopii `0x6178`, mezi nimi rodic `y -= 3` (rucne
+  napsana `0xa2a2`), tedy deset kusu po 3 px nad sebou; rodic pak
+  propadne do stejneho kodu.
+- Kazdy: `a2c6(XEVIOUS#9, 34, −48, HP 1, 20 bodu, cost 10)` + guard
+  `0x8822`, `+367 |= 16` (obrazovka), `x += (0x883c & 127) − 64` s
+  odrazem (`<= 32` → +64, `> 288` → −64), `z = 32`, `vy = 2`.
+- Po `0x9afa(40)`: `vy = 1`; `x >= 160` → `vx = 3` a anim `0x07f5e`
+  (#12, #11, #10, #9 perioda 4 loop), jinak `vx = −2` a anim `0x07f7a`
+  (#10, #11, #12, #9); pak jedna bomba `0x6178(0x7f9a)` a `0x62cc`.
+- **Bomba `0x7f9a`:** zvuk `0x4cf8` (neprepsan), `a2c6(BULLET#3, 6, −16,
+  HP 0, 0 bodu, cost 3)`, `0x6d96` (nuluje zdedene rychlosti),
+  `+367 |= 17` (bez stinu + obrazovka), `+364 = 0` (cull margin 0), anim
+  `0x07fc6` BULLET#3/#4 perioda 4 loop, rychlost `+356 = 512` = 2 px/t
+  na hrace (`0x72ee` + `0x65be` bez omezeni) s rozptylem
+  `(0x883c & 31) − 16`, a v kazdem tiku `z = (slovo y) >> 1` (logicky
+  posuv). Trida 6 s HP 0 = smrtici kontakt bez handleru, tedy stejny
+  model jako kanonovy granat (bolt hrace ji neznici).
+- Simulace: prvni kus zrozen v tiku 128 (x 201), deset kusu po ~24
+  ticich, kazdy odhodi jednu bombu na radku 40.
