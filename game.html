@@ -44,7 +44,7 @@ a { color:#cfe0ff }
 </div>
 
 <div id="levelpick" style="display:none">
-  <p>Pick a level:</p>
+  <p>Za&#269;&#237;t od z&#243;ny (fire nebo mezern&#237;k = TOWN, z&#243;ny na sebe navazuj&#237;):</p>
   <div id="levelbtns"></div>
 </div>
 
@@ -1460,7 +1460,8 @@ function showDevelopmentLevelPicker() {
 
 function showTitle() {
   stopAttract();
-  $("#levelpick").style.display = "none";
+  // vyber zony je videt uz pod titulni obrazovkou (hrac nemusi od TOWN)
+  $("#levelpick").style.display = "";
   $("#gamewrap").style.display = "none";
   $("#titlewrap").style.display = "";
   const cv = $("#title"); cv.width = 320; cv.height = 256;
