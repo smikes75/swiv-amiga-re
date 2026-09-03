@@ -58,9 +58,24 @@ def to_vamiga(image):
 # name: cas snimku originalu v sekundach po fire, zmereny radek mapy
 # v img souradnicich prepisu a minimalni whole-frame shoda v %.
 CHECKPOINTS = {
+    # Kazdy checkpoint je SIMULACE: startGame(0) a `ticks` kroku step()
+    # bez vstupu (baseline drzi joystick v klidu). Radek `row` je zmereny
+    # posun proti baseline a zaroven kontrola, ze scroll sedi (3249 - t/4).
+    # `vblBase` je faze VBL citace fp@(-68) pri startu urovne: z prepinani
+    # PRESS FIRE/JEEP v t17..t23 vychazi okno 172..199 mod 256.
     # Radek zmereny posunem proti baseline (3228). S PAM paletou a
     # prevodem VAMIGA_LUT: teren 100 %, HELI 99.7 %, celek 99.2 %.
-    "start": {"t": 17, "row": 3228, "floor": 99.0},
+    # T17 = 83: radek 3228 dovoluje 81..84 (word = 3249 - ceil(T/4)),
+    # rotor JEEPHELI#0 vyzaduje liche T (index (T+3)&7 sudy); odstup
+    # k t19 (T=184) je tedy 101 - vAmiga `wait` ma jitter jednoho snimku.
+    "start": {"t": 17, "row": 3228, "floor": 99.0, "ticks": 83,
+              "vblBase": 186},
+    # Prvni FODDERA vlna: RNG originalu nezname, x0/vx clenu jsou zmerene
+    # z t18/t19 (257, -13/16). Clen 0 umira kontaktem s hracem: kolizni
+    # box FODDERA#2 = 10/20 z hlavicky .LIN a uzel z resume (0x6430) davaji
+    # EXPL1#8 na (157,175) proti originalu (157,176).
+    "wave": {"t": 19, "row": 3203, "floor": 98.5, "ticks": 184,
+             "vblBase": 186, "fodder": {"x": 257, "vx": -0.8125}},
 }
 
 
@@ -87,7 +102,7 @@ def _decode_data_url(data):
         return image.convert("RGB")
 
 
-def remake_frames(row):
+def remake_frames(checkpoint):
     """Return whole, HUD-free/player-free, and player-free frame variants."""
     from playwright.sync_api import sync_playwright
     with sync_playwright() as pw:
@@ -103,18 +118,19 @@ def remake_frames(row):
             page.evaluate("window.requestAnimationFrame = () => 0")
             page.keyboard.press(" ")
             page.wait_for_selector("#gamewrap", state="visible")
-            encoded = page.evaluate("""(row) => {
+            encoded = page.evaluate("""(cp) => {
+              // Cerstvy start TOWN a `ticks` kroku bez vstupu; tape-zavisle
+              // vstupy (faze VBL citace, RNG prvni vlny) dodava checkpoint.
+              startGame(0);
               const g = state.g, p = g.player;
-              // Presny radek, zadni aktivni mapovi objekty, hrac ve spawn
-              // stavu. Original ma HELI frame 0 na (160,192) se stinem.
-              g.scroll = row; g.fadeBlack = 0; g.fadeDir = 0;
-              g.fadeWhite = 0;
-              g.spawns = []; g.air = []; g.hazards = []; g.shots = [];
-              g.bullets = []; g.tokens = []; g.booms = []; g.effects = [];
-              g.plops = [];
-              p.alive = true; p.x = 160; p.y = 192;
-              p.inv = 0; p.flash = false;
-              resetPlayerHeliAnim(p);
+              g.scrollMul = 1;
+              g.vblBase = cp.vblBase | 0;
+              if (cp.fodder)
+                window.fodderInitial = () => ({ x: cp.fodder.x,
+                                                vx: cp.fodder.vx });
+              for (let i = 0; i < cp.ticks; i++) step(g);
+              if (Math.floor(g.scroll) !== cp.row)
+                throw new Error("scroll " + g.scroll + " != row " + cp.row);
 
               const canvas = document.querySelector('#game');
               const now = performance.now();
@@ -144,7 +160,7 @@ def remake_frames(row):
               const terrain = render();
 
               return { whole, withoutHeli, terrain };
-            }""", row)
+            }""", checkpoint)
         finally:
             browser.close()
     return {name: to_vamiga(_decode_data_url(data))
@@ -222,7 +238,7 @@ def main():
     for name in names:
         checkpoint = CHECKPOINTS[name]
         original = original_frame(checkpoint["t"])
-        frames = remake_frames(checkpoint["row"])
+        frames = remake_frames(checkpoint)
         masks = region_masks(frames)
         scores = {
             "whole": match_percent(original, frames["whole"], masks["whole"]),
@@ -241,7 +257,8 @@ def main():
         floor = checkpoint["floor"]
         ok = floor is None or scores["whole"] >= floor
         status = "OK" if ok else "POD PRAHEM"
-        print(f"{name}: t={checkpoint['t']}, row={checkpoint['row']}")
+        print(f"{name}: t={checkpoint['t']}, row={checkpoint['row']}, "
+              f"ticks={checkpoint['ticks']}")
         print(f"  whole:   {scores['whole']:6.1f} %  "
               f"ratchet >= {floor}  [{status}]")
         print(f"  terrain: {scores['terrain']:6.1f} %  "

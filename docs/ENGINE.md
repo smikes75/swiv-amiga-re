@@ -177,7 +177,25 @@ word at zero until a hardware trace is available.
 Ordinary object tasks run at priority 100, the player projectile updater at
 `0xfffe` and the collision sweep at `0xffff`. Consequently a collision found
 at the end of VBL N is consumed by object callbacks on their resume in VBL
-N+1; `0x62d2` has already published the normal N frame. Events coalesce as a
+N+1; `0x62d2` has already published the normal N frame.
+
+Collision node `+488` (list at `fp@(11058)`, sorted by x): `+8/+10`
+position, `+12/+14` half-extents, `+16` class, `+18` event word. `0x6dce`
+installs it with extents 8/8; every `0xa2c6` object immediately overrides
+them via `0x6d7c` with words `+16/+18` of its d0 frame record, which the
+loader `0x457e` fills from **bytes 8/9 of the .LIN part header** (FODDERA#2
+= 10/20, MINE#0 = 12/14, POPUP#0 = 17/15 ...). The player (`0x6dc8`), its
+bolts and the cannon keep 8/8. The sweep `0x6ec2` tests each neighbour's
+*position* against the sweeping node's *own* box (inclusive) and ORs the
+classes into both event words; a node whose class has bit 15 (PLOP, MEDTANK
+turret) never sweeps itself. Node positions are copied from `+320/+324` at
+task resume (`0x6430`, before the bit-4 scroll compensation `0x6446`), so
+the sweep at the end of VBL N sees the positions the bodies computed in
+VBL N−1 — exactly what `0x642c` published as BOBs — while the N+1 callback
+reads coordinates one movement newer (measured: FODDERA death puff 4 px
+below the contact position). The browser keeps a per-object snapshot
+(`snapNode`/`nodePos`, valid for one tick) for the same effect and reads
+box extents from the frame header (`NODE_GRAPHIC`, `nodesTouch`). Events coalesce as a
 16-bit OR mask and callbacks dispatch in bit order `0,3,4,1,2,5`.
 The browser now keeps that boundary: the producing step only records pending
 bits and projectile consumption, while the next step clears the old hit flag,

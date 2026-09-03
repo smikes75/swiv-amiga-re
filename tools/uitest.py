@@ -1214,7 +1214,7 @@ def main():
               try {
                 g.spawns = [s]; g.air = []; g.hazards = []; g.shots = [];
                 g.bullets = []; g.plops = []; g.tokens = []; g.booms = [];
-                g.effects = []; g.activeCost = 0; g.scrollMul = 0.000001;
+                g.effects = []; g.activeCost = 0; g.scrollMul = 0;
                 g.over = false; g.won = false;
                 g.player.alive = true; g.player.x = 100; g.player.y = 220;
                 g.player.inv = 30000; g.player.bubbleTimer = 0;
@@ -1293,20 +1293,25 @@ def main():
 
                 // Projectile bit0 koaleskuje, player-contact bit3 je ale
                 // samostatny callback a muze ve stejnem VBL ubrat dalsi HP.
+                // Sweep 0xffff cte uzel z RESUME (0x6430): teleport hrace
+                // ve fixture proto doplni i snapshot uzlu.
+                const teleport = (x, y) => {
+                  g.player.x = x; g.player.y = y; snapNode(g, g.player, x, y);
+                };
                 g.bullets = [{ x: s.x, y: (s.y - g.scroll) + 9 }];
-                g.player.x = s.x; g.player.y = s.y - g.scroll;
+                teleport(s.x, s.y - g.scroll);
                 const bothHp0 = s.hp; step(g);
-                g.player.x = 100; g.player.y = 220; step(g);
+                teleport(100, 220); step(g);
                 const bothEvents = { before: bothHp0, after: s.hp,
                                      playerAlive: g.player.alive };
                 const childPart = s.parts.find(q => q.id === 'left');
                 const childPos = bossPartPosition(s, childPart, g.scroll);
-                g.bullets = []; g.player.x = childPos.x; g.player.y = childPos.y;
+                g.bullets = []; teleport(childPos.x, childPos.y);
                 const childHp0 = s.hp; step(g);
-                g.player.x = 100; g.player.y = 220; step(g);
+                teleport(100, 220); step(g);
                 const childOnly = { before: childHp0, after: s.hp,
                                     playerAlive: g.player.alive };
-                g.player.x = 100; g.player.y = 220;
+                teleport(100, 220);
 
                 // Izolovany home overshoot a escort offset replacement.
                 const microBoss = { x: 100, y: 200, parts: [],
@@ -1338,7 +1343,7 @@ def main():
                 // stejne vetve jako cela 72/64/128/192, nikoli za hranici.
                 function gooseWordBoundary(st, bsy, patch = {}) {
                   const bg = Object.assign({}, g, {
-                    tick: 0, scroll: 1000, scrollMul: 0.000001,
+                    tick: 0, scroll: 1000, scrollMul: 0,
                     over: false, won: false, keys: {},
                     player: Object.assign({}, g.player, {
                       x: patch.targetX ?? 100.25, y: 240, alive: true,
@@ -1385,7 +1390,7 @@ def main():
                 // Death synth, BIGEXPL, unlink i dva TOKENy pro timer>500
                 // vzniknou az pri resume parent tasku v N+1.
                 const deathGame = Object.assign({}, g, {
-                  tick: 0, scrollMul: 0.000001, over: false, won: false,
+                  tick: 0, scrollMul: 0, over: false, won: false,
                   keys: {}, player: Object.assign({}, g.player, {
                     x: 100, y: 220, alive: true, inv: 30000,
                     bubbleTimer: 0, bubbleBound: null, cool: 0
@@ -1654,6 +1659,7 @@ def main():
             expect(boss["salvo"] == ["can", "hom", "hom"],
                    "salva bosse ma byt mireny granat + dve navadene: %s"
                    % boss["salvo"])
+            # screen-y se pocita z celociselneho scrollu (word fp@(3542));
             expect(boss["wordBoundaries"] == {
                      "ingress": [True, 72],
                      "targetVx": 1536 / 65536,
@@ -1791,7 +1797,7 @@ def main():
                 }, playerPatch);
                 return {
                   mapH: live.mapH, mapW: 320, mapIndex: live.mapIndex,
-                  tick: 0, scroll: 1000, scrollMul: 0.000001,
+                  tick: 0, scroll: 1000, scrollMul: 0,
                   over: false, won: false, keys: {}, player,
                   nextBobOrdinal: 20, bullets: [], shots: [], plops: [],
                   spawns: [], booms: [], effects: [], tokens: [], air: [],
@@ -1967,7 +1973,7 @@ def main():
                 return {
                   mapH: live.mapH, mapW: 320, mapIndex: live.mapIndex,
                   terrainOpen: live.terrainOpen,
-                  tick: 0, scroll, scrollMul: 0.000001,
+                  tick: 0, scroll, scrollMul: 0,
                   over: false, won: false, keys: {}, player,
                   nextBobOrdinal: 50, bullets: [], shots: [], plops: [],
                   spawns: [], booms: [], effects: [], tokens: [], air: [],
@@ -2280,7 +2286,7 @@ def main():
             # hit-cooldown. Typ 3 pridava invulnerability, neni MINE bublina.
             token = page.evaluate("""() => {
               const g = state.g, p = g.player;
-              g.scrollMul = 0.000001;
+              g.scrollMul = 0;
               const mk = typ => {
                 const k = { x: 100, y: g.scroll + 100, ang: 64,
                             vx: 0, vy: .5, typ, cycles: 12, blink: false,
@@ -2479,7 +2485,7 @@ def main():
               const live = state.g;
               const makeGame = alive => ({
                 mapH: live.mapH, mapIndex: live.mapIndex,
-                tick: 0, scroll: 1000, scrollMul: .000001,
+                tick: 0, scroll: 1000, scrollMul: 0,
                 over: false, won: false, keys: {},
                 player: { x: 120, y: 100, ang: 192, alive, inv: 0,
                   bubbleTimer: 0, bubbleFrame: 9, bubbleZ: 0,
@@ -2505,8 +2511,8 @@ def main():
               });
 
               const g = makeGame(true), core = coreAtPlayer(g);
-              const corePose = h => [h.x,
-                Math.round((h.y - g.scroll) * 1e6) / 1e6, h.apos];
+              // fp@(3542) je WORD: screen-y = world-y - floor(scroll)
+              const corePose = h => [h.x, h.y - Math.floor(g.scroll), h.apos];
               g.hazards = [core]; g.activeCost = 5;
               step(g);                         // VBL N: pending contact bit3
               const queuedPickup = [g.player.bubbleTimer, core.consumed,
@@ -2709,7 +2715,8 @@ def main():
                    bubble["first"]["activeCost"] == 10 and
                    bubble["first"]["bubbleAt"] > bubble["first"]["playerAt"] and
                    bubble["first"]["coreVisible"] is False and
-                   bubble["first"]["coreFrozen"] == bubble["first"]["pickedPose"] and
+                   [round(v, 3) for v in bubble["first"]["coreFrozen"]] ==
+                   [round(v, 3) for v in bubble["first"]["pickedPose"]] and
                    bubble["first"]["bubbleKinds"] == ["main"] and
                    bubble["first"]["sfx"] == ["shield-bubble"],
                    "prvni bubble frame neni MINE#9 pred hracem bez stinu: %s"
@@ -2801,7 +2808,7 @@ def main():
                 }, playerPatch);
                 return {
                   mapH: live.mapH, mapIndex: live.mapIndex,
-                  tick: 0, scroll: 1000, scrollMul: .000001,
+                  tick: 0, scroll: 1000, scrollMul: 0,
                   over: false, won: false, keys: {}, player: p,
                   nextBobOrdinal: 1, bullets: [], shots: [], plops: [],
                   spawns: [], booms: [], effects: [], tokens: [], air: [],
@@ -2933,6 +2940,7 @@ def main():
                 hudStatusText(lastLife)];
 
               const creditWait = makeGame({ alive: false });
+              creditWait.scrollMul = 1;      // scroll bezi i behem continue
               creditWait.lives = 1; creditWait.continues = 2;
               creditWait.effects = [{ t: 0, life: 1000 }];
               respawnPlayer(creditWait);
@@ -2946,6 +2954,7 @@ def main():
                 creditWait.effects[0].t];
 
               const noCredit = makeGame({ alive: false });
+              noCredit.scrollMul = 1;        // scroll bezi i behem continue
               noCredit.lives = 1; noCredit.continues = 0;
               noCredit.effects = [{ t: 0, life: 1000 }];
               respawnPlayer(noCredit);
@@ -3483,8 +3492,10 @@ def main():
                    [169,201,6,6,9], [160,205,0,9,10]] and
                    player_exact["latchedOrigin"] == [[148, 167], [152, 167]],
                    "power6 nebo previous-child origin nesedi: %s" % player_exact)
+            # fp@(3542) je WORD: 1000.0 -> 999.75 uz znamena delta -1,
+            # cerstvy bolt tedy dostane 188 - 9 + 1 = 180 v tomtez VBL.
             expect(player_exact["freshBolt"] ==
-                   [[158,179.25,180],[162,179.25,180]],
+                   [[158,180,180],[162,180,180]],
                    "fresh player bolt nema stejny-VBL camera delta/anchor: %s" %
                    player_exact["freshBolt"])
             expect(player_exact["wait99"] == [False, 1, 4] and
@@ -3574,7 +3585,7 @@ def main():
                    player_exact["cannonQueued"] == {
                      "player": [True, 99], "tank": True, "shots": 1,
                      "shot": [100.5, 100, 0, 1, False, 8, True],
-                     "hw": [24, 100, 101],
+                     "hw": [24, 100, 100],   # celociselny scroll: kotva = y
                      "sfx": ["cannon", True, 1], "cost": 14} and
                    player_exact["cannonResumed"] == {
                      "player": [True, 98], "shots": 0, "hw": 0,
@@ -3758,7 +3769,7 @@ def main():
                        "retire": True, "y": 1100, "half": 0,
                        "blink": False, "cost": 5, "bob": True},
                      "resumed": {"tokens": 0, "dead": True, "pending": 0,
-                       "y": 1099.75, "half": 0, "blink": False,
+                       "y": 1099, "half": 0, "blink": False,   # word delta
                        "picked": 1, "count": 1, "inv": 500, "score": 500,
                        "cost": 0, "audio": [[1, True, 159]],
                        "soundTasks": 1, "bob": False}},
@@ -3982,17 +3993,18 @@ def main():
                    "GOOSE parent task zmizel pred checksum tail: %s" %
                    last_field_matrix["lifecycle"]["goose"])
             expected_states = {
-                "air": [[-64, 1099.75, 0, 1], [-64, 1099.5, 0, 1]],
+                # scroll word: 1000 -> 999.75 je delta -1, dalsi tik 0
+                "air": [[-64, 1099, 0, 1], [-64, 1099, 0, 1]],
                 "prox": [[0, 1100, 0, 1], [0, 1100, 0, 1]],
-                "core": [[-64, 1099.75, 1, 0], [-64, 1099.5, 1, 0]],
+                "core": [[-64, 1099, 1, 0], [-64, 1099, 1, 0]],
                 "flame": [[-8, 1100, 1, 0], [-8, 1100, 1, 0]],
                 "spawn": [[-64, 1100, 0, 1], [-64, 1100, 0, 1]],
-                "token": [[-64, 1100.25, 1, False, -2],
-                          [-64, 1100, 1, False, -2]],
+                "token": [[-64, 1099.5, 1, False, -2],
+                          [-64, 1099.5, 1, False, -2]],
                 "roto": [[4, 4, 1, 49, 0], [4, 4, 1, 49, 0]],
-                "mill": [[1099.75, 1, 1, 0], [1099.5, 1, 1, 0]],
-                "goose": [[935.75, 3, False, 0],
-                          [935.5, 3, True, 0]],
+                "mill": [[1099, 1, 1, 0], [1099, 1, 1, 0]],
+                "goose": [[935, 3, False, 0],
+                          [935, 3, True, 0]],
             }
             for name, states in expected_states.items():
                 life = last_field_matrix["lifecycle"][name]
@@ -4008,8 +4020,8 @@ def main():
                    "PLOP margin0 nema prvni HW field a resume cleanup: %s"
                    % last_field_matrix["plop"])
             expect(last_field_matrix["negative"] == {
-                     "burst1": [-101, 1099.75, 4, False, False, 5],
-                     "burst2": [-102, 1099.5, 3, False, False, 5],
+                     "burst1": [-101, 1099, 4, False, False, 5],
+                     "burst2": [-102, 1099, 3, False, False, 5],
                      "train1": [-101, True, False, 15],
                      "train2": [-102, True, False, 15]},
                    "TOKEN burst nebo TRAIN dostal zakazany bounds cull: %s"
@@ -4387,7 +4399,7 @@ def main():
               window.random32 = () => 0;
               try {
                 const game = spawns => ({
-                  tick: 0, scroll: 100, scrollMul: 1e-9,
+                  tick: 0, scroll: 100, scrollMul: 0,
                   over: false, won: false,
                   player: { x: 0, y: 0, alive: false }, keys: {},
                   bullets: [], shots: [], plops: [], spawns,
@@ -4683,12 +4695,13 @@ def main():
               step(t4g);
               const t4Born = [type4.born, type4.tankSetup, type4.hp,
                               t4g.activeCost];
-              type4.y = t4g.scroll + 287.5; step(t4g);
+              // sy je word: y - floor(scroll); prah 288 sondujeme celociselne
+              type4.y = Math.floor(t4g.scroll) + 287.5; step(t4g);
               const t4Below = [type4.tankSetup, t4g.activeCost];
-              type4.y = t4g.scroll + 287.75; step(t4g);
+              type4.y = Math.floor(t4g.scroll) + 288; step(t4g);
               const t4At = [type4.tankSetup, type4.hullF,
                             type4.turretTask && type4.turretTask.alive,
-                            t4g.activeCost, type4.y - t4g.scroll];
+                            t4g.activeCost, type4.y - Math.floor(t4g.scroll)];
 
               // Pred prvnim 0x62d2 raw-wait TYP4 zadny node nepublikuje:
               // skryty tank na sve budouci pozici nesmi pohltit HW bolt.
@@ -4707,7 +4720,7 @@ def main():
                 weapon: 5, mode: 1, reload: 11, cool: 0,
                 weaponX: 160, weaponY: 192, ang: 192,
                 bubbleTimer: 0, heliAnimPos: 0, heliAnimFresh: true });
-              fan.keys = { f: true }; fan.scrollMul = 0.000001;
+              fan.keys = { f: true }; fan.scrollMul = 0;
               step(fan);
               const fanVelocity = fan.bullets.map(b => [b.vx, b.vy]);
 
@@ -4796,9 +4809,9 @@ def main():
                    "TOKEN mode1 neprepina HELI na presny spread fan: %s" %
                    native_exact["fanVelocity"])
             expect(native_exact["shotSpace"] ==
-                   [["can",105,100.25],["hom",103,100]] and
+                   [["can",105,101],["hom",103,100]] and
                    native_exact["cannonDepth"] ==
-                   [45.25,70,44,32697,32697,32695] and
+                   [46,70,44,32697,32697,32695] and
                    native_exact["rotoFire"] == {"shots": 9, "rngCalls": 1,
                      "newAngles": [7,71,135,199], "next": [120,320]},
                    "cannon world-space nebo ROTO one-RNG/unguarded salvo nesedi: %s" %
@@ -5710,9 +5723,9 @@ def main():
                              scoreValue: 70 }]
                 };
                 step(gmi);
-                const millLockedSy = gmi.spawns[0].y - gmi.scroll;
+                const millLockedSy = gmi.spawns[0].y - Math.floor(gmi.scroll);
                 step(gmi);
-                const millMovedSy = gmi.spawns[0].y - gmi.scroll;
+                const millMovedSy = gmi.spawns[0].y - Math.floor(gmi.scroll);
                 for (let i = 0; i < 98; i++) step(gmi); // druhy krok uz odecetl 1
                 const millBefore = gmi.shots.length;
                 step(gmi);
@@ -5761,8 +5774,9 @@ def main():
                            afterTick: burstAfterTick,
                            first: [gbx.booms[0].x, gbx.booms[0].y],
                            last: [gbx.booms[15].x, gbx.booms[15].y] },
-                  locked: { birdSy: gs.air[0].y - gs.scroll,
-                            coreSy: gs.hazards[0].y - gs.scroll },
+                  // screen-y = world-y - floor(scroll) (fp@(3542) je word)
+                  locked: { birdSy: gs.air[0].y - Math.floor(gs.scroll),
+                            coreSy: gs.hazards[0].y - Math.floor(gs.scroll) },
                   mill: { locked: gmi.spawns[0].scrollLocked,
                           lockedSy: millLockedSy, movedSy: millMovedSy,
                           before: millBefore, shots: gmi.shots.length,
@@ -5840,7 +5854,7 @@ def main():
               g.shots = []; g.bullets = []; g.air = [];
               g.booms = []; g.score = 0;
               g.player.alive = false;
-              g.scrollMul = 0.000001;
+              g.scrollMul = 0;
               s.born = false; s.armed = true; s.alive = true; s.quiet = false;
               s.y = g.scroll + 100;
               const y0 = s.y;

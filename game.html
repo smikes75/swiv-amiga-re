@@ -205,6 +205,9 @@ function linFrames(bytes) {
                 cx: (bytes[p + 4] << 24) >> 24,       // signed
                 cy: (bytes[p + 5] << 24) >> 24,
                 trans: bytes[p + 6], flags: bytes[p + 7],
+                // bajty 8/9: kolizni poloviny uzlu (loader 0x457e je
+                // kopiruje do slov +16/+18 zaznamu, 0x6d7c do uzlu +12/+14)
+                ex: bytes[p + 8], ey: bytes[p + 9],
                 data: bytes.subarray(p + 10, p + 10 + dsz) };
     p += 10 + dsz;
     return d;
@@ -766,6 +769,9 @@ const $ = s => document.querySelector(s);
 const state = {};
 const TICK = 1 / 50;                 // herni logika na 50 Hz jako original
 const SCROLL = 12.5;                 // 0x1da6: $4000 16.16 = .25 px/VBL
+/* fp@(3542): cela cast scroll citace (word). Vsechny screen-y odvozene
+   z mapoveho y pouzivaji tuto hodnotu, ne spojity g.scroll. */
+function scrollTop(g) { return Math.floor(g.scroll); }
 
 /* ---- nacteni diskety ---- */
 window.addEventListener("dragover", e => e.preventDefault());
@@ -2704,8 +2710,8 @@ function hwSpriteCandidate(g, source, kind, file, frame, fixedDepth) {
   const spr = indexedFrameFor(state, file, frame);
   if (!spr) return null;
   const anchorX = positionWord(source.x);
-  const worldY = positionWord(source.y + g.scroll);
-  const anchorY = positionWord(worldY - positionWord(g.scroll));
+  const worldY = positionWord(source.y + scrollTop(g));
+  const anchorY = positionWord(worldY - positionWord(scrollTop(g)));
   const depth = fixedDepth === undefined
     ? ((worldY & 0xffff) >>> 1) : fixedDepth;
   return { kind, source, file, frame, anchorX, anchorY,
@@ -3094,7 +3100,7 @@ function advanceCannonShot(g, s, scrollDelta = 0, initial = false) {
     s.phase ^= 1;                               // druhy resume ukaze #40+
   }
   // 0x96aa je pred 0x96c2 -> 0x62d2: depth je pre-move, pozice post-move.
-  s.hwDepth = ((positionWord(s.y + g.scroll) & 0xffff) >>> 1);
+  s.hwDepth = ((positionWord(s.y + scrollTop(g)) & 0xffff) >>> 1);
   const v = angVel(s.ang, s.spd);
   s.x += v.vx; s.y += v.vy;
   s.st = (s.st | 0) + 1;
@@ -3322,7 +3328,7 @@ function stepBossEscort(g, q) {
   advanceBossSnakeAction(g, q);
 }
 function stepBossParts(g, boss, scrollDelta) {
-  const bsy = boss.y - g.scroll;
+  const bsy = boss.y - scrollTop(g);
   for (const q of boss.parts) {
     if (q.alive === false) continue;
     if (q.phase === "delay") {
@@ -3393,7 +3399,7 @@ function publishBossPartPositions(g, boss) {
       q.publishedWorldY = boss.y + q.oy;
     } else {
       q.publishedWorldX = q.x;
-      q.publishedWorldY = q.y + g.scroll;
+      q.publishedWorldY = q.y + scrollTop(g);
     }
   }
 }
@@ -3593,7 +3599,7 @@ function stepTokens(g, scrollDelta) {
   // pri prechodu do active vrati; pak plati bezne hranice 0x6480.
   for (const k of g.tokens) {
     if (k.dead || k.phase !== "active") continue;
-    const sy = k.y - g.scroll;
+    const sy = k.y - scrollTop(g);
     // 0x975c obnovi 0x6480 az pro active fazi; burst bounds nema.
     if (outsideCullMargin(k.x, sy, -64)) k.retireAfterField = true;
   }
@@ -3720,7 +3726,7 @@ function yellowTarget(g, playerOverride) {     // 0x72a6
   return { x: 96 + n, y: 128 + n };
 }
 function activateAirMember(g, a, p) {
-  if (!a.pending || a.y - g.scroll < -48) return false;
+  if (!a.pending || a.y - scrollTop(g) < -48) return false;
   a.pending = false;
   // BIRD po a2c6 nevola guard 0x8822; ostatni dve formace ano.
   if (a.kind === "bird") {
@@ -3802,6 +3808,65 @@ function projectileNodeHit(px, py, tx, ty) {
   const dy = Math.floor(py) - Math.floor(ty);
   return dx >= -8 && dx <= 8 && dy >= -8 && dy <= 8;
 }
+
+/* Kolizni uzel +488: 0x6dce instaluje extent +12/+14 = 8/8 (hrac 0x9430,
+   bolty 0x8e72/0x90da, cannon 0x960e zustavaji u 8/8). Kazdy a2c6 objekt
+   jej hned prepise pres 0x6d7c slovy +16/+18 zaznamu snimku sveho d0, ktera
+   loader 0x457e plni bajty 8/9 hlavicky dilu .LIN (FODDERA#2 = 10/20,
+   YELLOW#0 = 9/17, MINE#0 = 12/14, POPUP#0 = 17/15 ...). Sweep 0x6ec2
+   testuje POZICI souseda proti VLASTNIMU boxu (inclusive, |dx|<=ex,
+   |dy|<=ey) a zapise si navzajem tridy; uzel s tridou bit15 (PLOP 0x8600,
+   MEDTANK vez 0x9fba) sam nesweepuje. Dotyk dvou uzlu je tedy sjednoceni
+   obou smeru. Zmereno baseline t19: FODDERA clen 0 umira o 12 px vys nez
+   pri 8/8 (kontakt pri dy = -20). */
+const NODE_GRAPHIC = {
+  // klic (kind/beh) -> [soubor, snimek] = a2c6 d0 (work/prog.txt)
+  fod: ["FODDERA.LIN", 2], wave: ["FODDERA.LIN", 2],         // 0x8080
+  yel: ["YELLOW.LIN", 0], yellow: ["YELLOW.LIN", 0],         // 0x86da
+  bird: ["BIRD.LIN", 0],                                     // 0x8648
+  mine: ["MINE.LIN", 0],                                     // 0x9b24
+  minecore: ["MINE.LIN", 9],                                 // 0x986e
+  proxmine: ["PROXMINE.LIN", 0],                             // 0xa9f8
+  proxfrag: ["PROXMINE.LIN", 6],                             // 0xaaac
+  flame: ["FLAME.LIN", 0], flameEmitter: ["FLAME.LIN", 0],   // 0xab20/abe6
+  flamePuff: ["FLAME.LIN", 0],                               // 0xab86
+  train: ["TRAIN.LIN", 0], traincar: ["TRAIN.LIN", 2],       // 0x9b8c/9c32
+  mill: ["MILL.LIN", 0],                                     // 0x79e2
+  tank: ["MEDTANK.LIN", 0],                                  // 0x9eec
+  tankTurret: ["MEDTANK.LIN", 4],                            // 0x9fba
+  roto: ["ROTOBASE.LIN", 4],                                 // 0x995c
+  camogun: ["CAMOGUN.LIN", 0],                               // 0xac20
+  popup: ["POPUP.LIN", 0],                                   // 0xa6c6
+  boss: ["GOOSE.LIN", 0], bossPart: ["GOOSE.LIN", 8],        // 0xc7ae/cabe
+  token: ["TOKEN.LIN", 0],                                   // 0x96e6
+  hom: ["HOMING.LIN", 4],                                    // 0x8578
+  plop: ["PLOP.LIN", 0],                                     // 0x8600
+};
+const NODE_NO_SWEEP = new Set(["plop", "tankTurret"]);      // trida bit15
+const DEFAULT_NODE = Object.freeze({ ex: 8, ey: 8, sweeps: true });
+const PLAYER_NODE = DEFAULT_NODE, BOLT_NODE = DEFAULT_NODE;
+const nodeExtentCache = new Map();
+function nodeExtentKey(key) {
+  if (nodeExtentCache.has(key)) return nodeExtentCache.get(key);
+  const gfx = NODE_GRAPHIC[key];
+  let node = DEFAULT_NODE;
+  if (gfx) {
+    const f = frames(gfx[0])[gfx[1]];
+    if (f) node = Object.freeze({ ex: f.ex, ey: f.ey,
+                                  sweeps: !NODE_NO_SWEEP.has(key) });
+  }
+  nodeExtentCache.set(key, node);
+  return node;
+}
+function nodeExtent(o) {
+  return o.nodeExt || (o.nodeExt = nodeExtentKey(o.nodeKey || o.kind || o.beh));
+}
+function nodesTouch(a, ax, ay, b, bx, by) {
+  const dx = Math.abs(Math.floor(ax) - Math.floor(bx));
+  const dy = Math.abs(Math.floor(ay) - Math.floor(by));
+  return (a.sweeps && dx <= a.ex && dy <= a.ey) ||
+         (b.sweeps && dx <= b.ex && dy <= b.ey);
+}
 function outsideCullMargin(x, y, margin) {       // 0x6480, inclusive
   const ix = Math.floor(x), iy = Math.floor(y);
   return ix <= margin || ix >= 320 - margin ||
@@ -3842,7 +3907,7 @@ function damageAir(g, a) {
   killAirCredited(g, a); return true;
 }
 function damageBirdEvent(g, a) {               // 0x8696, +510 i +514
-  const ay = a.y - g.scroll;
+  const ay = a.y - scrollTop(g);
   if ((!a.alive || a.hp <= 0) && !a.townResumeActive) return false;
   if (--a.hp > 0) {
     a.y -= 6;
@@ -3881,7 +3946,9 @@ function hudStatusText(g, prefix = "HELI") {
 }
 function hudInactiveText(g, prefix, lives, score, tokenCount = 0) {
   // 0x740c: inactive slot strida po 128 VBL dynamicky stav a prompt.
-  if ((g.tick | 0) & 0x80)
+  // Citac fp@(-68) bezi od bootu; g.vblBase je jeho faze pri startu
+  // urovne (baseline tape: 172..199 mod 256, viz docs/TOWN-PARITY.md).
+  if (((g.tick | 0) + (g.vblBase | 0)) & 0x80)
     return hudStatusText({ lives, score,
       player: { tokenCount } }, prefix);
   if (g.joinClosed) return "PLEASE WAIT";
@@ -4153,7 +4220,7 @@ function advanceTownHazardField(g, h) {
   else if (++h.at >= h.per) {
     h.at = 0; h.apos = (h.apos + 1) % h.seq.length;
   }
-  const sy = h.y - g.scroll;
+  const sy = h.y - scrollTop(g);
   const margin = h.kind === "proxfrag" ? 0 : -64;
   if (h.kind === "traincar" && Math.floor(sy) >= 272)
     // 0x9c78 testuje az po navratu z prave publikovaneho 0x62d2 fieldu.
@@ -4187,7 +4254,7 @@ function setupTankMotion(g, s, t) {
 }
 function tankTargetAngle(g, s) {                // 0x7312, single-player path
   const p = g.player;
-  return angTo(s.x, s.y - g.scroll,
+  return angTo(s.x, s.y - scrollTop(g),
                p && p.alive ? p.x : 160, p && p.alive ? p.y : 192);
 }
 function finishTankTurn(g, s, purpose) {
@@ -4225,7 +4292,7 @@ function stepTankTurret(g, s) {
     } else finishTankTurn(g, s, s.turretPurpose);
   } else if (s.turretPhase === "prefire") {
     if (--s.turretWait <= 0) {
-      fireCannon(g, s.x, s.y - g.scroll, s.tang, true, false);
+      fireCannon(g, s.x, s.y - scrollTop(g), s.tang, true, false);
       s.turretPhase = "postfire"; s.turretWait = 8;
     }
   } else if (s.turretPhase === "postfire" && --s.turretWait <= 0) {
@@ -4255,7 +4322,7 @@ function detonateProx(g, s) {
   queueTownExplosionTask(g, s.x, s.y, 1, "death-proxmine");
   const p = g.player;
   const tx = p.alive ? p.x : 160, ty = p.alive ? p.y : 192;
-  const base = angTo(s.x, s.y - g.scroll, tx, ty);
+  const base = angTo(s.x, s.y - scrollTop(g), tx, ty);
   for (let k = 0; k < 6; k++)
     spawnProxFragment(g, s, (base + 21 + 42 * k) & 255);
 }
@@ -4291,7 +4358,7 @@ function pulseKillEnemyShot(g, sh, credited) {
   if (sh.dead && !sh.townResumeActive) return;
   if (sh.kind === "hom") {
     if (credited) awardScore(g, 7);
-    queueTownExplosionTask(g, sh.x, sh.y + g.scroll, 33,
+    queueTownExplosionTask(g, sh.x, sh.y + scrollTop(g), 33,
                            "death-homing");
   }
   releaseEnemyShot(g, sh);                    // cannon konci bez exploze
@@ -4433,7 +4500,7 @@ function killPlayer(g) {                       // 0x9306 + 0x714e
   const p = g.player;
   if (!p.alive) return;
   p.alive = false; p.respawnT = 100; p.rank = 0;
-  spawnPlayerBurst(g, p.x, p.y + g.scroll, p.ang);
+  spawnPlayerBurst(g, p.x, p.y + scrollTop(g), p.ang);
 }
 
 /* ---- Odlozene collision callbacky (0x62d2/0x64b6) ----
@@ -4527,7 +4594,7 @@ function dispatchTownShotEvent(g, task) {
     } else damageHazard(g, o);
   } else if (kind === "shot" && o.kind === "hom" && !o.dead) {
     releaseEnemyShot(g, o); awardScore(g, 7);
-    queueTownExplosionTask(g, o.x, o.y + g.scroll, 33, "death-homing");
+    queueTownExplosionTask(g, o.x, o.y + scrollTop(g), 33, "death-homing");
   }
 }
 
@@ -4539,7 +4606,7 @@ function dispatchTownContactEvent(g, task) {
     if (o.dead) return;
     if (o.kind === "hom") {
       releaseEnemyShot(g, o); awardScore(g, 7);
-      queueTownExplosionTask(g, o.x, o.y + g.scroll, 33, "death-homing");
+      queueTownExplosionTask(g, o.x, o.y + scrollTop(g), 33, "death-homing");
     } else releaseEnemyShot(g, o);              // default +514=0x6db4
   } else if (kind === "air") {
     if (!o.alive) return;
@@ -4711,6 +4778,7 @@ function startGame(lv) {
     // (TOWN: 3345 - 96, potvrzeno korelaci baseline t16..t23).
     scroll: m.h - MARGIN - 256 - parsed.lead,
     frac: 0,
+    vblBase: 0,                 // faze VBL citace fp@(-68) pri startu urovne
     // Hracsky struct fp@(11176): +98 prodleva, +100 sila (0x6fde: start 2),
     // +102 citac pickupu, +104 rezim, +106 stit, +108 ochrana (0x9424: 200).
     player: { x: 160, y: 192, ang: 192, alive: true, inv: 200,
@@ -4727,7 +4795,11 @@ function startGame(lv) {
               tokenCount: 0 /* +102: vsechny pickupy, strop 19; HUD /5 + 2 */,
               mode: 0 /* +104 */, reload: 12 /* 0x6fde +98 */,
               rank: 0 /* +110: difficulty accumulator */,
-              respawnT: 0, heliAnimPos: 0, heliAnimFresh: true,
+              // Faze rotoru vuci scroll citaci na startu TOWN je zmerena
+              // z baseline (t17 JEEPHELI#0 @T=83, t19 #2 @T=184):
+              // index = (T + 3) & 7, tj. animator startuje 4 VBL pred
+              // prvnim scroll krokem. Ktery task bezi driv, zatim necteno.
+              respawnT: 0, heliAnimPos: 4, heliAnimFresh: true,
               weaponX: 160, weaponY: 192 },
     nextBobOrdinal: 1,
     nextLife: 10000,   // extra zivot: prvni na 10k, pak po 30k (0x7116)
@@ -4766,7 +4838,7 @@ function startGame(lv) {
   g.player.x = startPos.x; g.player.y = startPos.y;
   g.player.weaponX = startPos.x; g.player.weaponY = startPos.y;
   applyWeaponTable(g.player);                 // 0x70c8: start = power2/reload11
-  for (const s of g.spawns) s.armed = (s.y - g.scroll) < -32;
+  for (const s of g.spawns) s.armed = (s.y - scrollTop(g)) < -32;
   if (state.titleMod) { state.titleMod.stop(); state.titleMod = null; }
   $("#levelpick").style.display = "none";
   $("#gamewrap").style.display = "";
@@ -4805,16 +4877,36 @@ window.addEventListener("keyup", e => {
 });
 
 /* ---- logika (50 Hz) ---- */
+/* 0x6430: uzel +496/+498 se plni z +320/+324 pri RESUME tasku, tedy
+   pozici, kterou telo spocitalo v predchozim VBL a kterou 0x642c prave
+   publikuje jako BOB. Sweep 0xffff na konci VBL N proto porovnava pozice
+   snimku N (v konvenci prepisu: pozice z konce minuleho step()); callback
+   v N+1 pak uz cte o jeden pohyb novejsi +320/+324. Bolty hybe 0xfffe
+   updater tesne pred sweepem, ty jsou cerstve. Zmereno baseline t19:
+   exploze FODDERA clena 0 (EXPL1#8) lezi ~4 px = jeden tik pohybu pod
+   kontaktni pozici dy = -20. Cerstvy uzel bez snapshotu bere zivou pozici
+   (a2c6 -> 0x6dce nuluje pozici, prvni resume ji doplni tymz VBL). */
+function nodePos(g, o, liveX, liveY) {
+  const s = o.nodeSnap;
+  return s && s.tick === (g.tick | 0) - 1 ? s : { x: liveX, y: liveY };
+}
+function snapNode(g, o, x, y) { o.nodeSnap = { x, y, tick: g.tick | 0 }; }
+
 function step(g) {
   advanceTownSfxClock(g);                      // CIAB IRQ 0x4abc pred schedulerem
   g.tick++;
   stepFade(g);
   stepPostLifeSequence(g);
-  const oldScroll = g.scroll;
-  g.scroll -= SCROLL * TICK * (g.scrollMul || 1);   // scroll nahoru
-  let scrollDelta = g.scroll - oldScroll;
+  const oldTop = scrollTop(g);
+  g.scroll -= SCROLL * TICK * (g.scrollMul ?? 1);   // scroll nahoru (fixture: 0 = stoji)
+  // fp@(3542) je WORD = cela cast 16.16 citace (0x1da6: +0x4000 za VBL),
+  // takze screen-y objektu i kompenzace bitu 4 (+372, 0x6434) pracuji s
+  // celociselnym scrollem, ktery skoci o 1 px kazde 4 VBL. Zmereno:
+  // spojity prah aktivoval prvni FODDERA vlnu o 3 tiky (8 px) pozdeji
+  // nez original (baseline t19).
+  let scrollDelta = scrollTop(g) - oldTop;
   if (g.scroll <= 0) {
-    g.scroll = 0; scrollDelta = -oldScroll;
+    g.scroll = 0; scrollDelta = -oldTop;
     g.won = true; g.over = true;
   }
   const p = g.player;
@@ -4971,7 +5063,7 @@ function step(g) {
     // +367 bit4 compensation probehla pro existujici task uz v jeho
     // priority/bobOrdinal resume. Prave aktivovany a2c6 child ji nema.
     if (a.kind === "fod") {
-      const sy = a.y - g.scroll;
+      const sy = a.y - scrollTop(g);
       // SUB.W #1,+276; BCC skip: vystreli az pri podteceni 0 -> $ffff.
       // Zadny visibility ani alive gate; 0x95d2 pouzije ulozeny player slot.
       if (a.shooter && (a.cool-- | 0) === 0) {
@@ -4980,7 +5072,7 @@ function step(g) {
       }
       stepFodderMotion(a);                      // 0x62d2 az po countdownu/rane
     } else if (a.kind === "yel") {             // YELLOW 0x86bc
-      const sy = a.y - g.scroll;
+      const sy = a.y - scrollTop(g);
       if (activated || --a.ct <= 0) {
         a.ct = 15;
         const target = yellowTarget(g);
@@ -5001,7 +5093,7 @@ function step(g) {
   }
   for (const a of g.air) {
     if (!a.alive) continue;
-    const sy = a.y - g.scroll;
+    const sy = a.y - scrollTop(g);
     // FODDERA 0x80c8 / YELLOW 0x8716 / BIRD 0x868a -> 0x6480:
     // posledni BOB+node zustane ve fieldu N, release prijde az v N+1.
     if (outsideCullMargin(a.x, sy, -64)) a.retireAfterField = true;
@@ -5021,7 +5113,7 @@ function step(g) {
 
   // mapove objekty -> prelozene korutiny (dispatch 0x7462)
   for (const s of g.spawns) {
-    const esy = s.y - g.scroll;
+    const esy = s.y - scrollTop(g);
     if (!s.taskStarted && s.armed && esy >= -256)
       startMapObjectTask(g, s);                 // map-reader prefetch
     // radek "vystrelil" trigger jen pri prekroceni vstupniho marginu
@@ -5169,7 +5261,7 @@ function step(g) {
       }
     }
     if (!s.born || !s.alive) continue;
-    s.sy = s.y - g.scroll;
+    s.sy = s.y - scrollTop(g);
 
     if (s.beh === "mine") {
       if (++s.at >= 2) {                        // 0x9b44: 0..7 / 2 t
@@ -5189,9 +5281,9 @@ function step(g) {
       }
     } else if (s.beh === "mill") {
       // +367 bit4 od sy=24 se provedl na zacatku taskova resume.
-      const shotSy = s.y - g.scroll;            // 0x629c resume pred 0x62d2
+      const shotSy = s.y - scrollTop(g);            // 0x629c resume pred 0x62d2
       s.y += s.vy;
-      const sy = s.y - g.scroll;
+      const sy = s.y - scrollTop(g);
       if (s.rotorFresh) s.rotorFresh = false;
       else s.rotorTick = (s.rotorTick + 1) & 7;
       // 0x6480 cull se vyhodnoti pred navratem z waitu a pripadnou salvou.
@@ -5297,7 +5389,7 @@ function step(g) {
         s.unfoldWait = 10;                      // 0xc82e
       }
       if (s.rotorActive) s.rotorTick = (s.rotorTick + 1) & 7;
-      let bsy = s.y - g.scroll;
+      let bsy = s.y - scrollTop(g);
       if (s.st === 0) {                         // nalet zdola az na y 72
         if (s.arrived) {                        // resume po poslednim blink BOBu
           s.st = 1; s.vy = 0; s.hp = 25;        // nejprve cekani 0xc85e
@@ -5306,7 +5398,7 @@ function step(g) {
           s.rotorActive = true; s.rotorTick = 0;// secondary 0x93e2
         } else {
           s.y += s.vy;
-          bsy = s.y - g.scroll;
+          bsy = s.y - scrollTop(g);
           if (positionWord(bsy) <= 72)
             s.arrived = true;                    // tento frame jeste ingress
         }
@@ -5338,7 +5430,7 @@ function step(g) {
             // 0xc926 propadne primo do 0xc930 -> 0x62cc: jediny pohyb
             // tohoto resume je prvni -4px escape field.
             s.y += s.vy;
-            if (outsideCullMargin(s.x, s.y - g.scroll, -64))
+            if (outsideCullMargin(s.x, s.y - scrollTop(g), -64))
               s.retireAfterField = true;
           } else {
             // 0xc882: zrychleni 1536/65536 k hraci, vx orezane na <-2, 1>
@@ -5366,7 +5458,7 @@ function step(g) {
           }
         } else if (s.st === 3) {
           s.y += s.vy;
-          if (outsideCullMargin(s.x, s.y - g.scroll, -64))
+          if (outsideCullMargin(s.x, s.y - scrollTop(g), -64))
             s.retireAfterField = true;
         }
       }
@@ -5390,7 +5482,7 @@ function step(g) {
     // TRAIN ma +538 vypnute a MILL/GOOSE culluji ve svych vetvich.
     if (s.alive && !["train", "mill", "boss"].includes(s.beh)) {
       const cullMargin = s.beh === "flame" ? -8 : -64;
-      if (outsideCullMargin(s.x, s.y - g.scroll, cullMargin))
+      if (outsideCullMargin(s.x, s.y - scrollTop(g), cullMargin))
         s.retireAfterField = true;
     }
   }
@@ -5449,23 +5541,26 @@ function step(g) {
      prekryvajicich se targetu; nesmime jej odstranit po prvnim z nich. */
   const collisionBullets = g.bullets.filter(b => !b.dead);
   const consumedBullets = new Set();
-  function collectBulletEvent(x, y) {
+  function collectBulletEvent(x, y, node = DEFAULT_NODE) {
     let event = false;
     for (const b of collisionBullets) {
-      if (!projectileNodeHit(b.x, b.y, x, y)) continue;
+      if (!nodesTouch(BOLT_NODE, b.x, b.y, node, x, y)) continue;
       consumedBullets.add(b); event = true;
     }
     return event;
   }
 
+  const pn = nodePos(g, p, p.x, p.y);            // uzel hrace z resume N
   const tokenShotEvents = new Set(), tokenPickupEvents = new Set();
   for (const k of g.tokens) {
     if (k.dead) continue;
-    const ky = k.y - g.scroll;
+    const kn = nodePos(g, k, k.x, k.y - scrollTop(g));
     // Burst vypina callback bit v +508, ne class32 node ani pending +506:
     // event word se zapise a bolt zanikne, ale 0x64b6 callback neprovede.
-    if (collectBulletEvent(k.x, ky)) tokenShotEvents.add(k);
-    if (p.alive && k.interactive && collisionNodeHit(p.x, p.y, k.x, ky))
+    const tokenNode = nodeExtentKey("token");
+    if (collectBulletEvent(kn.x, kn.y, tokenNode)) tokenShotEvents.add(k);
+    if (p.alive && k.interactive &&
+        nodesTouch(PLAYER_NODE, pn.x, pn.y, tokenNode, kn.x, kn.y))
       tokenPickupEvents.add(k);
   }
 
@@ -5474,14 +5569,16 @@ function step(g) {
     if (!s.born || s.beh === "unimplemented" ||
         s.beh === "missing-dispatch") continue;
     if (s.beh === "boss") {
-      const sy = s.y - g.scroll;
-      if (s.alive && s.hp > 0 && collectBulletEvent(s.x, sy))
+      const sn = nodePos(g, s, s.x, s.y - scrollTop(g));
+      if (s.alive && s.hp > 0 &&
+          collectBulletEvent(sn.x, sn.y, nodeExtentKey("boss")))
         bossShotEvents.add(s);
       // HP0 deti nemaji damage callback, class34 ale spotrebuje bullet.
       for (const q of s.parts || []) {
         if (!q.entered || q.alive === false) continue;
-        const qp = bossPartPosition(s, q, g.scroll);
-        collectBulletEvent(qp.x, qp.y);
+        const qp = bossPartPosition(s, q, scrollTop(g));
+        const qn = nodePos(g, q, qp.x, qp.y);
+        collectBulletEvent(qn.x, qn.y, nodeExtentKey("bossPart"));
       }
       continue;
     }
@@ -5490,16 +5587,18 @@ function step(g) {
     // jeste nevydal prvni 0x62d2 BOB/collision node. Skryty parent proto
     // nesmi na sve budouci world pozici pohltit player bolt.
     if (s.beh === "tank" && !s.tankSetup) continue;
-    const sy = s.y - g.scroll;
-    if (s.hp > 0 && collectBulletEvent(s.x, sy)) {
+    const sn = nodePos(g, s, s.x, s.y - scrollTop(g));
+    if (s.hp > 0 && collectBulletEvent(sn.x, sn.y, nodeExtent(s))) {
       spawnShotEvents.add(s);
     }
   }
 
   const airShotEvents = new Set();
-  for (const a of g.air)
-    if (a.alive && collectBulletEvent(a.x, a.y - g.scroll))
-      airShotEvents.add(a);
+  for (const a of g.air) {
+    if (!a.alive) continue;
+    const an = nodePos(g, a, a.x, a.y - scrollTop(g));
+    if (collectBulletEvent(an.x, an.y, nodeExtent(a))) airShotEvents.add(a);
+  }
 
   const hazardShotEvents = new Set();
   for (const h of g.hazards) {
@@ -5507,14 +5606,17 @@ function step(g) {
     // Consumed core a FLAME emitter stale maji shootable node, ale callback ne.
     const blocks = h.hp > 0 || h.kind === "flameEmitter" ||
                    (h.kind === "minecore" && h.consumed);
-    if (!blocks || !collectBulletEvent(h.x, h.y - g.scroll)) continue;
+    const hn = nodePos(g, h, h.x, h.y - scrollTop(g));
+    if (!blocks || !collectBulletEvent(hn.x, hn.y, nodeExtent(h))) continue;
     if (h.hp > 0 && !h.consumed) hazardShotEvents.add(h);
   }
 
   const homingShotEvents = new Set();
-  for (const sh of g.shots)
-    if (!sh.dead && sh.kind === "hom" && collectBulletEvent(sh.x, sh.y))
-      homingShotEvents.add(sh);
+  for (const sh of g.shots) {
+    if (sh.dead || sh.kind !== "hom") continue;
+    const hn = nodePos(g, sh, sh.x, sh.y);
+    if (collectBulletEvent(hn.x, hn.y, nodeExtent(sh))) homingShotEvents.add(sh);
+  }
 
   // Player eventy se berou ze stejneho pred-callback snapshotu. Target,
   // ktery soucasne zabil bolt, proto porad nastavi player death bit1.
@@ -5526,35 +5628,44 @@ function step(g) {
   let lethalContact = false;
   if (p.alive) {
     for (const sh of g.shots) {
-      const overlaps = sh.kind === "can"
-        ? projectileNodeHit(sh.x, sh.y, p.x, p.y)
-        : collisionNodeHit(p.x, p.y, sh.x, sh.y);
+      const hn = nodePos(g, sh, sh.x, sh.y);
+      const overlaps = nodesTouch(nodeExtent(sh), hn.x, hn.y,
+                                  PLAYER_NODE, pn.x, pn.y);
       if (!sh.dead && overlaps) {
         contactShots.push(sh); playerAttribution.add(sh); lethalContact = true;
       }
     }
     for (const a of g.air) {
-      if (a.alive && collisionNodeHit(p.x, p.y, a.x, a.y - g.scroll)) {
+      const an = nodePos(g, a, a.x, a.y - scrollTop(g));
+      if (a.alive && nodesTouch(PLAYER_NODE, pn.x, pn.y,
+                                nodeExtent(a), an.x, an.y)) {
         contactAir.add(a); playerAttribution.add(a); lethalContact = true;
       }
     }
     for (const s of g.spawns) {
       if (!s.born) continue;
       if (s.beh === "boss") {
-        const sy = s.y - g.scroll;
-        if (s.alive && s.hp > 0 && collisionNodeHit(p.x, p.y, s.x, sy)) {
+        const sn = nodePos(g, s, s.x, s.y - scrollTop(g));
+        if (s.alive && s.hp > 0 &&
+            nodesTouch(PLAYER_NODE, pn.x, pn.y,
+                       nodeExtentKey("boss"), sn.x, sn.y)) {
           contactBoss.add(s); lethalContact = true;
         }
         for (const q of s.parts || []) {
           if (!q.entered || q.alive === false) continue;
-          const qp = bossPartPosition(s, q, g.scroll);
-          if (collisionNodeHit(p.x, p.y, qp.x, qp.y)) lethalContact = true;
+          const qp = bossPartPosition(s, q, scrollTop(g));
+          const qn = nodePos(g, q, qp.x, qp.y);
+          if (nodesTouch(PLAYER_NODE, pn.x, pn.y,
+                         nodeExtentKey("bossPart"), qn.x, qn.y))
+            lethalContact = true;
         }
         continue;
       }
       if (!s.alive) continue;
       if (s.beh === "tank" && !s.tankSetup) continue;
-      const overlap = collisionNodeHit(p.x, p.y, s.x, s.y - g.scroll);
+      const sn = nodePos(g, s, s.x, s.y - scrollTop(g));
+      const overlap = nodesTouch(PLAYER_NODE, pn.x, pn.y,
+                                 nodeExtent(s), sn.x, sn.y);
       if (overlap) playerAttribution.add(s);
       if (s.beh === "mill" && overlap) {
         contactMill.add(s); lethalContact = true;
@@ -5562,7 +5673,9 @@ function step(g) {
     }
     for (const h of g.hazards) {
       if (!h.alive) continue;
-      const overlap = collisionNodeHit(p.x, p.y, h.x, h.y - g.scroll);
+      const hn = nodePos(g, h, h.x, h.y - scrollTop(g));
+      const overlap = nodesTouch(PLAYER_NODE, pn.x, pn.y,
+                                 nodeExtent(h), hn.x, hn.y);
       if (overlap) playerAttribution.add(h);
       if (h.kind === "proxfrag" && overlap) {
         contactFrag.add(h); lethalContact = true;
@@ -5612,6 +5725,20 @@ function step(g) {
   for (const o of smartCredited) o.collisionPlayerCredit = true;
 
   for (const b of consumedBullets) b.collisionConsumed = true;
+
+  // 0x6430: uzly pro pristi sweep = pozice publikovane v tomto fieldu.
+  snapNode(g, p, p.x, p.y);
+  for (const k of g.tokens) snapNode(g, k, k.x, k.y - scrollTop(g));
+  for (const s of g.spawns) {
+    snapNode(g, s, s.x, s.y - scrollTop(g));
+    for (const q of s.parts || []) {
+      const qp = bossPartPosition(s, q, scrollTop(g));
+      snapNode(g, q, qp.x, qp.y);
+    }
+  }
+  for (const a of g.air) snapNode(g, a, a.x, a.y - scrollTop(g));
+  for (const h of g.hazards) snapNode(g, h, h.x, h.y - scrollTop(g));
+  for (const sh of g.shots) snapNode(g, sh, sh.x, sh.y);
 
   if (p.alive && lethalContact &&
       !((p.bubbleTimer | 0) || (p.inv | 0))) {

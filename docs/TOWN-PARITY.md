@@ -290,11 +290,61 @@ ne 4; bile blikani spawn ochrany 8/8 je na snimcich videt.
   (`0x709a`) — 4 zivoty se ukazuji jako „3".
 - **`tools/compare.py`** — treti kontrakt: snimek originalu vs prepis
   (prevedeny `VAMIGA_LUT`) na presne zmerenem radku mapy (start t17 =
-  radek 3228), tolerance 8/kanal, ratchet jen roste. Stav checkpointu
-  `start`: **celek 100.0 %, teren 100.0 %, HUD 100.0 %, HELI 99.7 %**;
+  radek 3228), tolerance 8/kanal, ratchet jen roste. Stav statickeho
+  checkpointu `start` (do 2026-09-03; od te doby simulace, viz nize):
+  **celek 100.0 %, teren 100.0 %, HUD 100.0 %, HELI 99.7 %**;
   ratchet 99.0 %. Historie: 20.1 % (zavedeni) → 22.5 % (kalibrace) →
   76.8 % (LUT misto zapecene palety) → 99.2 % (radek 3228) → 100 %
   (linearni HUD/COLOR07).
+
+### Druhe vytezky baseline — prvni FODDERA vlna (2026-09-03)
+
+Checkpointy jsou od ted **simulace**: `startGame(0)` a `ticks` kroku
+`step()` bez vstupu (baseline drzi joystick v klidu); `row` je zaroven
+kontrola scrollu. Tape-zavisle vstupy dodava recept checkpointu: faze VBL
+citace (`vblBase`) a RNG prvni vlny (`fodder.x/vx`).
+
+- **kolizni box neni 8/8**: `0x6dce` sice instaluje uzel `+488` s extenty
+  `+12/+14 = 8/8`, ale kazdy `a2c6` objekt jej hned prepise pres `0x6d7c`
+  slovy `+16/+18` zaznamu snimku sveho d0, ktera loader `0x457e` plni
+  **bajty 8/9 hlavicky dilu .LIN** (do ted „neznama" dvojice). FODDERA#2 =
+  10/20, YELLOW#0 9/17, BIRD#0 11/19, MINE#0 12/14, MINE#9 (core) 14/14,
+  POPUP#0 17/15, MEDTANK#0 12/11, ROTOBASE#4 15/16, TRAIN#0 29/25,
+  PROXMINE#0 10/11, FLAME#0 14/11, CAMOGUN#0 10/13, MILL#0 13/14,
+  TOKEN#0 10/10, HOMING#4 11/11, GOOSE#0 9/19 / #8 12/17. Hrac
+  (`0x9430/0x9438` → `0x6dc8`), bolty (`0x8e72/0x90da`) a cannon
+  (`0x960e`) zustavaji u 8/8. Sweep `0x6ec2` testuje **pozici** souseda
+  proti **vlastnimu** boxu (inclusive) a tridy si zapisuji navzajem; uzel
+  s tridou bit15 (PLOP, MEDTANK vez) sam nesweepuje. Dotyk dvou uzlu je
+  tedy sjednoceni obou smeru (`nodesTouch`, tabulka `NODE_GRAPHIC`).
+  Dukaz: t19 ma EXPL1#8 (smrt clena 0 kontaktem s chranenym hracem) na
+  (157,176); s 8/8 vychazel #7 na (155,184), s 10/20 sedi.
+- **uzel se plni pri resume** (`0x6430`, pred bit4 kompenzaci `0x6446`):
+  sweep na konci VBL N porovnava pozice, ktere telo spocitalo v N−1 a
+  ktere `0x642c` prave publikuje jako BOB; callback v N+1 uz cte o jeden
+  pohyb novejsi `+320/+324`. Prepis si proto na konci sweepu uklada
+  snapshot (`snapNode`, platny jen pro tick+1) a pristi sweep cte ten.
+  Bez toho lezela exploze o 4 px (jeden tik pohybu FODDERA) vys.
+- **faze rotoru**: t17 a t18 maji JEEPHELI#0, t19 #2 (index 3 skriptu
+  `0,1,0,2,0,3,0,4`, perioda 1). Pri T19 = 184 (fit vlny, 98.5 % vs
+  97.1 % pro 183) je `index = (T + 3) & 7`; startovni `heliAnimPos = 4`.
+  Radek 3228 dovoluje T17 ∈ 81..84 (word = 3249 − ceil(T/4)), rotor #0
+  vyzaduje liche T → T17 = 83, tj. `wait` vAmigy ma jitter jednoho
+  snimku (odstup t17→t19 je 101).
+- **faze HUD prompt/stav**: `0x740c` prepina po 128 VBL podle citace
+  `fp@(-68)` od bootu; z PRESS FIRE (t17, t18, t19, t23) a JEEP (t20,
+  t21) plyne faze pri startu urovne 172..199 mod 256 → `vblBase = 186`.
+- **scroll word**: `fp@(3542)` je WORD; screen-y = world-y − floor(scroll)
+  (`scrollTop`), bit4 kompenzace i camera delta boltu jsou celociselne
+  (1000.0 → 999.75 uz je delta −1).
+- Stav checkpointu: `start` (T=83) **99.9 % / teren 99.9 / HUD 100 /
+  HELI 99.7** (ratchet 99.0); `wave` (T=184) **99.0 % / 99.0 / 100 /
+  99.9** (ratchet 98.5). Historie `wave`: 97.6 (8/8, plovouci scroll) →
+  97.7 (boxy z hlavicky) → 98.5 (uzel z resume) → 99.0 (HUD faze).
+- **dalsi snimky**: t20 (T≈234) ukazuje smrt hrace (`0x88fc` spirala
+  16× EXPL1, skore 360 = tri FODDERA), t21 spiralu dal, t23 (T≈384)
+  bily obrys vrtulniku pri respawnu, zivoty 2, PRESS FIRE — kandidati
+  na checkpointy `death` a `respawn`.
 
 ### Regionalni vizualni kontrakt (`tools/compare.py`, 2026-09-01)
 

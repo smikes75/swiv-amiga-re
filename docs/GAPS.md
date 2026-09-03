@@ -167,6 +167,15 @@ Sweep na konci VBL N pouze ORne event word; objekt jej zpracuje po svem
 dalsim resume ve VBL N+1 (`0x62d2`/`0x64b6`) v poradi bitu
 `0,3,4,1,2,5`.
 
+Doplneno 2026-09-03 (baseline t19): kolizni boxy nejsou 8/8, ale bajty
+8/9 hlavicky .LIN snimku z `a2c6` d0 (`0x6d7c`), a sweep cte pozice uzlu
+z RESUME (`0x6430`), tedy o jeden pohyb starsi nez callback v N+1. Viz
+`ENGINE.md` „Collision scheduling" a `TOWN-PARITY.md` „Druhe vytezky".
+Otevrene: zda animator hrace startuje 4 VBL pred scrollem nebo scroll
+4 VBL po nem (zmerena jen faze `index = (T+3)&7`), a presna hodnota
+`vblBase` (okno 172..199) — obojí chce vzorkovani po snimcich, ktere
+RetroShell `wait` v sekundach nedava.
+
 Browser sweep ted stejne pouze ORuje pending masku do kazdeho zasazeneho
 nodu a oznaci player bolty ke spotrebovani. Na zacatku N+1 existujici tasky
 resumeuji v creation poradi: nejprve se smaze stary hit flag, pak se cte
