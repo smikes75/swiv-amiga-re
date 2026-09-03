@@ -1263,3 +1263,73 @@ Objekt s HP 0 proto nereaguje na nic, dokud korutina sama nepovoli bity
 
 Zname a prijate odchylky: vazane deti (hlaven XEVIOUS#0, vez _PLAT) se
 polohuji v kroku hazardu, tedy o tik za rodicem (0.5 px pri 0.5 px/t).
+
+## RIVER (prepsano 2026-09-03; overeno simulaci `build/survey/river/`)
+
+### SKYEYEA (0x0009 → 0x75f8)
+
+- Stejna formace jako SKYEYEB: `x = −16`, `+276 = 7`,
+  `0xa2a2(−40, 0, 6, −1)` = sest kusu s poctem otacek 7..2.
+- `a2c6(SKYEYEA#0, 34, **192**, HP 1, 30 bodu, cost 10)` — aktivace az na
+  radku 192, tedy u spodniho okraje; `+538 = −1` (bez cullu),
+  `+367 |= 16` (obrazovka), `z = 32`.
+- `0x72a6` (poloha hrace 1): je-li **y hrace >= vlastniho** (bez
+  znamenka), objekt prevezme jeho radek (`0x7638`) — nalet je tedy vzdy
+  po rade hrace. Je-li **x hrace >= 160**, krok `+278 = −16` a uhel 0;
+  jinak zrcadlo `x = 320 − x`, krok `+16` a uhel 128. Oproti SKYEYEB
+  (`0x76ec`) jsou kroky prohozene, takze se toci na opacnou stranu.
+- Rychlost `+356 = 768` = 3 px/t (SKYEYEB ma 896). Snimek se bere
+  tabulkou `0x76cc` pres `0xa268` (16 polozek, index
+  `((uhel + 8) & 240) >> 4`): polozka 0 = #8, polozky 8..15 = #0..#7;
+  polozky 1..7 (`0x2200`) jsou pro pouzite uhly nedosazitelne.
+  **`0x6d7c` meni i kolizni uzel**, proto `nodeKey` skyeyea0..8.
+- Nalet konci, jakmile `144 < x < 176`; pak `+538 = 0`, wait 10 a
+  `+276`× { wait 4, uhel += krok, `0x65f2`, novy snimek }. Na konci
+  **jen pri obtiznosti >= 4** mireny kanon `0x95d2` (`0x76b0`), pak
+  `0x62cc`.
+- Simulace: sest kusu zrozeno v tiku 968 na radku hrace (192), nalet
+  zprava 3 px/t, spirala po 4 ticich s uhly 144..240 a snimky #1..#7.
+
+### HOVER (0x082a → 0xb466)
+
+- `a2c6(HOVER#0, 36, −48, HP 10, 90 bodu, cost 15)`, `+376 = 0x88ec`
+  (osm chvostu jako DADA), `+328 z = 2`, `+367 |= 1` (bez stinu), vazana
+  sukne `0x6144(0xb512)`.
+- Typ 1 (jediny v mape): `+336 vy = 1`, `+332 vx = +0.5`, a je-li
+  `x >= 160`, `negl` → −0.5, tedy vzdy ke stredu.
+- Po `0x9afa(100)`: anim `0x0b4c4` HOVER#1..#5 perioda 5 s `end(0)`
+  (drzi #5), `+348 ay = −2048/65536` (brzdi klesani), wait 23, raketa
+  `0x6178(0xb532)`, wait 25, `ay = +4096/65536`, wait 50, `vx = 0`,
+  `ay = 0`, `0x62cc`.
+- **Sukne `0xb512`:** `a2c6(HOVER#6, 36, −48, HP 0, 0 bodu, cost 0)`,
+  `+367 |= 12` (blika s rodicem, vazane dite s nulovym ofsetem, protoze
+  vznika jeste pred nastavenim rychlosti).
+- **Raketa `0xb532`:** `a2c6(HOVER#7, 34, −48, HP 10, 50 bodu, cost 10)`,
+  `+364 = −8`, `0x6d96`, `+340 vz = 1` do `z >= 32`, pak `vz = 0` a
+  `+336 vy = 0.25`; po `0x9afa(224)` smycka `0xb57c`: uhel z bajtu
+  `+276` (kladny bajt se neguje, zaporny se pouzije primo → 0, 240, 224,
+  … 144, 128, 144, …), jeden rovny granat `0x95ca` a `0x629a` = wait 1.
+  Strili tedy **kazdy tik** dokola, dokud ji nekdo nezastreli.
+- Simulace: zrozeni 4048 (x 79.5), raketa v tiku +150, palba od radku
+  224 s krokem uhlu 16 za tik.
+
+### LAKESUB (0x0029 → 0xb34a) — ponorka
+
+- `a2c6(LAKESUB#0, 36, 64, HP 6, 80 bodu, cost 17)`, anim `0x0b360`
+  (perioda 6: #1, #2, #3, #4; pak perioda 12 smycka #5, #4) = vynoreni.
+- Wait 40, vez `0x614a(0xb3a8)`, wait 70, anim `0x0b392` (perioda 6:
+  #4, #3, #2, #1, **kill(0)**) = ponor. `0x8800` v animaci vola
+  `fp@(-1414)`, tedy tiche zabiti bez skore a bez vybuchu.
+- **Vez `0xb3a8`:** `a2c6(LAKESUB#0, 0, 0, HP 0, 0 bodu, cost 5)`,
+  `0x6d96`, `+367 |= 13` (bez stinu, blika s rodicem, vazane dite),
+  `+340 vz = 1` = ofset nad rodicem; anim `0x0b3ce` (perioda 6: #7, #8,
+  #9, #10, #10, #9, #8, #7, #6, kill) — vez zije 54 tiku. Po wait 26
+  zamiri na hrace (`0x7312` + `0x65be`) a v **jednom tiku** vypali pet
+  strel `0x6178(0xb41a)` s krokem uhlu 51.
+- **Strela `0xb41a`:** `a2c6(LAKESUB#11, 6, −16, HP 0, 0 bodu, cost 1)`,
+  `+364 = 0`, `+356 = 384` = 1.5 px/t ve zdedenem uhlu, `z = 0`; v
+  kazdem tiku, kdy je cele slovo `z` nulove: `+340 vz = 2`,
+  `+352 az = −6144/65536` a cakanec `0x6178(0x9358)` — strela se odrazi
+  po hladine (parabola ~43 tiku, vrchol z 21).
+- Simulace: zrozeni 3980 na radku 64, vez v tiku +40, pet strel v tiku
+  +66, ponor a tichy zanik v +180; odrazy s cakanci po ~43 ticich.
