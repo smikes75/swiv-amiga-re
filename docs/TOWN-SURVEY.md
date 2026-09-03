@@ -79,6 +79,13 @@ Nesedi nebo neoverene:
 1. ~~Retezeni map (bod 1)~~ — hotovo tyz den (`parseMapChain`, viz
    GAPS 9); dvojice t273..t321 sedi na teren DESERTu i jeho prvni objekty.
 2. ~~Zachyt tanku po 1 s a oprava MEDTANK~~ — sedi, nic k oprave.
-3. Vrstva vylepseni (interpolace poloh mezi tiky, subpixelovy scroll, volba
-   50/60/120 Hz, skalovani), prepinac original/vylepseno.
+3. Vrstva vylepseni — **prvni krok hotov**: prepinac „vylepseno (plynuly
+   pohyb)" v testovaci liste (`state.smooth`). Logika bezi presne jako
+   original (50 Hz, cela cisla), renderer pri kazdem snimku displeje
+   interpoluje scroll (alpha·0.25 px) a polohy vsech BOB zaznamu (klic
+   id+ordinal) mezi poslednimi dvema tiky a kresli do plochy skalovane
+   S-krat (`renderSmoothField`, sprity z indexovych snimku paletou radku
+   vcetne fade a COLOR07). Zbyva: interpolace HW spritu (bolty, cannon,
+   PLOP), volba obnovovaci frekvence je dana displejem (rAF), skalovani/CRT
+   uz existuje. Vychozi rezim zustava original, kontrakty se ho drzi.
 4. Rozhodnout, zda modelovat zpomaleni scrollu pri zatezi.

@@ -58,6 +58,7 @@ a { color:#cfe0ff }
   </div>
   <div id="testbar" style="margin-top:6px;font:12px monospace;color:#9ab">
     <label><input type="checkbox" id="crtchk"> CRT</label>
+    &nbsp;&middot;&nbsp; <label><input type="checkbox" id="smoothchk"> vylep&#353;eno (plynul&#253; pohyb)</label>
     &nbsp;&middot;&nbsp; &#x2665; <input type="number" id="livesbox" value="4" min="1" max="99"
       style="width:3.5em;font:inherit">
     &nbsp;&middot;&nbsp; scroll <input type="range" id="scrollpct" min="25" max="200" step="5"
@@ -1724,6 +1725,8 @@ function composeTownBobs(g, top) {
   function enqueue(spec) {
     if (!spec.primary) return;
     const batch = standardBobRecords(spec, serial);
+    // ordinal objektu drzi zaznam i pro parovani poloh mezi tiky (smooth)
+    for (const r of batch.records) r.ordinal = spec.ordinal;
     records.push(...batch.records); serial = batch.nextSerial;
     if (spec.primaryOp)
       for (const r of batch.records)
@@ -4945,6 +4948,10 @@ function startGame(lv) {
 /* ---- testovaci lista (CRT, zivoty, rychlost scrollu) ---- */
 document.getElementById("crtchk").onchange = e =>
   document.getElementById("crtfx").style.display = e.target.checked ? "" : "none";
+// Rezim "vylepseno": logika zustava 50 Hz jako original, renderer pri kazdem
+// snimku displeje interpoluje scroll i polohy BOBu mezi poslednimi dvema
+// tiky (viz renderSmoothField). Vychozi je original (kontrakty).
+document.getElementById("smoothchk").onchange = e => { state.smooth = e.target.checked; };
 document.getElementById("livesbox").onchange = e => {
   const g = state.g; if (!g) return;
   g.lives = Math.max(1, +e.target.value || 4);
@@ -5864,23 +5871,119 @@ function step(g) {
 }
 
 /* ---- kresleni ---- */
+/* ---- Rezim "vylepseno": temporalni interpolace nad indexovym kompozitorem.
+   Herni logika bezi presne jako original (50 Hz, celociselny scroll a
+   polohy), jen obraz se mezi dvema tiky doplnuje: scroll o alpha*0.25 px
+   a kazdy BOB zaznam (paruje se klicem id+ordinal) linearne mezi polohou
+   z predchoziho a aktualniho tiku. Kresli se do plochy skalovane S-krat,
+   takze krok je 1/S px. Sprity se prevadeji z indexovych .LIN snimku
+   paletou radku (copper checkpointy + fade + COLOR07 puls); stin a
+   secondary (0x0B0A) = barva 0, bily flash = barva 9. HUD prouzek se
+   prebira z klasickeho snimku. Pixelova presnost tady neni cilem. */
+function smoothBobKey(r) {
+  return r.id + "#" + (Number.isInteger(r.ordinal) ? r.ordinal : "s" + r.serial);
+}
+function smoothSpriteCanvas(spr, palWords, op, c07) {
+  const cache = spr.smoothCache || (spr.smoothCache = new Map());
+  let key = op + ":" + (c07 === undefined ? "" : c07) + ":";
+  for (let i = 0; i < 16; i++) key += palWords[i].toString(16) + ",";
+  let cv = cache.get(key);
+  if (cv) return cv;
+  cv = document.createElement("canvas");
+  cv.width = Math.max(1, spr.w); cv.height = Math.max(1, spr.h);
+  const img = cv.getContext("2d").createImageData(cv.width, cv.height);
+  const d = img.data;
+  for (let i = 0; i < spr.w * spr.h; i++) {
+    const c = spr.pix[i];
+    if (c === 0xFF) continue;
+    let word;
+    if (op === BOB_CLEAR_INDEX0) word = palWords[0];
+    else if (op === BOB_FILL_INDEX9) word = palWords[9];
+    else word = (c === 7 && c07 !== undefined) ? c07 : palWords[c];
+    const o = i * 4;
+    d[o] = ((word >> 8) & 15) * 17; d[o + 1] = ((word >> 4) & 15) * 17;
+    d[o + 2] = (word & 15) * 17; d[o + 3] = 255;
+  }
+  cv.getContext("2d").putImageData(img, 0, 0);
+  cache.set(key, cv);
+  return cv;
+}
+function renderSmoothField(ctx, g, S, composed) {
+  const alpha = Math.max(0, Math.min(1, g.frac / TICK));
+  const mul = g.scrollMul ?? 1;
+  const scrollF = Math.max(0, Math.min(g.mapH - 256,
+                                       g.scroll - alpha * SCROLL * TICK * mul));
+  const topI = Math.floor(scrollF), fy = scrollF - topI;
+  const rows = Math.min(257, g.mapH - topI);
+  const st = state.smoothState || (state.smoothState = {});
+  if (!st.buf || st.rows !== rows) {
+    st.rows = rows; st.buf = new Uint8ClampedArray(320 * rows * 4);
+    st.img = new ImageData(st.buf, 320, rows);
+    st.cv = document.createElement("canvas"); st.cv.width = 320; st.cv.height = rows;
+  }
+  colorizeIndexedRows(g.mapIndex, 320, state.mapMeta.height, state.mapMeta.margin,
+                      topI, rows, state.copperChecks, st.buf,
+                      g.fadeBlack, g.fadeWhite);
+  st.cv.getContext("2d").putImageData(st.img, 0, 0);
+  const pal = compileCopperPaletteLines(state.copperChecks, state.mapMeta.height,
+                                        state.mapMeta.margin, topI, rows,
+                                        g.fadeBlack, g.fadeWhite);
+  const c07 = g.lv === 0 && g.townColor07Enabled !== false && !g.fadeBlack
+    ? townObjectColor07Word(g.tick) : undefined;
+  ctx.save();
+  ctx.imageSmoothingEnabled = false;
+  ctx.scale(S, S);
+  ctx.drawImage(st.cv, 0, -fy);
+  const cur = g.bobCur, prev = g.bobPrev;
+  for (const r of composed.ordered) {
+    if (!r.spr) continue;
+    const key = smoothBobKey(r);
+    const p = prev ? prev.byKey.get(key) : null;
+    const wyC = cur.top + r.y, wyP = p ? prev.top + p.y : wyC;
+    const x = p ? p.x + (r.x - p.x) * alpha : r.x;
+    const sy = wyP + (wyC - wyP) * alpha - scrollF;
+    const row = Math.max(0, Math.min(rows - 1, Math.floor(sy)));
+    const cv = smoothSpriteCanvas(r.spr, pal.subarray(row * 16, row * 16 + 16),
+                                  r.op, c07);
+    ctx.drawImage(cv, x + r.spr.ox, sy + r.spr.oy);
+  }
+  // HUD prouzek (5. bitplane) z klasickeho snimku
+  if (!st.hud) { st.hud = document.createElement("canvas"); st.hud.width = 320; st.hud.height = 16; }
+  st.hud.getContext("2d").putImageData(g.mapFrame, 0, 0, 0, 0, 320, 16);
+  ctx.drawImage(st.hud, 0, 0);
+  ctx.restore();
+}
+
 function frame(now) {
   const g = state.g;
   if (!g) { state.loopRunning = false; return; }
   if (!g.last) g.last = now;
   let dt = Math.min(0.1, (now - g.last) / 1000); g.last = now;
   g.frac += dt;
-  while (g.frac >= TICK) { g.frac -= TICK; if (!g.over) step(g); }
+  let stepped = 0;
+  while (g.frac >= TICK) { g.frac -= TICK; if (!g.over) { step(g); stepped++; } }
 
   const cv = $("#game"), ctx = cv.getContext("2d");
-  const scale = Math.max(1, Math.floor(Math.min(
-    (window.innerWidth - 40) / 320, (window.innerHeight - 160) / 256))) * 1.5;
+  const fit = Math.max(1, Math.floor(Math.min(
+    (window.innerWidth - 40) / 320, (window.innerHeight - 160) / 256)));
+  const scale = fit * 1.5;
+  // Vylepseny rezim kresli do plochy skalovane S-krat, aby sly polohy
+  // interpolovat po 1/S px; original zustava 320x256 (putImageData).
+  const smooth = !!state.smooth && !g.over;
+  const S = smooth ? Math.max(1, Math.min(4, fit)) : 1;
+  if (cv.width !== 320 * S) { cv.width = 320 * S; cv.height = 256 * S; }
   cv.style.width = (320 * scale) + "px"; cv.style.height = (256 * scale) + "px";
   ctx.imageSmoothingEnabled = false;
   const top = Math.max(0, Math.min(g.mapH - 256, Math.floor(g.scroll)));
   if (!g.mapFrame)
     g.mapFrame = new ImageData(new Uint8ClampedArray(320 * 256 * 4), 320, 256);
   const composed = composeTownBobs(g, top);
+  if (smooth && (stepped || !g.bobCur)) {
+    // polohy publikovane v tomto tiku; predchozi tik drzi g.bobPrev
+    g.bobPrev = stepped ? g.bobCur : null;
+    g.bobCur = { top, byKey: new Map(composed.ordered.map(r =>
+      [smoothBobKey(r), { x: r.x, y: r.y }])) };
+  }
   colorizeIndexedField(composed.index, 320, 256, state.mapMeta.height,
                        state.mapMeta.margin, top, state.copperChecks,
                        g.mapFrame.data, g.fadeBlack, g.fadeWhite,
@@ -5892,7 +5995,12 @@ function frame(now) {
   compositeHudPlane(composed.index, 320, g.mapFrame.data, hudPlane.bytes,
                     g.tick, highColors, !g.hudCopperPrimed);
   g.hudCopperPrimed = true;
-  ctx.putImageData(g.mapFrame, 0, 0);
+  if (smooth) {
+    renderSmoothField(ctx, g, S, composed);
+    ctx.save(); ctx.scale(S, S);
+  } else {
+    ctx.putImageData(g.mapFrame, 0, 0);
+  }
   const wpc = palAtImgY(top + 128);       // paleta okna pro letce/strely/hrace
 
   /* Diagnosticka stara Canvas cesta zustava kratce dostupna pro porovnani,
@@ -6096,6 +6204,7 @@ function frame(now) {
   // Jediny 0x3d00/0x3d4e pass pro cannon, PLOP#1 a P1 bolt pool:
   // 64 records, osm channel listu, banky podle channel pair a HW priorita.
   if (!g.over) drawTownHardwareSprites(ctx, g);
+  if (smooth) ctx.restore();
 
   if (g.over) {
     // Po continue + closing fadu uz nesmi pod stat obrazem prosvitat HUD
