@@ -606,9 +606,8 @@ def main():
                   lead: parsed.lead, startScroll: state.g.scroll,
                   objectColors: Array.from(
                     state.copperChecks[0].pal.slice(0, 10)),
-                  allObjectColors: state.copperChecks.every(c =>
-                    c.pal.slice(0, 10).every((word, i) =>
-                      word === TOWN_OBJECT_COLORS[i])),
+                  objectColors104: Array.from(
+                    state.copperChecks[1].pal.slice(0, 10)),
                   color07Ticks,
                   color07Direct: Array.from(color07Direct),
                   color07BlackFade: Array.from(color07BlackFade),
@@ -679,19 +678,28 @@ def main():
                    renderer_core["town"]["lead"] == 96 and
                    renderer_core["town"]["startScroll"] == 3249,
                    "Copper fixture nenacetla skutecnou mapu TOWN")
+            # Objektove barvy zapisuje PAM: hlavicka (ry 96) ma jen 5/8/9,
+            # checkpoint ry=104 doplni 1-4, 6, 7. Zadny engine override;
+            # drivejsi tmavsi "zmerena" sada byla gamma krivka emulatoru.
             expect(renderer_core["town"]["objectColors"] ==
-                   [0x000, 0x333, 0x465, 0x598, 0x765,
-                    0x666, 0x9A9, 0x800, 0xED6, 0xEEE],
-                   "TOWN nema zmerenou COLOR00-09 objektovou paletu: %s" %
-                   renderer_core["town"]["objectColors"])
-            expect(renderer_core["town"]["allObjectColors"] is True and
-                   renderer_core["town"]["color07Ticks"] ==
+                   [0x000, 0x000, 0x000, 0x000, 0x000,
+                    0x888, 0x000, 0x000, 0xFE8, 0xFFF] and
+                   renderer_core["town"]["objectColors104"] ==
+                   [0x000, 0x555, 0x687, 0x7BA, 0x987,
+                    0x888, 0xBCB, 0xB30, 0xFE8, 0xFFF],
+                   "TOWN nema PAM objektovou paletu (ry 96 / ry 104): %s / %s" %
+                   (renderer_core["town"]["objectColors"],
+                    renderer_core["town"]["objectColors104"]))
+            expect(renderer_core["town"]["color07Ticks"] ==
                    [0x800, 0x800, 0x900, 0xF00, 0xF00, 0xF00,
                     0xF00, 0xE00, 0x800, 0x800, 0x800] and
                    renderer_core["town"]["color07Direct"] ==
-                   [236, 0, 0, 255] and
+                   [255, 0, 0, 255] and
+                   # hlavicka PAM (ry 96) COLOR07 nezapisuje (az ry 104 = b30);
+                   # pri black fadu se CPU writer 0x28fe preskoci, takze
+                   # fixture s hlavickovou paletou da cernou
                    renderer_core["town"]["color07BlackFade"] ==
-                   [68, 0, 0, 255],
+                   [0, 0, 0, 255],
                    "TOWN COLOR07 nema nativni 8..15..8 trojuhelnik/fade: %s" %
                    renderer_core["town"])
             expect(renderer_core["town"]["checks"] ==
@@ -735,17 +743,17 @@ def main():
                    },
                    "BOB depth/shadow/clear fixture nesedi s 0x481a/0x6364: %s" %
                    renderer_core["bob"])
-            # RGB hodnoty zahrnuji zmerene COLOR00-09 drzené pres vsechny
-            # TOWN checkpointy. Legacy varianta naopak propusti pozdejsi PAM
-            # prepis indexu a na kontrolnich 21 radcich se lisi 21 pixely.
+            # RGB hodnoty jdou cistě z PAM checkpointu (vcetne objektovych
+            # barev z ry 104); legacy varianta se lisi jen na hranici
+            # checkpointu (21 pixelu na kontrolnich 21 radcich).
             expect(renderer_core["mapIndex"] == {
                      "size": [320, 3761],
                      "full": "3d426f35", "initial": "5870b220",
-                     "initialRgb": "d0f33b44",
-                     "legacyRgba": "ccfec5ff",
+                     "initialRgb": "89a47b97",
+                     "legacyRgba": "b6e13bf7",
                      "differing": {
                        "top": 1454, "rows": 21,
-                       "correct": "9390eae6", "legacy": "ef98f632",
+                       "correct": "7f08f24f", "legacy": "2813671f",
                        "pixels": 21
                      }
                    },
@@ -757,7 +765,7 @@ def main():
                    colorizer["rejected"] == 3,
                    "indexovy colorizer nema bezpecne horni/dolni hranice: %s" %
                    colorizer)
-            expect(colorizer["runtime"] == "9390eae6" and
+            expect(colorizer["runtime"] == "7f08f24f" and
                    colorizer["runtimeMismatches"] == 0,
                    "viditelny runtime nepouziva presnou scanline paletu: %s" %
                    colorizer)
@@ -840,13 +848,13 @@ def main():
                    "COLOR17..31 se nezachovaji behem black fade: %s" %
                    native_hud["retained"])
             expect(native_hud["firstPixel"][0] == 0 and
-                   native_hud["firstPixel"][2:] == [106,106,197,255],
+                   native_hud["firstPixel"][2:] == [136,136,221,255],
                    "HUD maska nema steady COLOR16 na prvnim tahu: %s" %
                    native_hud["firstPixel"])
             expect(native_hud["effectiveRows"] ==
-                   [["106,106,197"],["141,141,216"],
-                    ["178,178,236"],["178,178,236"],["178,178,236"],
-                    ["141,141,216"],["106,106,197"]],
+                   [["136,136,221"],["170,170,238"],
+                    ["204,204,255"],["204,204,255"],["204,204,255"],
+                    ["170,170,238"],["136,136,221"]],
                    "HUD nesmi zdedit lower4 ani blikajici sprite banky: %s" %
                    native_hud["effectiveRows"])
 
@@ -992,10 +1000,10 @@ def main():
                    hw_allocator["pool"] == [1,1,False,30],
                    "HW source/geometry/30-slot pool nesedi: %s" % hw_allocator)
             expected_hw_banks = [
-                [[236,236,236],[123,123,123],[178,0,0]],
-                [[236,236,236],[123,123,123],[236,236,0]],
-                [[236,236,236],[123,123,123],[236,178,0]],
-                [[236,236,236],[123,123,123],[106,0,0]]]
+                [[255,255,255],[153,153,153],[204,0,0]],
+                [[255,255,255],[153,153,153],[255,255,0]],
+                [[255,255,255],[153,153,153],[255,204,0]],
+                [[255,255,255],[153,153,153],[136,0,0]]]
             expect(hw_allocator["banks"] == expected_hw_banks and
                    hw_allocator["whiteBanks"] == expected_hw_banks and
                    hw_allocator["layering"] ==
@@ -1082,9 +1090,9 @@ def main():
               };
             }""")
             expect(set(cannon_palette["frame28"]) ==
-                   {"236,236,236", "123,123,123", "178,0,0"} and
+                   {"255,255,255", "153,153,153", "204,0,0"} and
                    set(cannon_palette["frame44"]) ==
-                   {"236,236,236", "123,123,123"},
+                   {"255,255,255", "153,153,153"},
                    "kanonovy granat nema bilou/sedou HW-sprite paletu")
             expect(cannon_palette["accents"] ==
                    [0xC00, 0xFF0, 0xFC0, 0x800, 0xF80, 0xF00, 0xC00, 0xFF0,

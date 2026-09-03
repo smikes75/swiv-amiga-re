@@ -29,14 +29,38 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CACHE = os.path.join(ROOT, "build", "baseline")
 CROP = (62, 18, 640, 256)        # obsah v 716x285 texture, 2:1 -> 320x256
 FRAME_SIZE = (320, 256)
-TOLERANCE = 24                   # na kanal; kryje zbytek capture profilu
+TOLERANCE = 8                    # na kanal; VAMIGA_LUT je presna na +-1
+
+# vAmiga (v5.0b1, vychozi monitor) neprevadi RGB12 linearne (n*17): Denise
+# PixelEngine linearizuje CRT gammou 2.8 a re-koduje 1/2.2. Tabulka je
+# zmerena ze snimku na registrech znamych z kodu a dat: HUD COLOR16
+# 0x88D/0xAAE/0xCCF (0x5b4e), teren 0x653/0x542 (PAM), bila 0xfff, a
+# sedi objektu 0x555/0x888/0xbcb (PAM ry=104). Prepis renderuje n*17,
+# proto se pred porovnanim prevede touto tabulkou.
+VAMIGA_LUT = [0, 0, 0, 28, 43, 56, 72, 89, 106, 123, 141, 159, 178, 197, 216, 236]
+
+
+def to_vamiga(image):
+    """Prevede snimek prepisu (RGB12 * 17) na zobrazeni vAmigy."""
+    from PIL import Image
+    src = image.load()
+    out = Image.new("RGB", image.size)
+    dst = out.load()
+    w, h = image.size
+    for y in range(h):
+        for x in range(w):
+            r, g, b = src[x, y]
+            dst[x, y] = (VAMIGA_LUT[min(15, round(r / 17))],
+                         VAMIGA_LUT[min(15, round(g / 17))],
+                         VAMIGA_LUT[min(15, round(b / 17))])
+    return out
 
 # name: cas snimku originalu v sekundach po fire, zmereny radek mapy
 # v img souradnicich prepisu a minimalni whole-frame shoda v %.
 CHECKPOINTS = {
-    # Po TOWN palete a kalibraci registrovych barev: 22.5 %. Dominantni
-    # zbytek je sumova textura terenu - LCG neni generator hry.
-    "start": {"t": 17, "row": 3229, "floor": 22.0},
+    # Radek zmereny posunem proti baseline (3228). S PAM paletou a
+    # prevodem VAMIGA_LUT: teren 100 %, HELI 99.7 %, celek 99.2 %.
+    "start": {"t": 17, "row": 3228, "floor": 99.0},
 }
 
 
@@ -123,7 +147,8 @@ def remake_frames(row):
             }""", row)
         finally:
             browser.close()
-    return {name: _decode_data_url(data) for name, data in encoded.items()}
+    return {name: to_vamiga(_decode_data_url(data))
+            for name, data in encoded.items()}
 
 
 def _pixel_changed(a, b, x, y):

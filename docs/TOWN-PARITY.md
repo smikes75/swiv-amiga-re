@@ -261,30 +261,40 @@ start ma velkou budovu vlevo nahore a diagonalni silnici; HUD originalu
 po spawnu ukazuje **3 zivoty** (spotreba jednoho pri spawnu, `0x709a`),
 ne 4; bile blikani spawn ochrany 8/8 je na snimcich videt.
 
-### Prvni vytezky baseline (2026-09-01)
+### Prvni vytezky baseline (2026-09-01, opraveno 2026-09-03)
 
-- **objektova paleta COLOR00-09** pro TOWN, zmerena pixel-fitem spritu
-  proti snimkum (JEEPHELI#0 kotva presne (160,192), YELLOW#0 a MEDTANK;
-  neshoda 0.000): `000 333 465 598 765 666 9a9 800 ed6 eee`. Uvodni
-  davka PAM tyto barvy neurcuje (ma 5=888, 9=fff a zbytek 0). Aktualni
-  TOWN-only aplikace drzi fitted desitku ve vsech 13 checkpointech;
-  prvni implementace z `abc853e` nechavala pozdejsi PAM zapis stejneho
-  indexu znovu vyhrat, coz je uz opraveno (podrobne vyse). V AMPROG
-  tabulka techto slov neni; zrejme ji sklada kod nebo lezi v loaderu.
+- **gamma profil emulatoru**: vAmiga (v5.0b1, vychozi monitor) neprevadi
+  RGB12 linearne (`nibble*17`); Denise PixelEngine linearizuje CRT gammou
+  2.8 a re-koduje 1/2.2. Zmereno na registrech znamych z kodu a dat (HUD
+  COLOR16 `0x88D/0xAAE/0xCCF`, teren `0x653/0x542` z PAM, bila `0xfff`,
+  sedi `0x555/0x888/0xbcb` z PAM ry=104): nibble 0..15 →
+  `0 0 0 28 43 56 72 89 106 123 141 159 178 197 216 236`
+  (`VAMIGA_LUT` v `tools/compare.py`). Prepis renderuje presne `n*17`;
+  prevod je vec porovnani, ne palety.
+- **objektova paleta COLOR01-09**: zapisuje ji sam PAM checkpointem na
+  ry=104 hned za uvodni davkou (`1=555 2=687 3=7ba 4=987 6=bcb 7=b30`;
+  `5=888 8=fe8 9=fff` ma uz hlavicka). Drivejsi „zmerena" tmavsi sada
+  `333/465/598/765/666/9a9/800/ed6/eee` byla presne tato paleta
+  posunuta gamma krivkou — artefakt mereni, ne engine override; z
+  `game.html` je odstranena. COLOR07 navic kazdy VBL prepisuje CPU
+  cervenym trojuhelnikem 8..15..8 (`0x2b3e`).
+- **„sum" terenu neexistuje**: krapani je soucast kobercovych dlazdic
+  (`_HOUSES#1` ma v datech smes indexu 10/11/12), zadny generator, zadne
+  roviny 0/2 se sumem. Strip je kruhovy 320 radku (`0x341a`), pas se maze
+  jen v rovinach 1 a 3 (`0x34f2`). Render z dlazdic je proti originalu
+  pixelove presny; zdanlivy sum byla gamma krivka plus 1px posun radku.
 - **start okna**: uvodni davka prikazu spotrebuje `parsed.lead` px
   (TOWN 96) a original je nikdy neukaze. Presny start je
   `3345 - 96 = 3249`; korelace snimku t16–t23 dala `3245 ± 8`.
 - **HUD zivoty**: zobrazene cislo je pocet po spotrebe spawnu
-  (`0x709a`) — 4 zivoty se ukazuji jako „3“.
+  (`0x709a`) — 4 zivoty se ukazuji jako „3".
 - **`tools/compare.py`** — treti kontrakt: snimek originalu vs prepis
-  na presne zmerenem radku mapy, tolerance 24/kanal a ratchet, ktery smi
-  jen rust. Prvni verze mela na checkpointu `start` whole shodu 20.1 %;
-  po kalibraci palety a HUD je aktualni shoda 22.5 % a ratchet 22.0 %.
-- **dominantni zbytkovy rozdil**: sumova textura terenu. Roviny 0 a 2
-  nesou predgenerovany sum, ktery se sklada i pres dlazdice (silnice:
-  original index 14 = 10|sum2, prepis 11 = 10|sum1) — nas LCG neni
-  generator hry. Dalsi krok: najit generator (okoli `0x34f2`), nebo
-  sum vytezit ze snimku (je staticky ve strip prostoru).
+  (prevedeny `VAMIGA_LUT`) na presne zmerenem radku mapy (start t17 =
+  radek 3228), tolerance 8/kanal, ratchet jen roste. Stav checkpointu
+  `start`: **celek 100.0 %, teren 100.0 %, HUD 100.0 %, HELI 99.7 %**;
+  ratchet 99.0 %. Historie: 20.1 % (zavedeni) → 22.5 % (kalibrace) →
+  76.8 % (LUT misto zapecene palety) → 99.2 % (radek 3228) → 100 %
+  (linearni HUD/COLOR07).
 
 ### Regionalni vizualni kontrakt (`tools/compare.py`, 2026-09-01)
 

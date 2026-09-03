@@ -15,13 +15,15 @@ Zaznam mapy jsou 4 bajty ctene jako big-endian long D:
                        x      = (D >> 20)       (12 bitu; >=416 -> -512 a
                                                  snizeni vrstvy, viz 0x36cc)
 
-Paleta: barvy 0-9 jsou spolecne (objekty), 10-15 teren. Prazdne pozadi
-neni plocha: engine maze pas do rovin 1 a 3 hodnotou -1 (0x34f2), ale
-roviny 0 a 2 nese predgenerovana sumova textura, ktera vymaz prezije.
-Prazdny pixel ma tedy index 10 | sum0 | sum2<<2, cili 10/11/14/15 -
-tmave krapani terenu. Hustoty zmerene z videa skutecne hry: rovina 0
-~36 %, rovina 2 ~17 %. Presny generator hry jsme zatim nehledali;
-render pouziva deterministicky LCG (v Pythonu i JS tentyz).
+Paleta: barvy 0-9 jsou spolecne (objekty; PAM je zapisuje checkpointem
+hned za uvodni davkou, v TOWN na ry 104), 10-15 teren. "Krapani" terenu
+NENI zadny sumovy generator: je to soucast kobercovych dlazdic (napr.
+_HOUSES#1 ma v datech smes indexu 10/11/12) a render z dlazdic je proti
+snimkum originalu pixelove presny (tools/compare.py, teren 100 %).
+Drivejsi domnenka o sumu v rovinach 0/2 vznikla z gamma krivky emulatoru
+(nibble 5 se ve vAmize zobrazi jako 56, ne 85) a 1px posunu radku.
+Engine maze pas stripu do rovin 1 a 3 hodnotou -1 (0x34f2, strip je
+kruhovy 320 radku, 0x341a).
 
 Slovnik urovne (tabulka 0x384c v AMPROG, 6 B na uroven: word ID pam
 souboru 90+n, word offset slovniku, word krok map-readeru -> fp@(144),

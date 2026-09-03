@@ -343,21 +343,13 @@ function parsePam(pam, dico) {
   return { tiles, objs, checks, height: y, lead: Math.max(0, lead) };
 }
 
-/* COLOR00-09 jsou sdilene barvy objektu, nikoli terrain checkpointy PAM.
-   Tohle jsou canvas RGB12 kompenzace z pixel-fitu JEEPHELI/YELLOW/
-   MEDTANK/GOOSE proti vystupu emulatoru, ne tvrzeni o HW registrech.
-   Musi zustat stejne pres vsechny checkpointy;
-   kdybychom prijali zdanne zmeny PAM od y=104, GOOSE dostane prokazatelne
-   chybnou smisenou paletu 555/687/7ba/987/bcb/b30. */
-const TOWN_OBJECT_COLORS = [0x000, 0x333, 0x465, 0x598, 0x765,
-                            0x666, 0x9A9, 0x800, 0xED6, 0xEEE];
-function applyTownObjectPalette(checks) {
-  for (const check of checks)
-    for (let i = 0; i < TOWN_OBJECT_COLORS.length; i++)
-      check.pal[i] = TOWN_OBJECT_COLORS[i];
-  return checks;
-}
-
+/* COLOR01-09 (sdilene barvy objektu) zapisuje sam PAM: checkpoint ry=104
+   hned za uvodni davkou nastavi 1=555 2=687 3=7ba 4=987 6=bcb 7=b30
+   (5=888, 8=fe8, 9=fff uz ma hlavicka). Drivejsi "zmerena" tmavsi sada
+   (333/465/598/765/666/9a9/800/ed6/eee) byla artefakt gamma krivky
+   emulatoru (vAmiga: CRT 2.8 -> sRGB 2.2; nibble 5 se zobrazi jako 56,
+   ne 85) - viz VAMIGA_LUT v tools/compare.py. Registry drzime presne,
+   prevod na displej je vec porovnani, ne palety. */
 /* 0x2b3e..0x2b5a: pri aktivnim levelu CPU kazdy VBL prepise COLOR07
    cervenym trojuhelnikem 8..15..8, kazda hodnota drzi ctyri VBL.
    Pouziva se mimo jine na pulzujici cervene casti skladaneho GOOSE. */
@@ -387,17 +379,12 @@ function fadeRgb12(rgb12, blackLevel, whiteLevel) {
   return out;
 }
 
-/* Vystup headless vAmiga baseline nema linearni nibble*17 profil.
-   CPU/HW barvy 8..F byly zmereny primo ve snimcich jako tato prevodni
-   rada. Pouzivame ji jen pro skutecna registrova slova (HUD, HW sprity,
-   dynamicky COLOR07); fitted canvas paleta mapy uz kompenzaci obsahuje. */
-const VAMIGA_HIGH_NIBBLE = [106, 123, 141, 159, 178, 197, 216, 236];
+/* Registrove slovo RGB12 -> RGB kanaly. Prepis renderuje presne
+   nibble*17 vsude (HUD, HW sprity, COLOR07 i mapa); gamma profil
+   emulatoru (vAmiga CRT 2.8 -> sRGB 2.2) je vec porovnavani a aplikuje
+   ho tools/compare.py (VAMIGA_LUT) na nas snimek, ne render. */
 function capturedRgb12(word) {
-  const channel = shift => {
-    const nibble = (word >> shift) & 15;
-    return nibble >= 8 ? VAMIGA_HIGH_NIBBLE[nibble - 8] : nibble * 17;
-  };
-  return [channel(8), channel(4), channel(0)];
+  return [((word >> 8) & 15) * 17, ((word >> 4) & 15) * 17, (word & 15) * 17];
 }
 
 /* Sestavi plochou tabulku rows x 16 RGB12 barev pro viditelne scanline.
@@ -496,7 +483,6 @@ function renderMap(state, lv, withObjects) {
   const pam = unpackFile(state.adf, state.files.find(f => f.name === pamName));
   const parsed = parsePam(pam, dico);
   // Zmerena objektova paleta je zatim prokazana pouze pro level 1/TOWN.
-  if (lv === 0) applyTownObjectPalette(parsed.checks);
   const { tiles, objs, checks, height } = parsed;
   // viditelne okno hry = hriste x 0..320: pointer bez posunu, fetch
   // 40 B, modulo 4 na konci radky -> skryty okraj je cely vpravo
@@ -4678,7 +4664,6 @@ function startGame(lv) {
   const { fid, dico } = levelInfo(state.prog, lv);
   const pam = unpackFile(state.adf, state.files.find(f => f.name === state.order[fid]));
   const parsed = parsePam(pam, dico);
-  if (lv === 0) applyTownObjectPalette(parsed.checks);
   // paleta pro sprity: prvni kompletni checkpoint
   const rgb = v => [((v >> 8) & 15) * 17, ((v >> 4) & 15) * 17, (v & 15) * 17];
   state.copperChecks = parsed.checks;
