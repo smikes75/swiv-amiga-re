@@ -360,9 +360,12 @@ Pruchod celym levelem (`TOWN-SURVEY.md`) ukazal dva systemove rozdily:
   hnizdo + strela + velky vybuch `0x8876` (7), DIAGUN + laser (6),
   PYRAMID (4), FISH (17), SKYEYEB (14), FLATTANK (9), GOOSE#7 (7),
   _ONERIG (11), JETS (6), _AIRPORT (4), _RIGS (4), TRUCK (1), INST1#9
-  (2), JEEPHELI#31 = SWAP pad (1) — viz BEHAVIORS „DESERT"; zbyva MAMA 3
-  (minboss s rojem MAMA#3, `0x7baa`), INST1#14 (2, plosina s pistem
-  `0xb6ce`) a INST1#11 (1, tovarna na MEDTANKy `0xb810`, HP 90, 2500 b.).
+  (2), JEEPHELI#31 = SWAP pad (1), MAMA + roj (3), INST1#14 pist +
+  odpalovac (2), INST1#11 tovarna + paprsek (1) — **vsechna chovani
+  DESERTu prepsana** (viz BEHAVIORS „DESERT"). Overeno zatim jen
+  simulaci a archy snimku; porovnani s baseline vAmigy po objektech
+  (jako u TOWN) zbyva. Zvuky DESERTu (`0x5436` strela vejce, `0x541e`
+  paprsek, `0x4e2e` zasah tovarny) zatim bez prepisu.
 - Scroll originalu se pricita jednou za iteraci hlavni smycky (`0x291e`),
   objekty integruji rychlost × ubehle VBL (`0x62fe`); pri zatezi A500 scroll
   zpomali (64–98 px za 8 s misto 100). Prepis bezi konstantne 50 Hz.

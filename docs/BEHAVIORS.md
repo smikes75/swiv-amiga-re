@@ -975,3 +975,80 @@ zabery originalu t437..t447 (`build/survey/shoot/`).
   `fp@(3554)/(3556)`, vynuluje `fp@(3548..3551)` a ceka, dokud
   `fp@(3548)` nekdo nenastavi (logika jeepu; heli bez ucinku). Prepis
   kresli SWAP#1 staticky.
+
+### Vazane deti (`0x6144`, `+367` bit 3) — zmereno na FLATTANK/MAMA
+
+- `0x6144` zaklada dite s `+542 = 0x6db4` (sirotek umira bez vybuchu),
+  `0x614a` totez s vlastnim zaznamem, `0x6178`/`0x617a` kopie s
+  `+542 = −1` (nezavisle). V `0x62d2` (0x62da..0x62f8): ma-li objekt
+  `+367` bit 3 a rodice `+308`, **zkopiruje x/y/z rodice a integruje
+  presne jeden krok vlastni rychlosti** — `+332/+336` jsou tedy pevny
+  ofset vuci rodici (vez MEDTANKu 0, vez FLATTANKu (0, +4), bar MAMA
+  (0, −30)). Bit 2 (`0x63ac`): dite blika spolu s rodicem (`hitFlash`).
+  Prepis: `turretDy`, hazard `mamabar` polohovany z kroku rodice.
+
+### MAMA (0x0025 → 0x7baa) — miniboss s rojem
+
+- `a2c6(MAMA#0, 34, −48, HP 70, 300 bodu, cost 35)`, `+367 |= 0x10`, z 32,
+  rotor `0x93e2`, dite `0x6144(0x7be6)`, `vy = 0x6000/65536 = 0.375 px/t`
+  (obrazovka), `0x62cc`. Smrt = bezny oblacek `0x894a` (z 33).
+- **Bar `0x7be6`:** `a2c6(MAMA#1, 34, −48, HP 0, 0, 0)`, `+538 = −1`, rotor
+  `0x93e2`, `+367 |= 12` (vazany, ofset (0, −30)); wait na radek 48,
+  snimek MAMA#2 (`0x6d76`), wait 4, smycka { dron `0x6144(0x7c44)`, je-li
+  `sy < 208` wait 4 a znovu }, MAMA#1, konec tasku (drony osiri).
+- **Dron `0x7c44`:** `a2c6(MAMA#3, 34, −48, HP 1, 13 bodu, cost 9)` + guard
+  `0x8822`, bit4, z 24, varianta `0x883c & 3`: anim `0x7d2e` #3,#4,#5,#4
+  perioda 3 / `0x7d44` #6,#7,#8,#7 perioda 4 / `0x7d5a` #9,#10,#11,#10
+  perioda 1 / `0x7d70` #12,#13,#14 perioda 3 (loop). `+276 = 0`, `+542 =
+  0x7d84` (sirotek: `+276 = −1`), uhel 192, rychlost 640/256 = 2.5,
+  `+282 = ~vx`. Smycka `0x7cac`: je-li `(slovo vx) ^ +282 < 0`: wait
+  `+280 = (0x883c & 7) + 2`, krok 0; `d1 = 127 − sy`; je-li `d1 ^ (slovo
+  vy) < 0`: `+282 = slovo vx`, krok +10, a je-li `(x − 160) ^ d1 >= 0`
+  krok −10. Uhel += krok, `0x65f2`, wait `+280`; po sireni (`+276`)
+  `0x6d96`, `vy = −2` (slovo), `+350 = 0x4000` (ay 0.25) a pad
+  (`0x62cc`). Prepis `spawnMamaDrone`/`stepMamaDroneBody` (16bitova
+  slova pres `signedWord`).
+- Simulace (`build/survey/d5/`): zrozeni 13928 (x 88), bar od radku 48
+  (tik +400) plni rozpocet (6 dronu pri cost 169), bar konci na radku
+  208 (tik ~+760), drony padaji.
+
+### INST1#14 (0x1c1c → 0xb6ce) — plosina s pistem a odpalovacem
+
+- Rodic: dite `0x6144(0xb71c)` pred `a2c6(INST1#14, 0x8000, −60, HP 0, 0,
+  cost 10)` (trida bit 15 = bez sweepu), `+367 |= 1`, z 2; smycka:
+  snimek INST1#14/#15 podle bitu 1 celeho y pistu (`+312 → a0@(325)`).
+- **Pist `0xb71c`** (nevazany, `+542 = 0x6db4`): `y += 57`,
+  `a2c6(INST1#16 | #17 podle typ ≠ 1, 36, −48, HP 0, 0, cost 15)`, bez
+  stinu, z 1; smycka: wait `150 + (0x883c & 60)`; je-li `fp@(140)` (pocet
+  aktivnich tovaren INST1#11) 0 → znovu; jinak dite `0x6178(0xb7a6)`,
+  27× { yield, y −= 1 }, wait 30, 27× { yield, y += 1 }.
+- **Odpalovac `0xb7a6`:** `a2c6(INST1#3, 4, −32, HP 7, 70 bodu, cost 8)`,
+  z 0, wait 70; smycka `0xb7c2`: `vy 0.5`, wait `50 + (0x883c & 63)`;
+  bez tovarny wait 30; jinak `vy 0`, wait 10, uhel na hrace
+  (`0x72ee`/`0x65be`), homing `0x8530(0, −4, uhel)`, wait 30.
+- `fp@(140)` zvysuje `0xb6ae` (tovarna po radku 84); `0xb6ba` (snizeni)
+  nema v `AMPROG.OBJ` zadneho volajiciho — pisty pracuji i po zniceni
+  tovarny. Prepis `g.inst1Factories`.
+
+### INST1#11 (0x161c → 0xb810) — tovarna na tanky
+
+- Zamek `0x5eda(6)`, `a2c6(INST1#11, 38, −63, HP 90, 2500 bodu, cost 20)`,
+  `+376 = 0xb97c`, handler `0xb8ca` pro bit 0 (`0x653e`) a bity 3+4
+  (`0x6564`), z 16, `0x9ae8(84)` (do radku 84 bez kolizi), `0xb6ae`;
+  smycka: wait 100, `+276−−`, je-li `(+276 & 3) == 0` dite
+  `0x6178(0x9eca)` = MEDTANK typ 3 na `y = fp@(3542) − 16`, `x = 236 +
+  (0x883c & 63)`; 3× `0xb8a6` { anim `0xb8aa` INST1#13, #12, #11 perioda
+  5 (drzi), zvuk `0x541e(x)`, paprsek `0x617a(0xb906)`, wait 40 }.
+- **Paprsek `0xb906`:** `a2c6(INST1#4, 6, −63, HP 0, 0, cost 20)`, z 0,
+  `y += 118`, `x += 1`, anim `0xb92a` perioda 1 #4,#5,#6,#6,#7,#7,#8,#8 +
+  kill (8 tiku), wait 5 (`0x62b8`), trida 0, `0x9b70` do konce animace —
+  smrtici jen prvnich 5 tiku.
+- **Zasah `0xb8ca`:** HP−1; > 0 → zvuk `0x4e2e` + `0xa35a`; jinak skore
+  `+362` obema zivym hracum, je-li `fp@(140) <= 1` `0x8852` (bily
+  zablesk = SMART pulz), `0xa36a`. **Smrt `0xb97c`:** `x += 2`, `+276 =
+  INST1#2`, dite `0x8992` (zapis znicene tovarny do mapy), 4× { `0x8876`
+  na (0,0), (48,−48), (−48,−48), (24,−32), raw wait 20 } = 16 velkych
+  vybuchu, `0x6288`. Prepis `factoryDeath` (booms se zpozdenym startem
+  `t = −1 − 20·kolo`), `addDecal(INST1#2)`, `startWhiteFlash`.
+- Simulace: zrozeni 10540 (x 110), aktivace radek 84 (tik +590), tank
+  z (289, −16) v +690, 3 paprsky po 40 ticich, 90 zasahu → 16 vybuchu.

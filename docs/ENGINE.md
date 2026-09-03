@@ -64,6 +64,7 @@ defaults at `0x61f4+`). Known fields:
 | +486 | cleared on spawn |
 | +508 | saved/restored around waits (`0x9ae8`) |
 | +510..+530 | six collision/event callbacks (default no-op `0x6288`) |
+| +367 bit 3 | linked child: `0x62d2` (0x62da..0x62f8) copies the parent's x/y/z (+320/+324/+328) and integrates exactly one step of the child's own velocity, so `+332/+336` act as a fixed offset (MEDTANK turret 0, FLATTANK turret (0,+4), MAMA bar (0,−30)); bit 2: the child flashes with its parent (`0x63ac`) |
 | +534/+538/+542 | routine pointers; `st` on the first byte makes them negative = disabled, `sf` re-enables. `+534` = smart-bomb handler (called each tick while `fp@(169)`, `a2c6` sets `0xa36a`), `+538` = off-screen cull handler (default `0x6db4` = kill self), `+542` = orphan handler (called each tick when `+308 == 0`; `0x6144` sets `0x6db4`, `0x617a` sets −1) — see `0x6458`–`0x64b4` |
 
 ## Key utilities (by call count, `tools/xref.py`)

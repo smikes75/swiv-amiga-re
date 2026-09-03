@@ -339,6 +339,9 @@ const IMPLEMENTED_BEHAVIORS = new Map([
   [0x003D, { coroutine: 0x8166, id: "onerig" }],
   [0x121C, { coroutine: 0xB954, id: "blinklight" }],
   [0x3E00, { coroutine: 0xACB6, id: "swappad" }],
+  [0x0025, { coroutine: 0x7BAA, id: "mama" }],
+  [0x1C1C, { coroutine: 0xB6CE, id: "piston" }],
+  [0x161C, { coroutine: 0xB810, id: "factory" }],
 ]);
 
 function parsePam(pam, dico, pal0) {
@@ -1824,6 +1827,23 @@ function composeTownBobs(g, top) {
       });
       continue;
     }
+    if (s.beh === "mama") {
+      const rotorVisible = (s.rotorTick & 1) === 0;     // 0x93e2
+      bob("mama", "MAMA.LIN", 0, s.x, sy, 32, {
+        ordinal: s.bobOrdinal,
+        secondaryFile: rotorVisible ? "JEEPHELI.LIN" : undefined,
+        secondaryFrame: 5 + ((s.rotorTick >> 1) & 3),
+        primaryOp: s.hitFlash ? BOB_FILL_INDEX9 : null,
+      });
+      continue;
+    }
+    if (s.beh === "factory") {
+      bob("factory", "INST1.LIN", s.fr, s.x, sy, 16, {
+        ordinal: s.bobOrdinal,
+        primaryOp: s.hitFlash ? BOB_FILL_INDEX9 : null,
+      });
+      continue;
+    }
     if (s.beh === "onerig") {
       // 0x6c82 pomaly rotor (perioda 10, stale videt) do radku 64, pak
       // 0x93e2 (perioda 1, blika, snimky #5..#8 po dvou tikach).
@@ -1856,7 +1876,7 @@ function composeTownBobs(g, top) {
     if (s.beh === "flattank") {
       if (s.turretTask && s.turretTask.alive)
         bob("tank-turret", "MEDTANK.LIN", Math.min(19, 4 + dir16(s.tang)),
-            s.x, sy, 1, { castShadow: false,
+            s.x, sy + 4, 1, { castShadow: false,
                            ordinal: s.turretBobOrdinal,
                            primaryOp: s.hitFlash ? BOB_FILL_INDEX9 : null });
       bob("flattank", "FLATTANK.LIN", s.fr, s.x, sy, 0,
@@ -1898,15 +1918,21 @@ function composeTownBobs(g, top) {
   for (const h of g.hazards || []) {
     if (!h.alive || h.consumed) continue;
     const idx = h.seq ? h.seq[h.apos] : h.frame;
-    const z = h.kind === "minecore" || h.kind === "proxfrag" ? 32
+    const z = h.z != null ? (Math.floor(h.z) | 0)
+            : h.kind === "minecore" || h.kind === "proxfrag" ? 32
             : h.kind === "laser" ? 33 : 0;
+    const flash = h.hitFlash ||
+      (h.flashWithParent && h.parent && h.parent.hitFlash);   // +367 bit 2
+    const rotorVisible = h.rotor && ((h.rotorTick | 0) & 1) === 0;
     bob("hazard-" + h.kind, h.file, idx, h.x, h.y - top, z,
-        { castShadow: false,
+        { castShadow: h.castShadow === true ? undefined : false,
           ordinal: h.bobOrdinal,
           priority: h.bobPriority,
           objectFlags: h.kind === "minecore" || h.kind === "proxfrag" ||
                        h.kind === "laser" ? 1 : 0,
-          primaryOp: h.hitFlash ? BOB_FILL_INDEX9 : null });
+          secondaryFile: rotorVisible ? "JEEPHELI.LIN" : undefined,
+          secondaryFrame: 5 + (((h.rotorTick | 0) >> 1) & 3),
+          primaryOp: flash ? BOB_FILL_INDEX9 : null });
   }
 
   for (const a of g.air || []) {
@@ -3876,6 +3902,8 @@ function startMapObjectTask(g, s) {
     } else if (s.beh === "skyeye") {
       s.x = -16; s.typ = 7;                     // 0x76ec, 0x76fa
       spawnFormationCopies(g, s, 6, -40, 0, -1);// 0xa2a2(-40, 0, 6, -1)
+    } else if (s.beh === "piston") {
+      spawnPistonRod(g, s);                     // 0xb6ce: 0x6144 pred a2c6
     } else if (s.beh === "airplane") {
       // 0x7970: 0x6178 kopie s aktivaci 127 (0x797e), rodic 176 (0x7978).
       s.airMargin = 176;
@@ -4048,6 +4076,12 @@ const NODE_GRAPHIC = {
   airplane: ["_AIRPORT.LIN", 14],                            // 0x7980
   rig: ["_RIGS.LIN", 4],                                     // 0xb22a
   onerig: ["_ONERIG.LIN", 0],                                // 0x8166
+  mama: ["MAMA.LIN", 0],                                     // 0x7baa
+  mamabar: ["MAMA.LIN", 1],                                  // 0x7be6
+  mamadrone: ["MAMA.LIN", 3],                                // 0x7c44
+  launcher: ["INST1.LIN", 3],                                // 0xb7a6
+  factory: ["INST1.LIN", 11],                                // 0xb810
+  beam: ["INST1.LIN", 4],                                    // 0xb906
   tank: ["MEDTANK.LIN", 0],                                  // 0x9eec
   tankTurret: ["MEDTANK.LIN", 4],                            // 0x9fba
   roto: ["ROTOBASE.LIN", 4],                                 // 0x995c
@@ -4094,8 +4128,9 @@ function releaseSpawnTask(g, s) {
   s.alive = false; releaseCost(g, s);
 }
 function deathBoomZ(s) {                       // 0x894a: z rodice + 1
-  if (["mill", "airmine", "tilt", "egg", "goose7", "skyeye", "jetfly"]
-      .includes(s.beh)) return 33;
+  if (["mill", "airmine", "tilt", "egg", "goose7", "skyeye", "jetfly",
+       "mama"].includes(s.beh)) return 33;
+  if (s.beh === "factory") return 17;
   if (["fish", "onerig", "airplane"].includes(s.beh))
     return Math.floor(s.z || 0) + 1;
   return 1;
@@ -4110,6 +4145,13 @@ function killSpawnCredited(g, s) {             // 0xa36a z player eventu
   }
   releaseSpawnTask(g, s);
   awardScore(g, s.scoreValue ?? 100);
+  if (s.beh === "factory") {
+    // 0xb8d8: skore obema zivym hracum, pri fp@(140) <= 1 bily zablesk
+    // 0x8852 (SMART pulz), pak 0xa36a -> +376 = 0xb97c.
+    if ((g.inst1Factories | 0) <= 1) startWhiteFlash(g);
+    factoryDeath(g, s);
+    return;
+  }
   if (s.bigDeath)                              // +376 = 0x8876
     queueTownExplosionTask(g, s.x, s.y, 1, "death-" + s.beh, 0, "big");
   else
@@ -4155,7 +4197,7 @@ function killHazardCredited(g, h) {
   releaseHazard(g, h); awardScore(g, h.scoreValue ?? 0);
   queueTownExplosionTask(g, h.x, h.y,
     h.kind === "minecore" || h.kind === "proxfrag" || h.kind === "laser"
-      ? 33 : 1,
+      ? 33 : h.z ? Math.floor(h.z) + 1 : 1,
     "death-" + h.kind);
 }
 function damageHazard(g, h) {
@@ -4312,6 +4354,123 @@ function spawnFormationCopies(g, s, count, dx, dy, dtyp) {   // 0xa2a2
     g.spawns.push(c);
     s.x += dx; s.y += dy; s.typ = (s.typ | 0) + dtyp;
   }
+}
+function spawnMamaBar(g, s) {                  // 0x7be6 (dite 0x6144)
+  // a2c6(MAMA#1, 34, -48, HP 0, 0 bodu, cost 0), +538 = -1, rotor 0x93e2,
+  // +367 |= 12 (bit 3 = poloha rodice + (vx, vy) = (0, -30) kazdy tik,
+  // bit 2 = blika s rodicem). Wait na radek 48, snimek MAMA#2, wait 4,
+  // pak { dron 0x7c44, je-li sy < 208 wait 4 a znovu }, MAMA#1, konec.
+  const h = { kind: "mamabar", file: "MAMA.LIN", parent: s,
+              x: s.x, y: s.y - 30, z: 32, vx: 0, vy: 0,
+              alive: true, dead: false, hp: 0, cost: 0, budgeted: false,
+              scoreValue: 0, seq: [1], per: 1, apos: 0, at: 0,
+              animFresh: true, noCull: true, lethal: true,
+              castShadow: true, flashWithParent: true, rotor: true,
+              st: 0, t: 0 };
+  assignBobOrdinal(g, h); g.hazards.push(h);
+  s.barTask = h;
+}
+function spawnMamaDrone(g, bar) {              // 0x7c44 (dite 0x6144 baru)
+  // a2c6(MAMA#3, 34, -48, HP 1, 13 bodu, cost 9) + guard 0x8822, bit4,
+  // z 24, varianta animace 0x883c & 3, +542 = 0x7d84 (sirotek: +276 = -1),
+  // uhel 192, rychlost 640/256 = 2.5, +282 = ~vx; smycka 0x7cac.
+  const h = { kind: "mamadrone", file: "MAMA.LIN", parent: bar,
+              x: bar.x, y: bar.y, z: 24, vx: 0, vy: 0, ax: 0, ay: 0,
+              alive: true, dead: false, hp: 1, cost: 9, budgeted: false,
+              scoreValue: 13, scrollLocked: true, lethal: true,
+              castShadow: true, apos: 0, at: 0, animFresh: true,
+              orphan: false, falling: false, t: 0 };
+  if (!reserveCost(g, h)) return;
+  const variant = random32(g) & 3;
+  [h.seq, h.per] = [[[3, 4, 5, 4], 3], [[6, 7, 8, 7], 4],
+                    [[9, 10, 11, 10], 1], [[12, 13, 14], 3]][variant];
+  h.ang = 192; h.spd = 2.5;
+  const v = angVel(h.ang, h.spd); h.vx = v.vx; h.vy = v.vy;
+  h.remember = ~Math.floor(h.vx); h.turn = 0; h.waitN = 0;
+  assignBobOrdinal(g, h); g.hazards.push(h);
+}
+function stepMamaDroneBody(g, h) {             // 0x7cac..0x7d0a
+  const vxw = signedWord(Math.floor(h.vx));
+  if (((vxw ^ h.remember) << 16 >> 16) < 0) {  // EOR.W + BPL: ruzna znamenka
+    h.waitN = (random32(g) & 7) + 2; h.turn = 0;
+    const d1 = signedWord(127 - Math.floor(h.y - scrollTop(g)));
+    const vyw = signedWord(Math.floor(h.vy));
+    if (((d1 ^ vyw) << 16 >> 16) < 0) {
+      h.remember = vxw; h.turn = 10;
+      const dx = signedWord(Math.floor(h.x) - 160);
+      if (((dx ^ d1) << 16 >> 16) >= 0) h.turn = -10;
+    }
+  }
+  h.ang = (h.ang + h.turn) & 255;
+  const v = angVel(h.ang, h.spd); h.vx = v.vx; h.vy = v.vy;
+  h.t = h.waitN;
+}
+function spawnPistonRod(g, s) {                // 0xb71c (dite 0x6144)
+  // y += 57; a2c6(INST1#16 | #17 podle typ != 1, 36, -48, HP 0, 0, cost
+  // 15), +367 |= 1, z 1; smycka: wait 150 + (0x883c & 60); je-li fp@(140)
+  // (pocet aktivnich tovaren) 0, znovu; jinak dite 0xb7a6, 27x y -= 1,
+  // wait 30, 27x y += 1. +542 = 0x6db4: konci s rodicem.
+  const h = { kind: "pistonrod", file: "INST1.LIN", parent: s,
+              x: s.x, y: s.y + 57, z: 1, vx: 0, vy: 0,
+              alive: true, dead: false, hp: 0, cost: 15, budgeted: true,
+              scoreValue: 0, seq: [(s.typ | 0) === 1 ? 16 : 17], per: 1,
+              apos: 0, at: 0, animFresh: true, castShadow: false,
+              armMargin: -48, armed: false, st: 0, t: 0, n: 0 };
+  g.activeCost = (g.activeCost || 0) + h.cost;
+  assignBobOrdinal(g, h); g.hazards.push(h);
+  s.rodTask = h;
+}
+function spawnLauncher(g, rod) {               // 0xb7a6 (dite 0x6178)
+  // a2c6(INST1#3, 4, -32, HP 7, 70 bodu, cost 8), z 0, wait 70; smycka
+  // 0xb7c2: vy 0.5, wait 50 + (0x883c & 63); bez toварны wait 30; jinak
+  // vy 0, wait 10, uhel na hrace (0x72ee/0x65be), homing 0x8530(0, -4),
+  // wait 30.
+  const h = { kind: "launcher", file: "INST1.LIN", parent: null,
+              x: rod.x, y: rod.y, z: 0, vx: 0, vy: 0,
+              alive: true, dead: false, hp: 7, cost: 8, budgeted: true,
+              scoreValue: 70, seq: [3], per: 1, apos: 0, at: 0,
+              animFresh: true, castShadow: false,
+              armMargin: -32, armed: false, st: 0, t: 70 };
+  g.activeCost = (g.activeCost || 0) + h.cost;
+  assignBobOrdinal(g, h); g.hazards.push(h);
+}
+function spawnFactoryBeam(g, s) {              // 0xb906 (dite 0x617a)
+  // a2c6(INST1#4, 6, -63, HP 0, 0, cost 20), z 0, y += 118, x += 1, anim
+  // 0xb92a perioda 1 #4,#5,#6,#6,#7,#7,#8,#8 + kill; wait 5 (0x62b8), pak
+  // trida 0 a 0x9b70 do konce animace. Smrtici jen prvnich 5 tiku.
+  const h = { kind: "beam", file: "INST1.LIN", parent: s,
+              x: s.x + 1, y: s.y + 118, z: 0, vx: 0, vy: 0,
+              alive: true, dead: false, hp: 0, cost: 20, budgeted: true,
+              scoreValue: 0, seq: [4, 5, 6, 6, 7, 7, 8, 8], per: 1,
+              apos: 0, at: 0, animFresh: true, castShadow: false,
+              life: 8, lethalT: 5, lethal: true };
+  g.activeCost = (g.activeCost || 0) + h.cost;
+  assignBobOrdinal(g, h); g.hazards.push(h);
+}
+function spawnFactoryTank(g, s) {              // 0xb862: 0x6178(0x9eca)
+  // Dite MEDTANK typ 3 na y = fp@(3542) - 16 (horni okraj), x = 236 +
+  // (0x883c & 63); bezi jako bezny tank (a2c6 margin -16 = hned).
+  const t = { file: "MEDTANK.LIN", idx: 0, gfx: 3, coroutine: 0x9eca,
+              x: 0, y: scrollTop(g) - 16, typ: 3, alive: true, born: false,
+              beh: "tank", st: 0, t: 0, hp: 2, cool: 60, anim: null,
+              apos: 0, at: 0, fr: -1, mapIndex: s.mapIndex | 0,
+              formationChild: true, taskStarted: true };
+  t.x = 236 + (random32(g) & 63);
+  assignBobOrdinal(g, t);
+  g.spawns.push(t);
+}
+function factoryDeath(g, s) {                  // 0xb97c (+376)
+  // x += 2, +276 = INST1#2 a dite 0x8992 (zapis znicene tovarny do mapy),
+  // 4x { 0x8876 na (0,0), (48,-48), (-48,-48), (24,-32), raw wait 20 }.
+  s.x += 2;
+  addDecal(g, "INST1.LIN", 2, s.x, s.y);
+  for (let round = 0; round < 4; round++)
+    for (const [dx, dy] of [[0, 0], [48, -48], [-48, -48], [24, -32]]) {
+      const boom = spawnBoom(g, s.x + dx, s.y + dy, "big", 1);
+      boom.t = -1 - 20 * round; boom.puffs = true;
+      boom.source = "death-factory";
+      sfxBigExplosion(g, s.x + dx, 20 * round);
+    }
 }
 function spawnJetFly(g, s) {                   // 0x9cde (dite 0x6178)
   // a2c6(JETS#2, 34, 288, HP 2, 90 bodu, cost 15); raw wait 100 (0x5f22,
@@ -4524,6 +4683,76 @@ function decayTrainVelocity(h) {
 function advanceTownHazardField(g, h) {
   if (!h.alive) return;
   const freshField = !!h.animFresh;
+  if (h.armMargin != null && !h.armed) {
+    // a2c6 aktivace potomka na vlastnim radku (rod -48, launcher -32).
+    if (h.y - scrollTop(g) >= h.armMargin) h.armed = true;
+    else return;
+  }
+  if (h.kind === "mamabar") {
+    if (!h.parent.alive) { releaseHazard(g, h); return; }   // +542 0x6db4
+    const sy = h.y - scrollTop(g);
+    if (h.st === 0) {
+      if (sy >= 48) { h.st = 1; h.seq = [2]; h.t = 4; }
+    } else if (h.st === 1 && --h.t <= 0) {
+      spawnMamaDrone(g, h);
+      if (sy < 208) h.t = 4;
+      else { h.seq = [1]; releaseHazard(g, h); }  // 0x7c36 + 0xa34c
+    }
+    return;
+  }
+  if (h.kind === "mamadrone") {
+    if (!h.orphan && (!h.parent.alive)) h.orphan = true;   // 0x7d84
+    h.vy += h.ay; h.x += h.vx; h.y += h.vy;    // housekeeping (obrazovka)
+    if (!h.falling && --h.t <= 0) {
+      if (h.orphan) {                           // 0x7d16: stop, vy -2, ay .25
+        h.vx = 0; h.vy = -2; h.ax = 0; h.ay = 0x4000 / 65536; h.spd = 0;
+        h.falling = true;
+      } else stepMamaDroneBody(g, h);
+    }
+  } else if (h.kind === "pistonrod") {
+    if (!h.parent.alive) { releaseHazard(g, h); return; }   // +542 0x6db4
+    if (h.st === 0) {
+      if (h.t <= 0) h.t = 150 + (random32(g) & 60);
+      else if (--h.t <= 0) {
+        if ((g.inst1Factories | 0) > 0) {
+          spawnLauncher(g, h); h.st = 1; h.n = 27;
+        }
+      }
+    } else if (h.st === 1) {
+      h.y -= 1; if (--h.n <= 0) { h.st = 2; h.t = 30; }
+    } else if (h.st === 2) {
+      if (--h.t <= 0) { h.st = 3; h.n = 27; }
+    } else if (h.st === 3) {
+      h.y += 1; if (--h.n <= 0) { h.st = 0; h.t = 0; }
+    }
+  } else if (h.kind === "launcher") {
+    h.y += h.vy;
+    if (--h.t <= 0) {
+      if (h.st === 0 || h.st === 3 || h.st === 4) {     // 0xb7c2
+        h.vy = 0.5; h.t = 50 + (random32(g) & 63); h.st = 1;
+      } else if (h.st === 1) {
+        if ((g.inst1Factories | 0) > 0) { h.vy = 0; h.t = 10; h.st = 2; }
+        else { h.t = 30; h.st = 4; }
+      } else if (h.st === 2) {
+        const p = g.player;
+        const ang = angTo(h.x, h.y - scrollTop(g), p.x, p.y);
+        fireHoming(g, h.x, h.y - scrollTop(g) - 4, ang, h.vx, h.vy);
+        h.t = 30; h.st = 3;
+      }
+    }
+  } else if (h.kind === "beam") {
+    if (h.lethalT > 0 && --h.lethalT <= 0) h.lethal = false;   // trida 0
+    if (--h.life <= 0) h.retireAfterField = true;              // kill anim
+  }
+  if (h.kind === "mamadrone" || h.kind === "pistonrod" ||
+      h.kind === "launcher" || h.kind === "beam") {
+    if (h.animFresh) h.animFresh = false;
+    else if (++h.at >= h.per) { h.at = 0; h.apos = (h.apos + 1) % h.seq.length; }
+    const sy = h.y - scrollTop(g);
+    if (!h.noCull && h.kind !== "beam" && outsideCullMargin(h.x, sy, -64))
+      h.retireAfterField = true;
+    return;
+  }
   if (h.kind === "minecore" && h.consumed > 0) {
     if ((h.consumedTick | 0) === (g.tick | 0)) return;
     if (--h.consumed <= 0) releaseHazard(g, h);
@@ -4640,7 +4869,8 @@ function stepTankTurret(g, s) {
     } else finishTankTurn(g, s, s.turretPurpose);
   } else if (s.turretPhase === "prefire") {
     if (--s.turretWait <= 0) {
-      fireCannon(g, s.x, s.y - scrollTop(g), s.tang, true, false);
+      fireCannon(g, s.x, s.y - scrollTop(g) + (s.turretDy | 0), s.tang,
+                 true, false);
       s.turretPhase = "postfire"; s.turretWait = 8;
     }
   } else if (s.turretPhase === "postfire" && --s.turretWait <= 0) {
@@ -4700,7 +4930,7 @@ function pulseKillHazard(g, h, credited) {
   if (credited) awardScore(g, h.scoreValue ?? 0);
   queueTownExplosionTask(g, h.x, h.y,
     h.kind === "minecore" || h.kind === "proxfrag" || h.kind === "laser"
-      ? 33 : 1,
+      ? 33 : h.z ? Math.floor(h.z) + 1 : 1,
     "death-" + h.kind);
 }
 function pulseKillEnemyShot(g, sh, credited) {
@@ -5011,12 +5241,14 @@ function dispatchTownContactEvent(g, task) {
     else if (o.beh === "mill" || o.beh === "airmine" || o.beh === "tilt" ||
              o.beh === "fish" || o.beh === "goose7" || o.beh === "skyeye" ||
              o.beh === "jetfly" || o.beh === "airplane" || o.beh === "onerig" ||
+             o.beh === "mama" || (o.beh === "factory" && o.st > 0) ||
              (o.beh === "egg" && o.st === 3))
       damageSpawn(g, o);                       // 0x8510 i pro bit 3 (0x6566)
   } else if (kind === "hazard") {
     if (!o.alive) return;
     if (o.kind === "minecore" && !o.consumed) pickupMineCore(g, o);
     else if (o.kind === "proxfrag" || o.kind === "laser") releaseHazard(g, o);
+    else if (o.kind === "mamadrone") damageHazard(g, o);   // vychozi bit3
   }
 }
 
@@ -5547,8 +5779,10 @@ function step(g) {
         if (s.beh === "wave" || s.beh === "yellow" || s.beh === "bird" ||
             s.beh === "mill" || s.beh === "airmine" || s.beh === "tilt" ||
             s.beh === "diagun" || s.beh === "fish" || s.beh === "goose7" ||
-            s.beh === "truck")
+            s.beh === "truck" || s.beh === "mama")
           margin = -48;
+        else if (s.beh === "piston") margin = -60;    // 0xb6de
+        else if (s.beh === "factory") margin = -63;   // 0xb81c
         else if (s.beh === "skyeye") margin = 24;     // 0x770c
         else if (s.beh === "airplane") margin = s.airMargin; // 0x7978/0x797e
         else if (s.beh === "blinklight") margin = -24;  // 0xb95a
@@ -5635,6 +5869,33 @@ function step(g) {
         s.cost = 13; s.hp = 0; s.scoreValue = 200;
         accountCost(g, s);
         s.fr = 2; s.at = 0; s.st = 0; s.z = 0; s.vz = 0; s.vx = 0; s.vy = 0;
+      } else if (s.beh === "mama") {
+        // 0x7baa: a2c6(MAMA#0, 34, -48, HP 70, 300 bodu, cost 35), bit4,
+        // z 32, rotor 0x93e2, dite 0x7be6 (bar s rojem), vy 0x6000/65536 =
+        // 0.375 px/t na obrazovce, 0x62cc.
+        s.cost = 35; s.hp = 70; s.scoreValue = 300;
+        accountCost(g, s);
+        s.scrollLocked = true; s.z = 32; s.vx = 0; s.vy = 0x6000 / 65536;
+        s.fr = 0; s.rotorTick = 0; s.rotorFresh = true;
+        spawnMamaBar(g, s);
+      } else if (s.beh === "piston") {
+        // 0xb6d6: a2c6(INST1#14, 0x8000, -60, HP 0, 0, cost 10), bez stinu,
+        // z 2; smycka: snimek #14 / #15 podle bitu 1 celeho y pistu
+        // (+312 -> a0@(325)).
+        s.cost = 10; s.hp = 0; s.scoreValue = 0;
+        accountCost(g, s);
+        s.fr = 14;
+      } else if (s.beh === "factory") {
+        // 0xb810: zamek 0x5eda(6), a2c6(INST1#11, 38, -63, HP 90, 2500 bodu,
+        // cost 20), +376 = 0xb97c, handlery 0xb8ca (bit 0, 3, 4), z 16,
+        // 0x9ae8(84) (do radku 84 bez kolizi = HP 0), 0xb6ae (fp@(140)++),
+        // smycka: wait 100, +276--, (+276 & 3) == 0 -> MEDTANK 0x9eca,
+        // 3x { anim 0xb8aa #13,#12,#11 perioda 5, zvuk 0x541e, paprsek
+        // 0xb906, wait 40 }.
+        s.cost = 20; s.hp = 0; s.armedHp = 90; s.scoreValue = 2500;
+        accountCost(g, s);
+        s.fr = 11; s.z = 16; s.st = 0; s.t = 0; s.cyc = s.typ | 0;
+        s.beams = 0; s.at = 0; s.bigDeath = false;
       } else if (s.beh === "jet0") {
         // 0x9ca0: a2c6(JETS#0, 36, -32, HP 18, 90 bodu, cost 15); wait na
         // radek 100 (0x9afa), pak vx -0.5, vy +0.5 (mapove), wait na radek
@@ -5729,9 +5990,10 @@ function step(g) {
         // +374 = 5 (dekal EXPL1#0), +397 |= 1, anim 0x9e38 #0..#3 perioda
         // 2 loop, uhel 64 a rychlost 32/256 = 0.125 px/t (0x65f2), 0x62cc.
         s.cost = 12; s.hp = 5 + (g.difficulty | 0); s.scoreValue = 50;
-        accountCost(g, s);
+        accountCost(g, s);                     // 0x6144 dite: linked (bit 3)
         s.ang = 64; s.vx = 0; s.vy = 0.125; s.fr = 0; s.at = 0;
         spawnTankTurret(g, s);
+        s.turretDy = 4;                         // 0x9e0c: +336 = 4 = ofset y
         // Gate (12-D)<<4 tiku bezi od startu tasku 256 px nad oknem,
         // pri aktivaci (-16) je tedy davno otevrena.
         s.turretStartTick = (g.tick | 0) - 1024;
@@ -5899,6 +6161,40 @@ function step(g) {
     if (s.beh === "mine") {
       if (++s.at >= 2) {                        // 0x9b44: 0..7 / 2 t
         s.at = 0; s.fr = (s.fr + 1) & 7;
+      }
+    } else if (s.beh === "mama") {
+      s.y += s.vy;                              // housekeeping (obrazovka)
+      if (s.rotorFresh) s.rotorFresh = false;
+      else s.rotorTick = (s.rotorTick + 1) & 7;
+      const bar = s.barTask;
+      if (bar && bar.alive) {                   // bit 3: poloha rodice + (0,-30)
+        bar.x = s.x; bar.y = s.y - 30; bar.z = s.z;
+        bar.rotorTick = s.rotorTick;
+      }
+    } else if (s.beh === "piston") {
+      const rod = s.rodTask;
+      if (rod && rod.alive) s.fr = (Math.floor(rod.y) & 2) ? 15 : 14;
+    } else if (s.beh === "factory") {
+      if (s.fr > 11 && ++s.at >= 5) { s.at = 0; s.fr--; }   // 0xb8aa
+      if (s.st === 0) {
+        if (s.sy >= 84) {                       // 0x9ae8 hotovo, 0xb6ae
+          s.hp = s.armedHp; g.inst1Factories = (g.inst1Factories | 0) + 1;
+          s.st = 1; s.t = 100;
+        }
+      } else if (s.st === 1) {
+        if (--s.t <= 0) {
+          s.cyc = (s.cyc - 1) & 0xFFFF;
+          if ((s.cyc & 3) === 0) spawnFactoryTank(g, s);
+          s.beams = 3; s.st = 2;
+        }
+      }
+      if (s.st === 2) {                         // 0xb8a6: anim + paprsek
+        s.fr = 13; s.at = 0;
+        sfxGenericHit(g, s.x);                  // 0x541e(x): zvuk paprsku
+        spawnFactoryBeam(g, s);
+        s.t = 40; s.st = 3;
+      } else if (s.st === 3 && --s.t <= 0) {
+        if (--s.beams > 0) s.st = 2; else { s.st = 1; s.t = 100; }
       }
     } else if (s.beh === "jet0") {
       if (s.st === 0) {
@@ -6542,6 +6838,7 @@ function step(g) {
       if ((s.beh === "mill" || s.beh === "airmine" || s.beh === "tilt" ||
            s.beh === "fish" || s.beh === "goose7" || s.beh === "skyeye" ||
            s.beh === "jetfly" || s.beh === "airplane" || s.beh === "onerig" ||
+           s.beh === "mama" || (s.beh === "factory" && s.st > 0) ||
            (s.beh === "egg" && s.st === 3)) && overlap) {
         contactMill.add(s); lethalContact = true; lethalSources.push(s.beh);
       }
@@ -6552,7 +6849,8 @@ function step(g) {
       const overlap = nodesTouch(PLAYER_NODE, pn.x, pn.y,
                                  nodeExtent(h), hn.x, hn.y);
       if (overlap) playerAttribution.add(h);
-      if ((h.kind === "proxfrag" || h.kind === "laser") && overlap) {
+      if ((h.kind === "proxfrag" || h.kind === "laser" || h.lethal) &&
+          overlap) {
         contactFrag.add(h); lethalContact = true; lethalSources.push(h.kind);
       } else if (h.kind === "minecore" && !h.consumed && overlap) {
         contactCore.add(h);
