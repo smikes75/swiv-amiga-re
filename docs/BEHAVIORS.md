@@ -741,3 +741,22 @@ startuje v jednom JS passu; nativni per-record yield poradi je otevrene.
   #5..#0 a kanon; `x > 256` → ax −0x3000/65536, anim #1..#6 a kanon;
   rychlost neni omezena (po obratce ~4.06 px/t); s ay klesa a odejde
   cull −64 asi po 240 tikach
+
+### DESTRAIN (0x0619 → 0xa1b0)
+
+- `a2c6(DESTRAIN#3, 36, 0, HP 12, 65 bodu, cost 7)`, `+367` bit 0 (bez
+  stinu); TYP z `+276`: 1 → x −32, vx +0.5, vy −0.5/32; 2 → x 352, vx
+  −0.5; 3 → x −32, vx +0.5 (`0xa1c8..0xa20e`)
+- smycka `0xa20e`: wait 50, anim DESTRAIN#4,#5,#6,#5,#4,#3 perioda 1
+  (drzi #3), wait 10, homing `0x8530(+6,0,0)`, yield `0x629a`, homing
+  `0x8530(−6,0,128)`; smrt default
+
+### TINYTRUK (0x000b → 0xaedc)
+
+- `a2c6(TINYTRUK#0, 36, 272, HP 8, 45 bodu, cost 10)`: aktivuje se az
+  pod spodnim okrajem a jede nahoru `vy = −0.75` (na obrazovce −0.5 px/t);
+  `+374 = 5` = dekal EXPL1#0; trida 32, po 100 ticich 36
+- anim `0xaf04` #0,#1,#2 perioda 1 loop; po wait 100 sest salv po 20
+  ticich (`0xaf48`, `d = min(3, D)`: bit 0 → homing (0,−2,192) + wait 8,
+  bit 1 → homing (−4,2,160), wait 8, (4,2,224), wait 8); pak vy 0 a ceka
+  na smrt (`0x62cc`). Pri D = 0 nestrili vubec

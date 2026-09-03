@@ -320,6 +320,8 @@ const IMPLEMENTED_BEHAVIORS = new Map([
   [0x0012, { coroutine: 0x75A8, id: "airmine" }],
   [0x0020, { coroutine: 0x7A98, id: "blackjet" }],
   [0x0026, { coroutine: 0x7DE8, id: "tilt" }],
+  [0x0619, { coroutine: 0xA1B0, id: "destrain" }],
+  [0x000B, { coroutine: 0xAEDC, id: "tinytruck" }],
 ]);
 
 function parsePam(pam, dico, pal0) {
@@ -3929,6 +3931,8 @@ const NODE_GRAPHIC = {
   airmine: ["AIRMINE.LIN", 0],                               // 0x75b6
   jet: ["BLACKJET.LIN", 0],                                  // 0x7ab8
   tilt: ["TILT.LIN", 3],                                     // 0x7df6
+  destrain: ["DESTRAIN.LIN", 3],                             // 0xa1be
+  tinytruck: ["TINYTRUK.LIN", 0],                            // 0xaeec
   tank: ["MEDTANK.LIN", 0],                                  // 0x9eec
   tankTurret: ["MEDTANK.LIN", 4],                            // 0x9fba
   roto: ["ROTOBASE.LIN", 4],                                 // 0x995c
@@ -3980,7 +3984,7 @@ function killSpawnCredited(g, s) {             // 0xa36a z player eventu
   awardScore(g, s.scoreValue ?? 100);
   queueTownExplosionTask(g, s.x, s.y, ["mill", "airmine", "tilt"].includes(s.beh) ? 33 : 1,
                          "death-" + s.beh);
-  if (["tank", "popup", "flame", "proxmine"].includes(s.beh))
+  if (["tank", "popup", "flame", "proxmine", "tinytruck"].includes(s.beh))
     addDecal(g, "EXPL1.LIN", 0, s.x, s.y);
 }
 function damageSpawn(g, s) {
@@ -5292,6 +5296,8 @@ function step(g) {
         else if (s.beh === "flame") margin = 128;
         else if (s.beh === "train") margin = 100;
         else if (s.beh === "boss") margin = 0;   // 0xc7ae: a2c6 d2 = 0
+        else if (s.beh === "destrain") margin = 0;  // 0xa1b6
+        else if (s.beh === "tinytruck") margin = 272; // 0xaee2: zespodu
         else if (s.beh === "popup") {
           // 0xa6ae RNG uz spotreboval map task pri -256.
           margin = s.activationMargin;
@@ -5322,6 +5328,29 @@ function step(g) {
         // 0x862e: ctyri clenove P+(32,-4)*i, kazdy vlastni a2c6 -48.
         spawnBirdFormation(g, s);
         s.alive = false;
+      } else if (s.beh === "destrain") {
+        // 0xa1b0 (DESERT): pozemni vozidlo, a2c6(DESTRAIN#3, 36, 0, HP 12,
+        // 65 bodu, cost 7), bez stinu (+367 bit0). TYP 1: x -32, vx +0.5,
+        // vy -0.5/32; TYP 2: x 352, vx -0.5; TYP 3: x -32, vx +0.5.
+        // Smycka: wait 50, anim #4,#5,#6,#5,#4,#3 (perioda 1, drzi), wait
+        // 10, homing (+6,0,uhel 0), yield, homing (-6,0,uhel 128).
+        s.cost = 7; s.hp = 12; s.scoreValue = 65;
+        accountCost(g, s);
+        s.fr = 3; s.animSeq = null; s.animPos = 0; s.at = 0;
+        if (s.typ === 2) { s.x = 352; s.vx = -0.5; s.vy = 0; }
+        else { s.x = -32; s.vx = 0.5; s.vy = s.typ === 1 ? -0.5 / 32 : 0; }
+        s.st = 0; s.t = 50;
+      } else if (s.beh === "tinytruck") {
+        // 0xaedc (DESERT): nakladak, a2c6(TINYTRUK#0, 36, 272, HP 8,
+        // 45 bodu, cost 10), dekal EXPL1#0 (+374 = 5), vy -0.75 (jede
+        // proti scrollu), anim #0,#1,#2 perioda 1 loop. Po 100 ticich
+        // 6 salv po 20 ticich (0xaf48 podle min(3, D): bit0 homing
+        // (0,-2,192), bit1 homing (-4,2,160) a (4,2,224), mezi nimi wait
+        // 8), pak vy 0 a ceka na smrt.
+        s.cost = 10; s.hp = 8; s.scoreValue = 45;
+        accountCost(g, s);
+        s.fr = 0; s.at = 0; s.vx = 0; s.vy = -0.75;
+        s.st = 0; s.t = 100; s.salvos = 6; s.salvoSteps = null;
       } else if (s.beh === "tilt") {
         // 0x7de8 (DESERT): bitevni vrtulnik, a2c6(TILT#3, 34, -48, HP 2,
         // 40 bodu, cost 12), bit4 (drzi obrazovku), z 32, rotor 0x93e2.
@@ -5455,6 +5484,47 @@ function step(g) {
     } else if (s.beh === "airmine") {
       s.x += s.vx; s.z += s.vz;                 // housekeeping 0x62fe
       if (--s.zT <= 0) { s.vz = -s.vz; s.zT = 10; }
+    } else if (s.beh === "destrain") {
+      s.x += s.vx; s.y += s.vy;                 // housekeeping 0x62fe
+      if (--s.t <= 0) {
+        if (s.st === 0) {                       // po wait 50: anim + wait 10
+          s.animSeq = [4, 5, 6, 5, 4, 3]; s.animPos = 0; s.fr = 4;
+          s.st = 1; s.t = 10;
+        } else if (s.st === 1) {                // prvni homing, yield
+          fireHoming(g, s.x + 6, s.sy, 0, s.vx, s.vy);
+          s.st = 2; s.t = 1;
+        } else {                                // druhy homing, zpet na wait 50
+          fireHoming(g, s.x - 6, s.sy, 128, s.vx, s.vy);
+          s.st = 0; s.t = 50;
+        }
+      }
+      if (s.animSeq && s.animPos < s.animSeq.length - 1)
+        s.fr = s.animSeq[++s.animPos];          // perioda 1, end drzi #3
+    } else if (s.beh === "tinytruck") {
+      s.x += s.vx; s.y += s.vy;
+      s.fr = (s.fr + 1) % 3;                    // 0xaf04 perioda 1 loop
+      if (s.st === 0) {
+        if (--s.t <= 0) { s.st = 1; s.t = 20; }
+      } else if (s.st === 1) {
+        if (s.salvoSteps && s.salvoSteps.length) {
+          if (--s.t <= 0) {
+            const [dx, dy, ang] = s.salvoSteps.shift();
+            fireHoming(g, s.x + dx, s.sy + dy, ang, s.vx, s.vy);
+            s.t = 8;
+            if (!s.salvoSteps.length) { s.t = 20; }
+          }
+        } else if (--s.t <= 0) {
+          if (s.salvos-- <= 0) { s.st = 2; s.vy = 0; }
+          else {
+            const d = Math.min(3, g.difficulty | 0);
+            const steps = [];
+            if (d & 1) steps.push([0, -2, 192]);
+            if (d & 2) steps.push([-4, 2, 160], [4, 2, 224]);
+            s.salvoSteps = steps; s.t = steps.length ? 0 : 20;
+            if (!steps.length && s.salvos <= 0) { s.st = 2; s.vy = 0; }
+          }
+        }
+      }
     } else if (s.beh === "tilt") {
       if (s.rotorFresh) s.rotorFresh = false;
       else s.rotorTick = (s.rotorTick + 1) & 7;
