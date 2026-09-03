@@ -362,6 +362,8 @@ const IMPLEMENTED_BEHAVIORS = new Map([
   [0x042B, { coroutine: 0xA592, id: "junhatch" }],
   [0x0028, { coroutine: 0xB26C, id: "lakegun" }],
   [0x0E28, { coroutine: 0xB2DC, id: "lakegun" }],
+  [0x042C, { coroutine: 0xB9DA, id: "inst2" }],
+  [0x002C, { coroutine: 0xBAE8, id: "inst2gun" }],
 ]);
 
 function parsePam(pam, dico, pal0) {
@@ -1891,7 +1893,8 @@ function composeTownBobs(g, top) {
         s.beh === "trilo" || s.beh === "xevplane" || s.beh === "plat" ||
         s.beh === "dada" || s.beh === "corn" || s.beh === "swappad0" ||
         s.beh === "skyeyea" || s.beh === "hover" || s.beh === "lakesub" ||
-        s.beh === "juntank" || s.beh === "junhatch" || s.beh === "lakegun") {
+        s.beh === "juntank" || s.beh === "junhatch" || s.beh === "lakegun" ||
+        s.beh === "inst2" || s.beh === "inst2gun") {
       bob(s.beh, s.file, s.fr, s.x, sy, Math.floor(s.z) | 0, {
         ordinal: s.bobOrdinal,
         objectFlags: s.noShadow ? 1 : 0,        // +367 bit 0
@@ -4139,6 +4142,9 @@ const NODE_GRAPHIC = {
   juntank: ["JUNTANK.LIN", 1],                               // 0xa0d2
   junhatch: ["JUNTANK.LIN", 2],                              // 0xa592
   lakegun0: ["LAKEGUN.LIN", 0], lakegun7: ["LAKEGUN.LIN", 7],// 0xb26c
+  inst2: ["INST2.LIN", 2],                                   // 0xb9e0
+  inst2gun: ["INST2.LIN", 0],                                // 0xbae8
+  inst2beam: ["INST2.LIN", 8],                               // 0xba9e
   tank: ["MEDTANK.LIN", 0],                                  // 0x9eec
   tankTurret: ["MEDTANK.LIN", 4],                            // 0x9fba
   roto: ["ROTOBASE.LIN", 4],                                 // 0x995c
@@ -4215,6 +4221,8 @@ function killSpawnCredited(g, s) {             // 0xa36a z player eventu
   }
   releaseSpawnTask(g, s);
   awardScore(g, s.scoreValue ?? 100);
+  if (s.flashOnDeath && (g.inst1Factories | 0) <= 1)
+    startWhiteFlash(g);                        // 0xb8d8 (sdileno s 0xb810)
   if (s.beh === "dada" || s.burstDeath) {
     // 0x88ec: zvuk 0x4c3c, 0x6d96 a osm 0x8952 chvostu po dvou ticich,
     // uhel +100 a rychlost +1536/256 na kazdy dalsi (jako 0x88fc).
@@ -4444,6 +4452,46 @@ const XEVPLANE_SCRIPTS = {
   2: [[128, 39], [144, 10], [159, 10], [175, 10], [190, 100]],
   3: [[192, 48], [208, 10], [224, 10], [240, 10], [0, 254]],
 };
+function spawnInst2Beam(g, s) {                 // 0xba9e (dite 0x617a)
+  // a2c6(INST2#8, 6, -63, HP 0, 0 bodu, cost 20), +367 |= 1, z = 1,
+  // y += 105, anim 0x0bac6 INST2#8..#12 perioda 1 + kill; po wait 5
+  // (0x62b8) trida 0 a 0x9b70 do konce animace. Smrtici jen prvnich
+  // pet tiku - stejny model jako paprsek tovarny 0xb906.
+  const h = { kind: "inst2beam", file: "INST2.LIN", parent: s,
+              x: s.x, y: s.y + 105, z: 1, vx: 0, vy: 0,
+              alive: true, dead: false, hp: 0, cost: 20, budgeted: true,
+              scoreValue: 0, castShadow: false, cullMargin: -63,
+              seq: [8, 9, 10, 11, 12], per: 1, apos: 0, at: 0,
+              animFresh: true, animKill: true, lethal: true, lethalT: 5 };
+  g.activeCost = (g.activeCost || 0) + h.cost;
+  assignBobOrdinal(g, h); g.hazards.push(h);
+}
+function spawnInst2Wave(g, s) {                // 0x8008 (dite 0x6178)
+  // Neviditelny task (bez a2c6): clrw fp@(146), 0x6d96, y = fp@(3542) - 32,
+  // +276 = 1 a (4 - fp@(140)) * 4 opakovani { dite 0x8066, raw wait 10 }.
+  // fp@(146) = 0 znamena, ze kazdy potomek si v 0x8066 vola vlastni
+  // 0x813a, tedy ma vlastni nahodne x i vx.
+  const h = { kind: "inst2wave", file: "INST2.LIN", parent: s,
+              x: s.x, y: scrollTop(g) - 32, z: 0, vx: 0, vy: 0,
+              alive: true, dead: false, hp: 0, cost: 0, budgeted: false,
+              scoreValue: 0, hidden: true, noCull: true,
+              seq: [0], per: 1, apos: 0, at: 0, animFresh: true,
+              left: Math.max(0, (4 - (g.inst1Factories | 0)) * 4), t: 1 };
+  assignBobOrdinal(g, h); g.hazards.push(h);
+}
+function spawnInst2Fodder(g, h) {              // 0x8066 s +276 = 1
+  // Stejny letec jako mapova vlna FODDERA (0x8048), ale jednotlive:
+  // vlastni 0x813a, bit 4, anim 0x080b0 (#2,#3,#2,#4,#2,#5,#2,#6).
+  const k = fodderInitial(g);
+  const a = { kind: "fod", x: k.x, y: h.y,
+              vx: k.vx, vy: 0, ax: 0, ay: 1 / 32,
+              alive: false, pending: true, dead: false,
+              cost: 10, budgeted: false, hp: 1, scoreValue: 12,
+              shooter: false, shooterPending: true, cool: -1,
+              seq: [2, 3, 2, 4, 2, 5, 2, 6],
+              per: 1, apos: 0, at: 0, animFresh: true };
+  assignBobOrdinal(g, a); g.air.push(a);
+}
 function spawnJuntankTurret(g, s) {             // 0xa12e (dite 0x6144)
   // a2c6(JUNTANK#20, 36, -48, HP 12, 90 bodu, cost 10), +538 = -1,
   // +367 |= 13 (bez stinu, blika s rodicem, vazane dite s ofsetem
@@ -5013,6 +5061,15 @@ function advanceTownHazardField(g, h) {
   } else if (h.kind === "beam") {
     if (h.lethalT > 0 && --h.lethalT <= 0) h.lethal = false;   // trida 0
     if (--h.life <= 0) h.retireAfterField = true;              // kill anim
+  } else if (h.kind === "inst2wave") {
+    if (!h.parent.alive) { releaseHazard(g, h); return; }   // +542 = 0x6db4
+    h.y = scrollTop(g) - 32;
+    if (h.left > 0 && --h.t <= 0) {            // raw wait 10 (0x5f22)
+      spawnInst2Fodder(g, h); h.left--; h.t = 10;
+      if (h.left <= 0) releaseHazard(g, h);
+    }
+  } else if (h.kind === "inst2beam") {
+    if (h.lethalT > 0 && --h.lethalT <= 0) h.lethal = false;  // 0xbadc
   } else if (h.kind === "juntankturret") {
     if (!h.parent.alive) { releaseHazard(g, h); return; }   // +542 = 0x6db4
     h.x = h.parent.x + h.ox; h.y = h.parent.y + h.oy;
@@ -5116,7 +5173,8 @@ function advanceTownHazardField(g, h) {
       h.kind === "platveh" || h.kind === "platturret" ||
       h.kind === "hoverskirt" || h.kind === "hovermissile" ||
       h.kind === "lakesubturret" || h.kind === "lakesubshot" ||
-      h.kind === "juntankturret" || h.kind === "junhatchdrone") {
+      h.kind === "juntankturret" || h.kind === "junhatchdrone" ||
+      h.kind === "inst2wave" || h.kind === "inst2beam") {
     if (h.animFresh) h.animFresh = false;
     else if (++h.at >= h.per) {
       h.at = 0; h.apos++;
@@ -6202,6 +6260,8 @@ function step(g) {
         else if (s.beh === "lakesub") margin = 64;    // 0xb350
         else if (s.beh === "lakegun") margin = 100;   // 0xb272
         else if (s.beh === "junhatch") margin = -32;  // 0xa598
+        else if (s.beh === "inst2") margin = -32;     // 0xb9e6
+        else if (s.beh === "inst2gun") margin = -16;  // 0xbaee
         else if (s.beh === "corn") margin = -80;      // 0x8218
         else if (s.beh === "swappad0") margin = -16;  // 0xac70
         else if (s.beh === "trackzone") margin = 0;   // 0xad38: 0x9ac8(0)
@@ -6293,6 +6353,24 @@ function step(g) {
         s.cost = 13; s.hp = 0; s.scoreValue = 200;
         accountCost(g, s);
         s.fr = 2; s.at = 0; s.st = 0; s.z = 0; s.vz = 0; s.vx = 0; s.vy = 0;
+      } else if (s.beh === "inst2") {
+        // 0xb9da (RIVER): zamek 0x5eda(6), a2c6(INST2#2, 36, -32, HP 50,
+        // 2000 bodu, cost 40), **0x658a vypne bit 0 udalosti** (dokud je
+        // instalace zavrena, nelze ji zasahnout), +376 = 0x8876.
+        // Ceka na radek 83 (typ 1) nebo 57, pak 0xb6ae (fp@(140)++).
+        s.cost = 40; s.hp = 50; s.scoreValue = 2000;
+        accountCost(g, s);
+        s.bigDeath = true; s.flashOnDeath = true;
+        s.invulnerable = true;                 // 0x658a
+        s.fr = 2; s.at = 0; s.apos = 0; s.animSeq = null;
+        s.st = 0; s.t = 0; s.waveRow = (s.typ | 0) === 1 ? 83 : 57;
+      } else if (s.beh === "inst2gun") {
+        // 0xbae8 (RIVER): a2c6(INST2#0, 32, -16, HP 80, 100 bodu,
+        // cost 10). Dokud fp@(140) != 0, pet bomb 0x6178(0x7f9a) po
+        // sedmi ticich; pak wait fp@(140) * 128 + 1 a znovu.
+        s.cost = 10; s.hp = 80; s.scoreValue = 100;
+        accountCost(g, s);
+        s.fr = 0; s.st = 0; s.t = 1; s.shots = 0;
       } else if (s.beh === "juntank") {
         // 0xa0d2 (RIVER): a2c6(JUNTANK#1, 36, -48, HP 15, 90 bodu,
         // cost 18), +397 |= 1, +376 = 0x88ec, vazana vez 0x6144(0xa12e),
@@ -6780,6 +6858,44 @@ function step(g) {
         s.t = 40; s.st = 3;
       } else if (s.st === 3 && --s.t <= 0) {
         if (--s.beams > 0) s.st = 2; else { s.st = 1; s.t = 100; }
+      }
+    } else if (s.beh === "inst2") {
+      if (s.animSeq && ++s.at >= 5) {           // perioda 5, end drzi
+        s.at = 0;
+        if (s.apos < s.animSeq.length - 1) { s.apos++; s.fr = s.animSeq[s.apos]; }
+      }
+      if (s.st === 0) {
+        if (s.sy >= s.waveRow) {                // 0x9afa(83 | 57)
+          g.inst1Factories = (g.inst1Factories | 0) + 1;   // 0xb6ae
+          s.st = 1; s.t = 100;
+        }
+      } else if (s.st === 1 && --s.t <= 0) {    // 0xba1a: nove kolo
+        spawnInst2Wave(g, s);
+        s.animSeq = [3, 4, 5, 6]; s.apos = 0; s.at = 0; s.fr = 3;
+        s.st = 2; s.t = 20;
+      } else if (s.st === 2 && --s.t <= 0) {
+        s.invulnerable = false;                 // 0xba3a: handler 0xb8ca
+        s.st = 3; s.t = 50;
+      } else if (s.st === 3 && --s.t <= 0) {    // 0xba4a: paprsek
+        spawnInst2Beam(g, s);
+        s.st = 4; s.t = 20;
+      } else if (s.st === 4 && --s.t <= 0) {
+        // 0xba62: kladne slovo 0x883c = jeste jeden paprsek.
+        if (signedWord(random32(g) & 0xFFFF) >= 0) { s.st = 3; s.t = 0; }
+        else {
+          s.animSeq = [5, 4, 3, 2]; s.apos = 0; s.at = 0; s.fr = 5;
+          s.invulnerable = true;                // 0xba7a: 0x658a
+          s.st = 5;
+          s.t = (4 - (g.inst1Factories | 0)) * 32 + 20;
+        }
+      } else if (s.st === 5 && --s.t <= 0) { s.st = 1; s.t = 1; }
+    } else if (s.beh === "inst2gun") {
+      if (--s.t <= 0) {
+        if (s.shots > 0) {                      // 0xbb06: bomba a wait 7
+          spawnXevBomb(g, s); s.shots--; s.t = 7;
+        } else if ((g.inst1Factories | 0) !== 0) {
+          s.shots = 5; s.t = 1;                 // 0xbafa: nova serie
+        } else s.t = ((g.inst1Factories | 0) << 7) + 1;
       }
     } else if (s.beh === "juntank") {
       const turret = s.turretChild;
@@ -7586,7 +7702,7 @@ function step(g) {
     if (s.beh === "tank" && !s.tankSetup) continue;
     const sn = nodePos(g, s, s.x, s.y - scrollTop(g));
     // HP 0 s vlastnim handlerem bitu 0 (XEVIOUS#5) uzel drzi: bolt zanikne.
-    if ((s.hp > 0 || s.boltPing) &&
+    if ((s.hp > 0 || s.boltPing) && !s.invulnerable &&
         collectBulletEvent(sn.x, sn.y, nodeExtent(s))) {
       spawnShotEvents.add(s);
     }

@@ -1381,3 +1381,45 @@ polohuji v kroku hazardu, tedy o tik za rodicem (0.5 px pri 0.5 px/t).
   doprava, zaviraci anim `0x0b332` (#12..#8, kill).
 - Simulace: zrozeni 4600 na radku 100, prvni strela v tiku +80, dalsi po
   30 ticich, po sesti se delo zavira (tik +260).
+
+### INST2#2 (0x042c → 0xb9da) — instalace s paprskem a vlnami
+
+- Zamek `0x5eda(6)` (nemodeluje se), `a2c6(INST2#2, 36, −32, HP 50,
+  **2000 bodu**, cost 40), pak **`0x658a` = `+508 &= ~1`** — dokud je
+  instalace zavrena, **bit 0 udalosti je vypnuty a bolt hrace ji
+  nezasahne**; `+376 = 0x8876` (velky vybuch).
+- `0x9afa(83)` pro typ 1, jinak `0x9afa(57)`; pak `0xb6ae`
+  (`fp@(140)++`, tentyz citac jako tovarna INST1#11) a wait 100.
+- Smycka `0xba1a`: dite `0x6178(0x8008)` = **spoustec vln**, anim
+  `0x0ba26` (perioda 5, INST2#3..#6, drzi #6) = otevreni, wait 20,
+  `0x653e(0xb8ca)` = **zapne bit 0 se stejnym handlerem jako tovarna**
+  (2000 bodu, bily zablesk pri `fp@(140) <= 1`), wait 50; pak vnitrni
+  smycka: zvuk `0x541e` (**neprepsan**), paprsek `0x617a(0xba9e)`,
+  wait 20 a `0x883c` — **kladne slovo znamena dalsi paprsek**, jinak
+  anim `0x0ba6e` (#5..#2) = zavreni, `0x658a` (opet nezranitelna) a
+  wait `(4 − fp@(140)) × 32 + 20`.
+- **Paprsek `0xba9e`:** `a2c6(INST2#8, 6, −63, HP 0, 0 bodu, cost 20)`,
+  `+367 |= 1`, `z = 1`, `y += 105`, anim `0x0bac6` (perioda 1: #8..#12,
+  kill), po `0x62b8(5)` trida 0 a `0x9b70` — smrtici jen prvnich pet
+  tiku (stejny model jako paprsek tovarny `0xb906`).
+- **Spoustec vln `0x8008`:** nema `a2c6`, tedy se nekresli;
+  `clrw fp@(146)`, `0x6d96`, `y = fp@(3542) − 32`, `+276 = 1` a
+  `(4 − fp@(140)) × 4`× { dite `0x8066`, **raw** wait 10 }. Protoze
+  `fp@(146) = 0`, vola kazdy potomek vlastni `0x813a`, takze ma vlastni
+  nahodne x i vx; `+276 = 1` mu da anim `0x080b0`
+  (#2, #3, #2, #4, #2, #5, #2, #6) — je to tedy bezny FODDERA letec,
+  jen po jednom kazdych 10 tiku.
+- Simulace: tri instalace zrozeny 13980, aktivace na radcich 83/57,
+  prvni otevreni v tiku +560, paprsek v +630 (x 157, sy 230), zavreni a
+  dalsi kolo; 50 zasahu = smrt, bily zablesk jen pri posledni.
+
+### INST2#0 (0x002c → 0xbae8) — bombardujici vez
+
+- `a2c6(INST2#0, **32**, −16, HP 80, 100 bodu, cost 10)` — trida 32
+  nema bit 1 ani 2, takze neni smrtici na dotek a kontakt ji nepoškodi;
+  bolt ano (HP != 0 → `a2c6` nainstaluje `0xa362`).
+- Smycka `0xbafa`: dokud `fp@(140) != 0` (tedy dokud zije aspon jedna
+  instalace INST2#2), pet bomb `0x6178(0x7f9a)` — **tataz bomba jako u
+  XEVIOUS#9** — po sedmi ticich; pak wait `fp@(140) × 128 + 1` a znovu.
+- Simulace: dve veze zrozeny 13956; palba zacne, jakmile se instalace
+  zaregistruji (tik ~14500), bomby miri na hrace s rozptylem ±16.
