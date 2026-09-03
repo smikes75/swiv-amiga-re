@@ -1242,3 +1242,24 @@ do BOB fronty) zacina `btst #7,%a0@(21)` a pri nastavenem bitu zaznam
 - Prepis: `g.trackZone`, dekal v `stepTankTurret` (jeep se nemodeluje).
   Simulace: pasmo 16959..16359, tank typ 3 (uhel 64) klade JEEPHELI#42
   kazdych 10 px.
+
+### Revize GRASS (2026-09-03, Fable po Opusovi)
+
+Vsechny konstanty sekce porovnany s `work/prog.txt`, sondy prehrany.
+Opraveno: DADA pricitala skore dvakrat (vlastni vetev smrti opakovala
+`releaseSpawnTask` + `awardScore`); animator VTOL (`0x0835a`) se
+zastavil behem zdvihu a animator veze _PLAT (`0x0a512`) behem wait 120 —
+animator bezi nezavisle na cekani korutiny; `+364` u _PLAT (−16 po
+radku 16, `0xa3e4`) a u strely `0xa548` (0) nebylo modelovano; stopa
+pasu u FLATTANK vznika z polohy veze (+4). Navic opraven DESERT: strela
+vejce `0xa9a0` ma masku `+508 = 0`, takze na kontaktu s hracem nezanika
+(kanonovy granat `0x9632` naopak zapina bity 3+4 s `0x6db4`).
+
+Vychozi hodnoty zaznamu tasku (`0x61ee..0x6238`): `+364 = −64`,
+`+538 = 0x6db4`, `+542 = +534 = −1`, `+376 = 0x894a`, vsechny handlery
+`+510..+530 = 0x6288`, `+508 = 0` (zadna povolena udalost), `+367 = 0`.
+Objekt s HP 0 proto nereaguje na nic, dokud korutina sama nepovoli bity
+(`0x653e`, `0x654a`, `0x6564`, `0x6566`).
+
+Zname a prijate odchylky: vazane deti (hlaven XEVIOUS#0, vez _PLAT) se
+polohuji v kroku hazardu, tedy o tik za rodicem (0.5 px pri 0.5 px/t).

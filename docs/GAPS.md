@@ -366,8 +366,7 @@ Pruchod celym levelem (`TOWN-SURVEY.md`) ukazal dva systemove rozdily:
   `docs/ZADANI-GRASS.md`: hotovo VTOL (42), XEVIOUS#5 (20), XEVIOUS#9 +
   bomba (16), TRILO (5), _PLAT#9/#10 s vozidlem, vezi a strelou (7),
   XEVIOUS#0 s hlavni (3), DADA (1), _CORN#7 (1), druha SWAP plosina (1)
-  a pasmo stop pasu JEEPHELI#43 (1) — **vsechna chovani GRASS
-  prepsana**; zbyva RIVER (39 objektu v 9 druzich), ICE (45 v 5),
+  a pasmo stop pasu JEEPHELI#43 (1) — **vsechna chovani GRASS prepsana a zrevidovana** (BEHAVIORS „Revize GRASS"); zbyva RIVER (39 objektu v 9 druzich), ICE (45 v 5),
   SCIFI (148 v 11) a zaverecny boss FINAL. Overeno zatim jen
   simulaci a archy snimku; porovnani s baseline vAmigy po objektech
   (jako u TOWN) zbyva. Zvuky DESERTu (`0x5436` strela vejce, `0x541e`

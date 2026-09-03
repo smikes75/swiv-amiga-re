@@ -4182,8 +4182,7 @@ function killSpawnCredited(g, s) {             // 0xa36a z player eventu
   if (s.beh === "dada") {
     // 0x88ec: zvuk 0x4c3c, 0x6d96 a osm 0x8952 chvostu po dvou ticich,
     // uhel +100 a rychlost +1536/256 na kazdy dalsi (jako 0x88fc).
-    releaseSpawnTask(g, s);
-    awardScore(g, s.scoreValue ?? 100);
+    // (revize: skore i release uz probehly vyse, jen jednou)
     spawnPlayerBurst(g, s.x, s.y, s.ang | 0, 8, 0x600,
                      Math.floor(s.z || 0) + 1);
     return;
@@ -4896,8 +4895,8 @@ function advanceTownHazardField(g, h) {
   } else if (h.kind === "platturret") {
     if (!h.parent.alive) { releaseHazard(g, h); return; }
     h.x = h.parent.x + h.ox; h.y = h.parent.y;  // vazane dite (+367 bit 3)
-    if (h.st === 1 && h.apos < h.seq.length - 1 && ++h.at >= h.per) {
-      h.at = 0; h.apos++;
+    if (h.st >= 1 && h.apos < h.seq.length - 1 && ++h.at >= h.per) {
+      h.at = 0; h.apos++;                        // 0x0a512 bezi i pres wait 120
     }
     if (--h.t <= 0) {
       if (h.st === 0) {                        // wait 300 -> prvni palba
@@ -4983,7 +4982,7 @@ function advanceTownHazardField(g, h) {
   }
   const sy = h.y - scrollTop(g);
   const margin = h.kind === "proxfrag" || h.kind === "splash" ||
-                 h.kind === "xevbomb" ? 0
+                 h.kind === "xevbomb" || h.kind === "platshot" ? 0
                : h.kind === "laser" ? -48 : -64;
   if (h.kind === "traincar" && Math.floor(sy) >= 272)
     // 0x9c78 testuje az po navratu z prave publikovaneho 0x62d2 fieldu.
@@ -5049,7 +5048,7 @@ function stepTankTurret(g, s) {
     if ((s.trackT = (s.trackT | 0) - 1) < 0) {
       s.trackT = 20;
       const sector = ((((s.ang | 0) + 16) & 0xE0) >> 5) & 3;
-      addDecal(g, "JEEPHELI.LIN", 40 + sector, s.x, s.y);
+      addDecal(g, "JEEPHELI.LIN", 40 + sector, s.x, s.y + (s.turretDy | 0));
     }
   }
   if (s.turretPhase === "first-gate") {
@@ -5427,7 +5426,8 @@ function dispatchTownContactEvent(g, task) {
     if (o.kind === "hom") {
       releaseEnemyShot(g, o); awardScore(g, 7);
       queueTownExplosionTask(g, o.x, o.y + scrollTop(g), 33, "death-homing");
-    } else releaseEnemyShot(g, o);              // default +514=0x6db4
+    } else if (o.kind === "eggshot") return;    // 0xa9a0: maska +508 = 0
+    else releaseEnemyShot(g, o);                // 0x9632: 0x6564 s 0x6db4
   } else if (kind === "air") {
     if (!o.alive) return;
     if (o.kind === "bird") damageBirdEvent(g, o);
@@ -6587,8 +6587,9 @@ function step(g) {
         s.st = 1; s.t = 100;                     // 0xa456: az po smrti dite
       }
     } else if (s.beh === "vtol") {
-      if (s.st === 0) {                          // stoji, jen anim + scroll
-        if (++s.at >= 4) { s.at = 0; s.fr ^= 1; }
+      // anim 0x0835a (#0/#1 perioda 4) bezi az do vymeny skriptu po zdvihu.
+      if (s.st <= 1 && ++s.at >= 4) { s.at = 0; s.fr ^= 1; }
+      if (s.st === 0) {                          // stoji, jen scroll
         if (s.sy >= s.liftRow) {
           // 0x837e: +397 &= ~1 (neprepisujeme), 0x65ae vypne udalost bit4,
           // 0x6566 zapne kontakt (bit3) s 0xa362 a trida = 34.
@@ -7078,8 +7079,10 @@ function step(g) {
     // TRAIN ma +538 vypnute a MILL/GOOSE culluji ve svych vetvich.
     if (s.alive && !s.noCull && !["train", "mill", "boss"].includes(s.beh)) {
       // 0x820c nastavuje +364 = -90 jeste pred a2c6, FLAME parent -8.
+      // 0xa3e4: _PLAT po radku 16 nastavi +364 = -16.
       const cullMargin = s.beh === "flame" ? -8
-                       : s.beh === "corn" ? -90 : -64;
+                       : s.beh === "corn" ? -90
+                       : (s.beh === "plat" && s.st > 0) ? -16 : -64;
       if (outsideCullMargin(s.x, s.y - scrollTop(g), cullMargin))
         s.retireAfterField = true;
     }
