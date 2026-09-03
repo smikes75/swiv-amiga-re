@@ -345,6 +345,23 @@ Otevrene zustava:
   tasky; spolu s `CONGRAT1`, high-score vstupem a navratem na titul patri do
   dosud otevreneho post-game toku.
 
+## 9. Zony a tempo — RETEZENI MAP A ZPOMALENI SCROLLU OTEVRENE (2026-09-03)
+
+Pruchod celym levelem (`TOWN-SURVEY.md`) ukazal dva systemove rozdily:
+
+- Original po konci `TOWN.PAM` streamuje `DESERT.PAM` bez preruseni (teren
+  DESERTu od t≈289, jeho objekty vcetne GOOSE nosice uz v t273). Prepis
+  konci na `scroll <= 0` napisem LEVEL COMPLETE. Chybi retezeni map podle
+  tabulky `0x384c` se slovnikem a paletou dalsiho PAM.
+- Scroll originalu se pricita jednou za iteraci hlavni smycky (`0x291e`),
+  objekty integruji rychlost × ubehle VBL (`0x62fe`); pri zatezi A500 scroll
+  zpomali (64–98 px za 8 s misto 100). Prepis bezi konstantne 50 Hz.
+  Rozhodnuti o modelovani zatim otevrene; porovnavani snimku se zarovnava
+  podle radku mapy, ne casu.
+
+Dilci: MEDTANK nacasovani/jizda (typ z `+276`), GOOSE kontaktni HP drain
+(kod `0xc974`+`0x6566` sedi, chce test s paskou), TRAIN v t145.
+
 ## Co uz je vedomo jinde
 
 Starsi seznam odchylek je v `MAPS.md` („Deliberately not rendered")
