@@ -354,9 +354,13 @@ Pruchod celym levelem (`TOWN-SURVEY.md`) ukazal dva systemove rozdily:
   tabulky `0x384c` (mezera = treti slovo, paleta se nenuluje, dalsi mapa
   prekresli prekryv), `g.rowOffset` drzi radky TOWN pro checkpointy a
   testy, `g.levelPhase` roste jako `fp@(184)` (ctecka 256 px nad oknem).
-  Dvojice t273..t321 sedi na teren DESERTu. Chovani objektu DESERTu a dal
-  zustava neprepsane (779 „unimplemented" spawnu), LEVEL COMPLETE zbyva
-  jen na konci FINAL.
+  Dvojice t273..t321 sedi na teren DESERTu. LEVEL COMPLETE zbyva jen na
+  konci FINAL. Chovani DESERTu se prepisuje podle cetnosti: hotovo AIRMINE
+  (48), BLACKJET (7), TILT (11) — viz BEHAVIORS „DESERT"; zbyva FISH 17,
+  SKYEYEB 14, _ONERIG 11, FLATTANK 9, TINYTRUK 7, GOOSE#7 7, EGGS 7,
+  DIAGUN 6, JETS 6, _AIRPORT 4, _RIGS 4, PYRAMID#1 4, DESTRAIN 3, MAMA 3,
+  INST1 5, TRUCK 1, JEEPHELI#31 1 (v poradi prvniho vyskytu: EGGS 43 s,
+  DESTRAIN 61 s, PYRAMID 80 s, TINYTRUK 90 s, DIAGUN 120 s, ...).
 - Scroll originalu se pricita jednou za iteraci hlavni smycky (`0x291e`),
   objekty integruji rychlost × ubehle VBL (`0x62fe`); pri zatezi A500 scroll
   zpomali (64–98 px za 8 s misto 100). Prepis bezi konstantne 50 Hz.

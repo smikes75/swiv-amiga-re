@@ -710,3 +710,34 @@ startuje v jednom JS passu; nativni per-record yield poradi je otevrene.
   po wait16 a stejnym tempem se vraci ke korbe; pak znovu cely gate.
 - **+336 < 3 → +348 se nemaze** (`0x80f4`): sekundarni sestup 0x800
   prezije jen pri pomalem primarnim vy; rychli padaci ho ztraceji.
+
+## DESERT (prepsano 2026-09-03; overeni proti baseline t329..t369 probiha)
+
+### AIRMINE (0x0012 → 0x75a8)
+
+- `a2c6(AIRMINE#0, 34, −48, HP 3, 20 bodu, cost 7)`, z 32 se stinem, anim
+  `0x75c4` AIRMINE#0/#1 perioda 7
+- `vx = (slovo 0x883c >> 2) / 65536` (do ±0.125 px/t), vy 0 a bez bit4:
+  drzi se mapy; `+340 = −0.1875` px/t se pred kazdym `wait(10)` obraci
+  (`0x75e4..0x75ee`), z tedy kmita 32..33.9 a stin se houpe; smrt default
+  `a36a`
+
+### BLACKJET (0x0020 → 0x7a98)
+
+- `a2a2(0, −4, D/2 + 5, 0)` klonu, kazdy `a2c6(BLACKJET#0, 34, −48, HP 1,
+  25 bodu, cost 15)` s guardem `0x8822`, z 32
+- po aktivaci vlastni `x = 32 + (0x883c & 255)`, zvuk `0x52d8`,
+  `+350 = 0x1800` (ay = 3/32 px/t²), zadny dalsi pohyb (`0x62cc` ceka na
+  smrt): strely padaji volnym padem
+
+### TILT (0x0026 → 0x7de8)
+
+- `a2c6(TILT#3, 34, −48, HP 2, 40 bodu, cost 12)`, bit4, z 32, rotor
+  `0x93e2` (JEEPHELI#5..8 kazdy druhy snimek)
+- vy 1 do `sy ≥ 64` (`0x9afa(64)`), pak vy 0, `ay = 0x800/65536`,
+  `vx = ±4` (x ≥ 160 → −4, `+276` = smer), anim TILT#2,#1,#0 resp.
+  #4,#5,#6 (perioda 6, `end(0)` drzi posledni) a mireny kanon `0x95d2`
+- smycka `0x7e64`: `x < 64` → ax +0x3000/65536, pri zmene smeru anim
+  #5..#0 a kanon; `x > 256` → ax −0x3000/65536, anim #1..#6 a kanon;
+  rychlost neni omezena (po obratce ~4.06 px/t); s ay klesa a odejde
+  cull −64 asi po 240 tikach
