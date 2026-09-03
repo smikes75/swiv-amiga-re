@@ -841,3 +841,72 @@ zabery originalu t437..t447 (`build/survey/shoot/`).
   (x ± 6, y + 20, uhel 64), wait 20 }, `0x62cc`.
 - Simulace: zrozeni tik 2484 (x 253), aktivace na radku 64 (tik 2868),
   poklop #8 v 2916, homing 2968 a 2988 (D = 0), 10 zasahu → BIGEXPL.
+
+### Spolecne pomocne rutiny formaci a smeru
+
+- **`0xa2a2(d0 dx, d1 dy, d2 pocet, d3 dtyp)`** = formace: DBF smycka
+  `pocet−1`× { `0x6178` kopie aktualniho zaznamu rodice (vcetne `+276`
+  typ), pak rodic `+320 += dx`, `+324 += dy`, `+276 += dtyp` }. Kopie
+  pokracuji za volanim (uz neklonuji). Prepis `spawnFormationCopies` ve
+  `startMapObjectTask` (ctecka mapy, 256 px nad oknem).
+- **`0xa290(base)`** = `0x6d7c(base + dir16(+358))` (16 smeru, i hitbox z
+  hlavicky snimku); **`0xa27c(base)`** = 8 smeru; `0xa268`/`0xa252` totez
+  pres tabulku slov.
+- **`0x72ee`** vraci polohu ziveho hrace (pri smrti posledni ulozenou);
+  **`0x72a6`** polohu hrace 1, bez ziveho hrace `x = 96 + |dolni bajt
+  fp@(-66)|` (`playerAimX72a6`).
+- **`0x62fe`** housekeeping: rychlost += zrychleni, poloha += rychlost
+  (× ubehle VBL), zaporne `z` se orizne na 0 a vynuluje vz i az.
+
+### FISH (0x001e → 0xb1a8)
+
+- Formace `0xa2a2(0, −5, 6, 0)` = sest ryb po 5 px nad sebou; `ST
+  fp@(3615)` zapina COLOR07 (voda; prepis `g.townColor07Enabled`).
+  Kazda: `a2c6(FISH#0, 34, −48, HP 1, 40 bodu, cost 10)` + guard `0x8822`;
+  `z = 0x883c & 31`, `az = −4096/65536`, `vy = 2` (mapove), vx 0.
+- Smycka `0xb1ec`: je-li cele slovo `z == 0`, novy skok `vz = 2`,
+  `az = −0.0625` (parabola 63 tiku, vrchol 32) a cakanec `0x9358`
+  (JEEPHELI#33..#37 perioda 4, 20 tiku, bez stinu, cull margin 0); typ 2
+  navic `vx = (slovo 0x883c)/65536` a mireny kanon `0x95d2`. DESERT ma
+  jen typ 1. Trida 34 = smrtici kontakt, jeden zasah.
+- Simulace (`build/survey/d3/`): prvni ryba tik 16876 (x 57), dalsi po
+  20 ticich; guard `0x8822` pri plnem rozpoctu nektere odmitne.
+
+### GOOSE#7 (0x0e17 → 0x8794) — stremhlave stihacky
+
+- Formace `0xa2a2(0, −8, 6, 0)`; kazda `a2c6(GOOSE#7, 34, −48, HP 2, 35
+  bodu, cost 10)` + guard `0x8822`, `+367 |= 0x10` (obrazovka), z 32.
+  Podle x hrace (`0x72ee`): `< 160` → start `x = 256 + (0x883c & 63)`,
+  `vx = −0.5`; jinak `x = 0x883c & 63`, `vx = +0.5`. `vy = 1`, wait 50,
+  `vy = 0.5`, wait 70, pak smycka `0x880e` { `+336 += 4` (slovo, tj.
+  vy 4.5, 8.5, …), mireny kanon `0x95d2`, wait 20 }.
+- Simulace: zrozeni 17060, prvni zaznam odmitnut guardem, dalsi
+  startuji vlevo (x 27..61) a od tiku +130 pikuji.
+
+### FLATTANK (0x0027 → 0x9e04)
+
+- Nejprve dite `0x6144(0x9faa)` = stejny turret child jako MEDTANK
+  (`+336 = 4` se v childu necte), pak `a2c6(FLATTANK#0, 36, −16, HP D+5,
+  50 bodu, cost 12)`, `+374 = 5` (dekal EXPL1#0), `+397 |= 1`, anim
+  `0x9e38` #0..#3 perioda 2 loop (pasy), uhel 64 a rychlost 32/256 =
+  0.125 px/t dolu (`0x65f2`), `0x62cc`. Vez: gate `(12−D)<<4` bezi od
+  startu tasku (256 px nad oknem), pri aktivaci je otevrena; prepis
+  `spawnTankTurret`/`stepTankTurret` s `turretStartTick` posunutym zpet.
+- Simulace: zrozeni 13168 (x 94), vez miri hned, prvni strela ~ +250.
+
+### SKYEYEB (0x100a → 0x76ec) — letajici oci
+
+- `x = −16`, `+276 = 7`, formace `0xa2a2(−40, 0, 6, −1)` = sest kusu po
+  40 px vlevo za okrajem s poctem otacek 7, 6, 5, 4, 3, 2. Kazdy:
+  `a2c6(SKYEYEB#0, 34, 24, HP 1, 30 bodu, cost 10)` (aktivace az na radku
+  24), `+538 = −1` (zadny cull), `+367 |= 0x10`, z 32. Podle x hrace
+  (`0x72a6`): `< 160` → zrcadlo `x = 320 − x`, krok `+278 = −16`, uhel
+  128; jinak +16 a uhel 0. Rychlost 896/256 = 3.5 px/t, snimek
+  `0xa290(SKYEYEB#0)` = dir16 (soubor ma #0..#8 = uhly 0..128).
+- Nalet `0x7760`: pred kazdym yieldem, je-li `x <= 320` bez znamenka,
+  jedno `0x883c` a mireny kanon jen pri `(slovo & 127) < D` (D = 0 nikdy);
+  konec, jakmile `144 < x < 176`. Pak `+538 = 0`, wait 10 a `+276`×
+  { wait 4, uhel += krok, `0x65f2`, `0xa290` } — spirala; nakonec `0x62cc`
+  rovne ven.
+- Simulace: zrozeni 12372 (x −212..−12, sy 24), stred po ~50 tiku,
+  otacky po 4 ticich, konecne uhly 112..32.
