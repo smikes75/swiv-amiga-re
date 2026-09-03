@@ -910,3 +910,68 @@ zabery originalu t437..t447 (`build/survey/shoot/`).
   rovne ven.
 - Simulace: zrozeni 12372 (x −212..−12, sy 24), stred po ~50 tiku,
   otacky po 4 ticich, konecne uhly 112..32.
+
+### JETS (0x001f → 0x9ca0, 0x021f → 0x9d1e)
+
+- **JETS#0 `0x9ca0`:** `a2c6(JETS#0, 36, −32, HP 18, 90 bodu, cost 15)`;
+  wait na radek 100 (`0x9afa`), `vx −0.5`, `vy +0.5` (mapove), wait na
+  radek 288; pak dite `0x9cde` a konec tasku (`0xa34c`, bez vybuchu).
+  Dite = vzlet: `a2c6(JETS#2, 34, 288, HP 2, 90 bodu, cost 15)`, raw wait
+  100 (`0x5f22`: bez pohybu i cullu), `y = fp@(3542) + 288`, z 32,
+  `vy −4`, `vx 0`, `0x62cc` — stroj proleti zdola nahoru 3.75 px/t na
+  obrazovce. Prepis `spawnJetFly` (zaznam `jetfly`, `noCull` behem raw
+  waitu).
+- **JETS#1 `0x9d1e`:** `a2c6(JETS#1, 36, −32, HP 18, 90 bodu, cost 15)`,
+  `+538 = −1`, `vx −0.25`, `vy +0.25`, wait 200, `0x6d96` (vynuluje
+  rychlosti i zrychleni), `+538 = 0`, `0x62cc`. (`x += 100; x −= 100` je
+  bez ucinku.)
+- Simulace (`build/survey/d4/`): JETS#0 zrozen 13032 (x 267), sjizdi od
+  radku 100, vzlet JETS#2 z x 141 v tiku ~13910.
+
+### TRUCK (0x0024 → 0x9d64)
+
+- `a2c6(TRUCK#0, 36, −48, HP 30, 50 bodu, cost 15)`, `+367 |= 1` (bez
+  stinu), **`x = −48`** (bez ohledu na PAM), z 1, `vx 0.5`. Smycka
+  `0x9d88`: wait 70, uhel `112 + (0x883c & 31)`, dite `0x9dc0`, `vx 0`,
+  wait 20. Dite: `a2c6(TRUCK#1, 36, −16, HP 3, 10 bodu, cost 5)`, anim
+  `0x9dd6` TRUCK#1..#3 perioda 4 loop, rychlost 512/256 = 2 px/t ve
+  zdedenem uhlu, wait 20, pak `vx = vy = 0` (lezi) a `0x62cc`. Prepis:
+  hazard `truckdrop` (`spawnTruckDrop`).
+
+### _AIRPORT#14 (0x1c3c → 0x7970) — startujici letadla
+
+- Nejprve `0x6178` kopie s aktivaci 127 (`0x797e`), rodic 176. Oba:
+  `a2c6(_AIRPORT#14, 34, 176|127, HP 2, 25 bodu, cost 3)`, **`SF
+  fp@(3615)`** (COLOR07 vypnout), `+397 |= 1`, z 12, `x −= 40`, `vx 0.5`,
+  wait 80, anim `0x79ba` = _AIRPORT#15 (loop jednoho snimku), `+346 =
+  0x1000` → ax = 0.0625 px/t², `0x62cc`.
+- Simulace: dite zrozeno 12584 (x 8, sy 127), rodic pozdeji na 176;
+  vx 1.19 po 90 tikach, 4.94 po 150.
+
+### _RIGS#4 (0x083e → 0xb22a)
+
+- `a2c6(_RIGS#4, 36, −16, HP 20, 40 bodu, cost 10)`, wait na radek 24,
+  `+276 = 5`× { wait 20, uhel 64, `0x95c2(0, 8)` = rovna kanonova strela
+  z (x, y + 8) dolu }, `0x62cc`. (`0x95c2` = `0x95ca` s ofsetem d0/d1.)
+
+### _ONERIG (0x003d → 0x8166) — vrtulnikova plosina
+
+- `a2c6(_ONERIG#0, 34, −16, HP 6, 45 bodu, cost 15)`, z 0, sekundarni
+  rotor `0x6c82` (slot +422) JEEPHELI#5..#8 perioda 10 loop (pomaly,
+  stale videt); wait na radek 64, `0x93e2` = standardni rotor (perioda 1,
+  #5..#8 po dvou tikach, blika bitem 0x80), `vz 0.5` do `z ≥ 32`, `vz 0`,
+  rychlost 0, uhel 192 (nahoru), krok `+276 = x < 160 ? 12 : −12`,
+  `+278 = 20`× { wait 14, uhel += krok, `+356 < 768` ? `+356 += 288`
+  (1.125 px/t) : mireny kanon `0x95d2`, `0x65f2` }, `0x62cc`.
+- Simulace: zrozeni 13020 (x 51), zdvih od radku 64 (tik +330), spirala
+  vpravo, rychlost 3.3 px/t v +480.
+
+### INST1#9 (0x121c → 0xb954) a JEEPHELI#31 (0x3e00 → 0xacb6)
+
+- INST1#9: `a2c6(INST1#9, 0, −24, HP 0, 0, cost 2)`, anim `0xb96a`
+  INST1#9/#10 perioda 4 loop (blikajici svetlo), `0x62cc`.
+- JEEPHELI#31 → `0xacb6`: `a2c6(SWAP#1, 0, −16, HP 0, 0, cost 10)`, `+534`
+  vypnuto, `+397 |= 1`; po radku 32 zapise svou polohu do
+  `fp@(3554)/(3556)`, vynuluje `fp@(3548..3551)` a ceka, dokud
+  `fp@(3548)` nekdo nenastavi (logika jeepu; heli bez ucinku). Prepis
+  kresli SWAP#1 staticky.

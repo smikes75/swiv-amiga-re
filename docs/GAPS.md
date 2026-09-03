@@ -358,10 +358,11 @@ Pruchod celym levelem (`TOWN-SURVEY.md`) ukazal dva systemove rozdily:
   konci FINAL. Chovani DESERTu se prepisuje podle cetnosti: hotovo AIRMINE
   (48), BLACKJET (7), TILT (11), DESTRAIN (3), TINYTRUK (7), EGGS vejce +
   hnizdo + strela + velky vybuch `0x8876` (7), DIAGUN + laser (6),
-  PYRAMID (4), FISH (17), SKYEYEB (14), FLATTANK (9), GOOSE#7 (7) — viz
-  BEHAVIORS „DESERT"; zbyva _ONERIG 11, JETS 6, _AIRPORT 4, _RIGS 4,
-  MAMA 3, INST1 5, TRUCK 1, JEEPHELI#31 1 (v poradi prvniho vyskytu:
-  EGGS 43 s, PYRAMID 80 s, DIAGUN 120 s, INST1 244 s, ...).
+  PYRAMID (4), FISH (17), SKYEYEB (14), FLATTANK (9), GOOSE#7 (7),
+  _ONERIG (11), JETS (6), _AIRPORT (4), _RIGS (4), TRUCK (1), INST1#9
+  (2), JEEPHELI#31 = SWAP pad (1) — viz BEHAVIORS „DESERT"; zbyva MAMA 3
+  (minboss s rojem MAMA#3, `0x7baa`), INST1#14 (2, plosina s pistem
+  `0xb6ce`) a INST1#11 (1, tovarna na MEDTANKy `0xb810`, HP 90, 2500 b.).
 - Scroll originalu se pricita jednou za iteraci hlavni smycky (`0x291e`),
   objekty integruji rychlost × ubehle VBL (`0x62fe`); pri zatezi A500 scroll
   zpomali (64–98 px za 8 s misto 100). Prepis bezi konstantne 50 Hz.
