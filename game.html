@@ -369,6 +369,10 @@ const IMPLEMENTED_BEHAVIORS = new Map([
   [0x002F, { coroutine: 0xB59C, id: "seaplane" }],
   [0x0030, { coroutine: 0x9E60, id: "ski" }],
   [0x0050, { coroutine: 0x7AEA, id: "bos" }],
+  // SCIFI (bezni nepratele)
+  [0x044F, { coroutine: 0x786E, id: "bunny" }],
+  [0x0053, { coroutine: 0x83DC, id: "frog" }],
+  [0x004E, { coroutine: 0x99E0, id: "tap" }],
 ]);
 
 function parsePam(pam, dico, pal0) {
@@ -1901,7 +1905,8 @@ function composeTownBobs(g, top) {
         s.beh === "juntank" || s.beh === "junhatch" || s.beh === "lakegun" ||
         s.beh === "inst2" || s.beh === "inst2gun" ||
         s.beh === "edge" || s.beh === "ski" || s.beh === "bos" ||
-        s.beh === "seaplane") {
+        s.beh === "seaplane" || s.beh === "bunny" || s.beh === "frog" ||
+        s.beh === "tap") {
       bob(s.beh, s.file, s.fr, s.x, sy, Math.floor(s.z) | 0, {
         ordinal: s.bobOrdinal,
         objectFlags: s.noShadow ? 1 : 0,        // +367 bit 0
@@ -3938,6 +3943,12 @@ function startMapObjectTask(g, s) {
     } else if (s.beh === "skyeye" || s.beh === "skyeyea") {
       s.x = -16; s.typ = 7;                     // 0x76ec/0x75f8, 0x7606
       spawnFormationCopies(g, s, 6, -40, 0, -1);// 0xa2a2(-40, 0, 6, -1)
+    } else if (s.beh === "bunny") {
+      // 0x786e: SF fp@(3616) (seda barva spritu), +276 = 0 a pak
+      // 0xa2a2(-48, 6, 3, 1) = tri kusy s typem 0, 1, 2.
+      g.spriteColorFlash = false;
+      s.typ = 0;
+      spawnFormationCopies(g, s, 3, -48, 6, 1);
     } else if (s.beh === "edge") {
       // 0x77c6: strana podle znamenka horniho slova stavu RNG fp@(11172)
       // (jen se cte, negeneruje se nove cislo), pak 0xa2a2(0, -4, 6, 0).
@@ -4162,6 +4173,8 @@ const NODE_GRAPHIC = {
   bosgun: ["BOS.LIN", 4],                                    // 0x7b54
   seaplane: ["SEAPLANE.LIN", 0],                             // 0xb59c
   seaplanebomb: ["SEAPLANE.LIN", 1],                         // 0xb64a
+  frog: ["FROG.LIN", 0],                                     // 0x83dc
+  tapshot: ["TAP.LIN", 4],                                   // 0x9a7e
   tank: ["MEDTANK.LIN", 0],                                  // 0x9eec
   tankTurret: ["MEDTANK.LIN", 4],                            // 0x9fba
   roto: ["ROTOBASE.LIN", 4],                                 // 0x995c
@@ -4186,6 +4199,16 @@ for (let i = 0; i < 8; i++) {
   NODE_GRAPHIC["junhatchdrone" + i] = ["JUNTANK.LIN", 12 + i];  // 0xa690
   NODE_GRAPHIC["edge" + i] = ["EDGE.LIN", i];                   // 0x7814
 }
+for (let i = 0; i < 5; i++)
+  NODE_GRAPHIC["bunny" + i] = ["BUNNY.LIN", i];                 // 0x78f2
+for (let i = 0; i < 4; i++)
+  NODE_GRAPHIC["tap" + i] = ["TAP.LIN", i];                     // 0x9a16
+/* 0x78fa: tabulka 16 smeru pro 0xa268; pouzitelne jsou jen indexy 2..6
+   (BUNNY#0..#4), zbytek je 0x2200 mimo dosah uhlu 32..96. */
+const BUNNY_DIR = [0, 0, 0, 1, 2, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4];
+const bunnyFrame = ang => BUNNY_DIR[((ang + 8) & 240) >> 4];
+/* 0x9a5e: ctyri snimky TAP#0..#3 opakovane 4x pres celych 16 smeru. */
+const tapFrame = ang => (((ang + 8) & 240) >> 4) & 3;
 const DEFAULT_NODE = Object.freeze({ ex: 8, ey: 8, sweeps: true });
 const PLAYER_NODE = DEFAULT_NODE, BOLT_NODE = DEFAULT_NODE;
 const nodeExtentCache = new Map();
@@ -4222,10 +4245,11 @@ function releaseSpawnTask(g, s) {
 }
 function deathBoomZ(s) {                       // 0x894a: z rodice + 1
   if (["mill", "airmine", "tilt", "egg", "goose7", "skyeye", "jetfly",
-       "mama", "skyeyea", "edge", "bos"].includes(s.beh)) return 33;
+       "mama", "skyeyea", "edge", "bos", "bunny"].includes(s.beh))
+    return 33;
   if (s.beh === "factory") return 17;
   if (["fish", "onerig", "airplane", "vtol", "xevswarm",
-       "trilo", "corn"].includes(s.beh))
+       "trilo", "corn", "frog"].includes(s.beh))
     return Math.floor(s.z || 0) + 1;
   return 1;
 }
@@ -4470,6 +4494,21 @@ const XEVPLANE_SCRIPTS = {
   2: [[128, 39], [144, 10], [159, 10], [175, 10], [190, 100]],
   3: [[192, 48], [208, 10], [224, 10], [240, 10], [0, 254]],
 };
+function spawnTapShot(g, s, ang) {              // 0x9a7e (dite 0x6178)
+  // a2c6(TAP#4, 6, -16, HP 0, 0 bodu, cost 1), +367 |= 1 (bez stinu),
+  // +364 = 0, anim 0x09a9e TAP#4/#5 perioda 3 loop, rychlost 896/256 =
+  // 3.5 px/t; kazdé 4 tiky rychlost -= 64/256 a pri nule task konci
+  // (0xa34c, bez vybuchu).
+  const v = angVel(ang, 3.5);
+  const h = { kind: "tapshot", file: "TAP.LIN", x: s.x, y: s.y, z: 0,
+              vx: v.vx, vy: v.vy, ang, spd: 3.5,
+              alive: true, dead: false, hp: 0, cost: 1, budgeted: true,
+              scoreValue: 0, lethal: true, cullMargin: 0,
+              seq: [4, 5], per: 3, apos: 0, at: 0, animFresh: true,
+              t: 4 };
+  g.activeCost = (g.activeCost || 0) + h.cost;
+  assignBobOrdinal(g, h); g.hazards.push(h);
+}
 function spawnBosGun(g, s) {                    // 0x7b54 (dite 0x6144)
   // a2c6(BOS#4, 34, -48, HP 0, 0 bodu, cost 0), +538 = -1, +367 |= 12
   // (blika s rodicem + vazane dite s nulovym ofsetem); po radku 192 anim
@@ -5113,6 +5152,14 @@ function advanceTownHazardField(g, h) {
   } else if (h.kind === "beam") {
     if (h.lethalT > 0 && --h.lethalT <= 0) h.lethal = false;   // trida 0
     if (--h.life <= 0) h.retireAfterField = true;              // kill anim
+  } else if (h.kind === "tapshot") {
+    h.x += h.vx; h.y += h.vy;
+    if (--h.t <= 0) {                          // 0x9ab2: kazde 4 tiky
+      h.spd -= 0.25;                           // 0x9aba: -64/256
+      if (h.spd <= 0) { releaseHazard(g, h); return; }   // 0xa34c
+      const v = angVel(h.ang, h.spd); h.vx = v.vx; h.vy = v.vy;
+      h.t = 4;
+    }
   } else if (h.kind === "bosgun") {
     if (!h.parent.alive) { releaseHazard(g, h); return; }   // +542 = 0x6db4
     h.x = h.parent.x; h.y = h.parent.y; h.z = h.parent.z;   // vazane dite
@@ -5250,7 +5297,8 @@ function advanceTownHazardField(g, h) {
       h.kind === "lakesubturret" || h.kind === "lakesubshot" ||
       h.kind === "juntankturret" || h.kind === "junhatchdrone" ||
       h.kind === "inst2wave" || h.kind === "inst2beam" ||
-      h.kind === "bosgun" || h.kind === "seaplanebomb") {
+      h.kind === "bosgun" || h.kind === "seaplanebomb" ||
+      h.kind === "tapshot") {
     if (h.animFresh) h.animFresh = false;
     else if (++h.at >= h.per) {
       h.at = 0; h.apos++;
@@ -5789,7 +5837,7 @@ function dispatchTownContactEvent(g, task) {
              o.beh === "mama" || (o.beh === "factory" && o.st > 0) ||
              o.beh === "xevswarm" || o.beh === "dada" ||
              o.beh === "skyeyea" || o.beh === "edge" || o.beh === "bos" ||
-             o.lethal ||
+             o.beh === "bunny" || o.lethal ||
              (o.beh === "egg" && o.st === 3))
       damageSpawn(g, o);                       // 0x8510 i pro bit 3 (0x6566)
   } else if (kind === "hazard") {
@@ -6329,7 +6377,7 @@ function step(g) {
             s.beh === "diagun" || s.beh === "fish" || s.beh === "goose7" ||
             s.beh === "truck" || s.beh === "mama" || s.beh === "xevswarm" ||
             s.beh === "dada" || s.beh === "hover" || s.beh === "juntank" ||
-            s.beh === "edge" || s.beh === "bos")
+            s.beh === "edge" || s.beh === "bos" || s.beh === "bunny")
           margin = -48;
         else if (s.beh === "piston") margin = -60;    // 0xb6de
         else if (s.beh === "factory") margin = -63;   // 0xb81c
@@ -6342,6 +6390,8 @@ function step(g) {
         else if (s.beh === "inst2gun") margin = -16;  // 0xbaee
         else if (s.beh === "ski") margin = 190;       // 0x9e6a
         else if (s.beh === "seaplane") margin = -16;  // 0xb5a2
+        else if (s.beh === "frog") margin = -8;       // 0x83e2
+        else if (s.beh === "tap") margin = -16;       // 0x99e6
         else if (s.beh === "corn") margin = -80;      // 0x8218
         else if (s.beh === "swappad0") margin = -16;  // 0xac70
         else if (s.beh === "trackzone") margin = 0;   // 0xad38: 0x9ac8(0)
@@ -6433,6 +6483,37 @@ function step(g) {
         s.cost = 13; s.hp = 0; s.scoreValue = 200;
         accountCost(g, s);
         s.fr = 2; s.at = 0; s.st = 0; s.z = 0; s.vz = 0; s.vx = 0; s.vy = 0;
+      } else if (s.beh === "bunny") {
+        // 0x786e (SCIFI): a2c6(BUNNY#0, 34, -48, HP 1, 90 bodu, cost 10)
+        // + guard 0x8822, +367 |= 16, z 32, rychlost 640/256 = 2.5,
+        // uhel 64 - (typ << 4), snimek z tabulky 0x78fa pres 0xa268.
+        s.cost = 10; s.hp = 1; s.scoreValue = 90;
+        if (!reserveCost(g, s)) releaseSpawnTask(g, s);
+        else {
+          s.scrollLocked = true; s.z = 32; s.spd = 2.5;
+          s.ang = (64 - ((s.typ | 0) << 4)) & 255;
+          const bv = angVel(s.ang, s.spd); s.vx = bv.vx; s.vy = bv.vy;
+          s.fr = bunnyFrame(s.ang);
+          s.nodeKey = "bunny" + s.fr; s.nodeExt = null;
+          s.st = 0; s.t = 70; s.shots = 2;
+        }
+      } else if (s.beh === "frog") {
+        // 0x83dc (SCIFI): a2c6(FROG#0, 36, -8, HP 1, 55 bodu, cost 10),
+        // anim 0x083f2 FROG#0..#3 perioda 4 loop, z = 0.
+        s.cost = 10; s.hp = 1; s.scoreValue = 55;
+        accountCost(g, s);
+        s.fr = 0; s.apos = 0; s.at = 0; s.animSeq = [0, 1, 2, 3];
+        s.z = 0; s.vz = 0; s.vx = 0; s.vy = 0; s.st = 0; s.t = 0;
+      } else if (s.beh === "tap") {
+        // 0x99e0 (SCIFI): a2c6(TAP#0, 36, -16, HP 8, 60 bodu, cost 10).
+        // Kolo: 0x883c -> krok uhlu (dolni slovo & 31) - 16 a pocet
+        // ((horni slovo) & 31) + 8; tolikrat { uhel += krok, snimek },
+        // pak zaokrouhleni uhlu na sestnactiny, ctyri strely po 64
+        // v jednom tiku, wait 10 a znovu.
+        s.cost = 10; s.hp = 8; s.scoreValue = 60;
+        accountCost(g, s);
+        s.ang = 0; s.fr = 0; s.nodeKey = "tap0"; s.nodeExt = null;
+        s.st = 0; s.t = 0; s.turns = 0; s.turnStep = 0;
       } else if (s.beh === "edge") {
         // 0x77c6 (ICE): a2c6(EDGE#0, 34, -48, HP 1, 50 bodu, cost 10),
         // +367 |= 16 (obrazovka), z 32, rychlost 768/256 = 3, uhel 64
@@ -6987,6 +7068,62 @@ function step(g) {
       } else if (s.st === 3 && --s.t <= 0) {
         if (--s.beams > 0) s.st = 2; else { s.st = 1; s.t = 100; }
       }
+    } else if (s.beh === "bunny") {
+      s.x += s.vx; s.y += s.vy;                  // bit4: obrazovkove
+      if (--s.t <= 0) {                          // 0x78c2: wait 70, pak 2x
+        if (s.shots > 0) {                       // 0x78d6
+          s.ang = (s.ang + 16) & 255;
+          s.spd += 0.5;                          // +356 += 128
+          const v = angVel(s.ang, s.spd); s.vx = v.vx; s.vy = v.vy;
+          s.fr = bunnyFrame(s.ang);
+          s.nodeKey = "bunny" + s.fr; s.nodeExt = null;
+          fireCannonAimed(g, s.x, s.sy, s.vx, s.vy);
+          s.shots--; s.t = 8;
+        } else s.t = 1;                          // 0x62cc
+      }
+    } else if (s.beh === "frog") {
+      s.x += s.vx; s.y += s.vy; s.z += s.vz;     // housekeeping 0x62fe
+      if (s.animSeq && ++s.at >= 4) {            // anim perioda 4 loop
+        s.at = 0; s.apos = (s.apos + 1) & 3; s.fr = s.animSeq[s.apos];
+      }
+      if (s.st === 0) {
+        if (s.sy >= 8) {                         // 0x9afa(8)
+          s.ang = 64; s.spd = 1.5;
+          const v = angVel(s.ang, s.spd); s.vx = v.vx; s.vy = v.vy;
+          s.lethal = true;                       // +504 = 34
+          s.vz = 0.5; s.st = 1;
+        }
+      } else if (s.st === 1) {
+        if (s.z >= 32) { s.vz = 0; s.st = 2; s.t = 0; }
+      } else if (--s.t <= 0) {                   // 0x8458: kazdych 5 tiku
+        const p = g.player;
+        const want = angTo(s.x, s.sy, p.alive ? p.x : 160,
+                           p.alive ? p.y : 192);
+        s.ang = turnToward(s.ang, want, 7);      // 0x65be s limitem 7
+        s.spd += 0.125;                          // 0x8462: bez stropu
+        const v = angVel(s.ang, s.spd); s.vx = v.vx; s.vy = v.vy;
+        s.t = 5;
+      }
+    } else if (s.beh === "tap") {
+      if (s.st === 0) {                          // 0x99f2: nove kolo
+        const r = random32(g);
+        s.turnStep = (r & 31) - 16;              // dolni slovo
+        s.turns = ((r >>> 16) & 31) + 8;         // horni slovo
+        s.st = 1;
+      }
+      if (s.st === 1) {                          // 0x9a0e: otaceni
+        s.ang = (s.ang + s.turnStep) & 255;
+        s.fr = tapFrame(s.ang);
+        s.nodeKey = "tap" + s.fr; s.nodeExt = null;
+        if (--s.turns <= 0) {
+          s.ang = (s.ang + 8) & 240;             // 0x9a2a: zaokrouhleni
+          for (let k = 0; k < 4; k++) {          // 0x9a3e: ctyri strely
+            spawnTapShot(g, s, s.ang);
+            s.ang = (s.ang + 64) & 255;
+          }
+          s.st = 2; s.t = 10;                    // 0x9a52: wait 10
+        }
+      } else if (s.st === 2 && --s.t <= 0) s.st = 0;
     } else if (s.beh === "edge") {
       s.x += s.vx; s.y += s.vy;                  // bit4: obrazovkove
       if (s.st === 0) {
@@ -7983,7 +8120,8 @@ function step(g) {
            s.beh === "mama" || (s.beh === "factory" && s.st > 0) ||
            s.beh === "xevdrift" || s.beh === "xevswarm" ||
            s.beh === "dada" || s.beh === "skyeyea" ||
-           s.beh === "edge" || s.beh === "bos" || s.lethal ||
+           s.beh === "edge" || s.beh === "bos" || s.beh === "bunny" ||
+           s.lethal ||
            (s.beh === "egg" && s.st === 3)) && overlap) {
         contactMill.add(s); lethalContact = true; lethalSources.push(s.beh);
       }

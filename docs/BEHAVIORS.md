@@ -1506,3 +1506,51 @@ instalacich; vlna 4 + 1 letcu.
   oblacek `0x6178(0x894a)` a **tiche zabiti** (`fp@(-1414)`, bez skore).
 - Simulace: zrozeni 9840, pojizdeni s cakanci do radku 48, vzlet do
   z 32 (tik +200), pak bomba kazdych 10 tiku.
+
+## SCIFI - bezni nepratele (prepsano 2026-09-04; `build/survey/scifi/`)
+
+### BUNNY (0x044f → 0x786e)
+
+- `SF fp@(3616)` (seda barva HW spritu), `+276 = 0` a formace
+  `0xa2a2(−48, 6, 3, 1)` = tri kusy s typem 0, 1, 2 (kazdy o 48 px vlevo
+  a 6 px nize).
+- `a2c6(BUNNY#0, 34, −48, HP 1, 90 bodu, cost 10)` + guard `0x8822`
+  (v SCIFI se z 222 kusu prosadi ~165, zbytek padne na rozpoctu),
+  `+367 |= 16`, `z = 32`, rychlost `+356 = 640` = 2.5 px/t, **uhel
+  `64 − (typ << 4)`** = 64, 48, 32 - trojice se rozviri.
+- Snimek z tabulky `0x78fa` pres `0xa268` (index `((uhel + 8) & 240) >> 4`;
+  pouzitelne jsou jen indexy 2..6 = BUNNY#0..#4, zbytek je `0x2200`
+  mimo dosah). `0x6d7c` meni i uzel.
+- Po wait 70 dvakrat `0x78d6`: uhel += 16, rychlost += 128/256, novy
+  snimek, **mireny kanon `0x95d2`**, wait 8; pak `0x62cc`.
+
+### FROG (0x0053 → 0x83dc)
+
+- `a2c6(FROG#0, 36, −8, HP 1, 55 bodu, cost 10)`, anim `0x083f2`
+  FROG#0..#3 perioda 4 loop, `z = 0`.
+- Po `0x9afa(8)`: `+364 = −16`, uhel 64, rychlost `+356 = 384` = 1.5 px/t,
+  `+397 &= ~1`, `0x65ae`, handler bitu 3, `+504 = 34` (smrtici kontakt),
+  `vz = 0.5` do `z >= 32`, pak `vz = 0`.
+- Lovecka smycka `0x8458` kazdych 5 tiku: uhel na hrace s limitem **7**
+  (`0x7312` + `0x65be`), `+356 += 32` (**bez stropu** - zaba se stale
+  zrychluje) a `0x65f2`.
+- Simulace: zrozeni 14524, zdvih od radku 8, v tiku +140 uhel 85 a
+  rychlost 1.87 px/t.
+
+### TAP (0x004e → 0x99e0) — rotujici vez
+
+- `a2c6(TAP#0, 36, −16, HP 8, 60 bodu, cost 10)`; kolo `0x99f2`: jedno
+  `0x883c` da **krok uhlu `(dolni slovo & 31) − 16`** (tedy −16..+15) a
+  **pocet `((horni slovo) & 31) + 8`** (8..39). Tolikrat { uhel += krok,
+  snimek `0xa268` z tabulky `0x9a5e` (TAP#0..#3 opakovane pres 16
+  sektoru), yield }.
+- Pak `uhel = (uhel + 8) & 240` (zaokrouhleni na sestnactiny), **ctyri
+  strely `0x6178(0x9a7e)` v jednom tiku** s krokem uhlu 64, wait 10 a
+  nove kolo.
+- **Strela `0x9a7e`:** `a2c6(TAP#4, 6, −16, HP 0, 0 bodu, cost 1)`,
+  `+367 |= 1`, `+364 = 0`, anim `0x09a9e` TAP#4/#5 perioda 3 loop,
+  rychlost `+356 = 896` = 3.5 px/t; **kazde 4 tiky rychlost −= 64/256**
+  a pri nule task konci (`0xa34c`, bez vybuchu) - strela se zastavi a
+  zmizi po 56 ticich.
+- Simulace: zrozeni 2748, kola s nahodnym krokem (napr. −15, pak +11),
+  ctyri strely na svetove strany po kazdem kole.
