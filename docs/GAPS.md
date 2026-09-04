@@ -376,8 +376,9 @@ Pruchod celym levelem (`TOWN-SURVEY.md`) ukazal dva systemove rozdily:
   (74), FROG (12), TAP se strelou (11), revize Fable 2026-09-04 (tri
   opravy: EDGE wait 5 i po sedme otocce, bomba SEAPLANE bez cull −16,
   FROG +364 = −16); zbyva ze SCIFI bossovy komplex (24 objektu v 7
-  druzich: INST3#3, INST3#12, _LAVA#20, ORB#0, INST4#6, INST4#0,
-  INST4#3, zadani `docs/ZADANI-SCIFI-BOSS.md`) a zaverecny boss FINAL
+  druzich, zadani `docs/ZADANI-SCIFI-BOSS.md`: hotova davka A =
+  geyzir _LAVA#20 s kameny (8) a lusk ORB#0 s listy a koulemi (6),
+  zbyva INST3#3, INST3#12, INST4#6, INST4#0, INST4#3) a zaverecny boss FINAL
   (INST5#0). Overeno zatim jen
   simulaci a archy snimku; porovnani s baseline vAmigy po objektech
   (jako u TOWN) zbyva. Zvuky DESERTu (`0x5436` strela vejce, `0x541e`

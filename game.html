@@ -373,6 +373,9 @@ const IMPLEMENTED_BEHAVIORS = new Map([
   [0x044F, { coroutine: 0x786E, id: "bunny" }],
   [0x0053, { coroutine: 0x83DC, id: "frog" }],
   [0x004E, { coroutine: 0x99E0, id: "tap" }],
+  // SCIFI (bossovy komplex - davka A)
+  [0x284C, { coroutine: 0xAF9C, id: "geyser" }],
+  [0x0052, { coroutine: 0xB084, id: "orb" }],
 ]);
 
 function parsePam(pam, dico, pal0) {
@@ -4175,6 +4178,9 @@ const NODE_GRAPHIC = {
   seaplanebomb: ["SEAPLANE.LIN", 1],                         // 0xb64a
   frog: ["FROG.LIN", 0],                                     // 0x83dc
   tapshot: ["TAP.LIN", 4],                                   // 0x9a7e
+  lavarock: ["_LAVA.LIN", 20],                               // 0xb014
+  orbleaf: ["ORB.LIN", 1],                                   // 0xb0b4
+  orbball: ["ORB.LIN", 7],                                   // 0xb114
   tank: ["MEDTANK.LIN", 0],                                  // 0x9eec
   tankTurret: ["MEDTANK.LIN", 4],                            // 0x9fba
   roto: ["ROTOBASE.LIN", 4],                                 // 0x995c
@@ -4203,6 +4209,8 @@ for (let i = 0; i < 5; i++)
   NODE_GRAPHIC["bunny" + i] = ["BUNNY.LIN", i];                 // 0x78f2
 for (let i = 0; i < 4; i++)
   NODE_GRAPHIC["tap" + i] = ["TAP.LIN", i];                     // 0x9a16
+for (let i = 0; i < 8; i++)
+  NODE_GRAPHIC["orbball" + i] = ["ORB.LIN", 7 + i];             // 0xb1a0
 /* 0x78fa: tabulka 16 smeru pro 0xa268; pouzitelne jsou jen indexy 2..6
    (BUNNY#0..#4), zbytek je 0x2200 mimo dosah uhlu 32..96. */
 const BUNNY_DIR = [0, 0, 0, 1, 2, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4];
@@ -4537,6 +4545,58 @@ function spawnSeaplaneBomb(g, s) {             // 0xb64a (dite 0x6178)
               st: 0, t: 20 };                    // +364 zustava -64
   g.activeCost = (g.activeCost || 0) + h.cost;
   assignBobOrdinal(g, h); g.hazards.push(h);
+}
+function spawnLavaRock(g, s) {                  // 0xb014 (dite 0x6178)
+  // a2c6(_LAVA#20, 38, -16, HP 1, 30 bodu, cost 10) + guard 0x8822, anim
+  // 0x0b032 _LAVA#20/#21 perioda 8 loop, rychlost (0x883c & 127) + 320,
+  // z = 1, vz = ((0x883c & 0x1ffff) jako 16.16) + 2, az = -6144/65536.
+  // Uhel dedi po geyziru (0x6178 kopiruje +358).
+  const h = { kind: "lavarock", file: "_LAVA.LIN", x: s.x, y: s.y,
+              ang: s.ang, vx: 0, vy: 0, z: 1, vz: 0, az: -6144 / 65536,
+              alive: true, dead: false, hp: 1, cost: 10, scoreValue: 30,
+              lethal: true, castShadow: true, cullMargin: -16,
+              seq: [20, 21], per: 8, apos: 0, at: 0, animFresh: true };
+  if (!reserveCost(g, h)) return;               // 0x8822: pri odmitnuti
+  const r = random32(g);                        // se zadne RNG nespotrebuje
+  const v = angVel(h.ang, ((r & 127) + 320) / 256);
+  h.vx = v.vx; h.vy = v.vy;
+  h.vz = ((random32(g) & 0x1FFFF) / 65536) + 2;
+  assignBobOrdinal(g, h); g.hazards.push(h);
+}
+function throwLavaRock(g, s) {                  // 0xafd4: jedno kolo davky
+  const r = random32(g);
+  s.ang = (s.ang + (r & 31) + 128) & 255;       // kumulovane, stridani stran
+  spawnLavaRock(g, s);
+  s.t = Math.max(1, 10 - s.rocks);              // 0x5f22(10 - zbytek), min 1
+  s.st = 2;
+}
+function spawnOrbLeaf(g, s, typ) {              // 0xb0b4 (dite 0x6178)
+  // gfx z tabulky 0xb108 = ORB#1..#6 podle +276, a2c6(gfx, 0x8000, -16,
+  // HP 0, 0 bodu, cost 7), +367 |= 1 (bez stinu). Do 0x9afa(typ + 64)
+  // stoji na miste lusku - sest prekrytych listu je zavreny ORB.
+  const h = { kind: "orbleaf", file: "ORB.LIN", typ,
+              x: s.x, y: s.y, z: 0, vx: 0, vy: 0, ang: 0,
+              frame: 1 + typ, nodeKey: "orbleaf",
+              alive: true, dead: false, hp: 0, cost: 7, scoreValue: 0,
+              st: 0, t: 0 };
+  accountCost(g, h);                            // prime a2c6, bez 0x8822
+  assignBobOrdinal(g, h); g.hazards.push(h);
+}
+function spawnOrbBall(g, h) {                   // 0xb114 (dite 0x6178)
+  // x -= 4, y += 2, a2c6(ORB#7, 34, -32, HP 1, 70 bodu, cost 10) bez
+  // guardu; surovy wait (typ + 1) * 64 (0x5f22 nedela field, koule je do
+  // te doby neviditelna a nekolidujici), pak +364 = -10, anim 0x0b144
+  // ORB#15, #16, #17, #18, #13 perioda 8 (drzi #13) a wait 50.
+  const b = { kind: "orbball", file: "ORB.LIN", typ: h.typ,
+              x: h.x - 4, y: h.y + 2, z: 0, vx: 0, vy: 0,
+              ang: h.ang, spd: 0.5, nodeKey: "orbball",
+              alive: true, dead: false, hp: 1, cost: 10, scoreValue: 70,
+              lethal: true, castShadow: true, cullMargin: -10,
+              hidden: true, st: 0, t: ((h.typ | 0) + 1) * 64,
+              seq: [15, 16, 17, 18, 13], per: 8, apos: 0, at: 0,
+              animFresh: true, animHold: true };
+  accountCost(g, b);
+  assignBobOrdinal(g, b); g.hazards.push(b);
 }
 function spawnInst2Beam(g, s) {                 // 0xba9e (dite 0x617a)
   // a2c6(INST2#8, 6, -63, HP 0, 0 bodu, cost 20), +367 |= 1, z = 1,
@@ -5180,6 +5240,53 @@ function advanceTownHazardField(g, h) {
       queueTownExplosionTask(g, h.x, h.y, 1, "death-seaplanebomb");
       h.retireAfterField = true;               // fp@(-1414): bez skore
     }
+  } else if (h.kind === "lavarock") {
+    h.x += h.vx; h.y += h.vy;
+    h.vz += h.az; h.z += h.vz;
+    if (h.z < 0) { h.z = 0; h.vz = 0; h.az = 0; }   // 0x6328: klamp zaporneho z
+    if (Math.floor(h.z) === 0) {                    // 0xb076: cele slovo z
+      // 0xa36a bez zasahu hrace: oblacek z +376, ale bez skore.
+      queueTownExplosionTask(g, h.x, h.y, 1, "death-lavarock");
+      h.retireAfterField = true;
+    }
+  } else if (h.kind === "orbleaf") {
+    if (h.st === 0) {                          // 0x9afa(typ + 64)
+      if (h.y - scrollTop(g) >= (h.typ | 0) + 64) {
+        h.ang = (g.rngState >>> 16) & 255;     // fp@(11172), RNG se neposouva
+        spawnOrbBall(g, h);                    // 0x6178(0xb114)
+        h.z = 32;                              // 0xb0ee
+        const v = angVel(h.ang, 6); h.vx = v.vx; h.vy = v.vy;
+        h.st = 1; h.t = 15;                    // 0x629c(15), pak 0xa34c
+      }
+    } else {
+      h.x += h.vx; h.y += h.vy;
+      if (--h.t <= 0) { releaseHazard(g, h); return; }
+    }
+  } else if (h.kind === "orbball") {
+    if (h.st === 0) {                          // 0x5f22: bez fieldu
+      if (--h.t > 0) return;                   // neviditelna, bez anim i cullu
+      h.hidden = false; h.animFresh = true;    // +364 = -10, animator 0x6c88
+      h.st = 1; h.t = 50;                      // 0x629c(50)
+    }
+    if (h.st === 1 && --h.t <= 0) {            // 0xb158: rozjezd
+      h.z = 32; h.spd = 0.5; h.ang = 192; h.st = 2; h.t = 0;
+    }
+    if (h.st === 2) {
+      h.x += h.vx; h.y += h.vy;
+      if (--h.t <= 0) {                        // 0xb16a: kazdych 15 tiku
+        const p = g.player;
+        const want = angTo(h.x, h.y - scrollTop(g),
+                           p.alive ? p.x : 160, p.alive ? p.y : 192);
+        h.ang = turnToward(h.ang, want, 33);   // 0x7312 + 0x65be limit 33
+        h.ang = (h.ang + 16) & 224;            // 0xb174: zaokrouhleni na osminy
+        const v = angVel(h.ang, h.spd); h.vx = v.vx; h.vy = v.vy;
+        const d = dir8(h.ang);                 // 0xb1a0: 0xa27c od ORB#7
+        h.seq = [7 + d]; h.apos = 0;
+        h.nodeKey = "orbball" + d; h.nodeExt = null;
+        h.spd += 0.25;                         // 0xb18a: +64/256, bez stropu
+        h.t = 15;
+      }
+    }
   } else if (h.kind === "inst2wave") {
     if (!h.parent.alive) { releaseHazard(g, h); return; }   // +542 = 0x6db4
     h.y = scrollTop(g) - 32;
@@ -5297,7 +5404,8 @@ function advanceTownHazardField(g, h) {
       h.kind === "juntankturret" || h.kind === "junhatchdrone" ||
       h.kind === "inst2wave" || h.kind === "inst2beam" ||
       h.kind === "bosgun" || h.kind === "seaplanebomb" ||
-      h.kind === "tapshot") {
+      h.kind === "tapshot" || h.kind === "lavarock" ||
+      h.kind === "orbleaf" || h.kind === "orbball") {
     if (h.animFresh) h.animFresh = false;
     else if (++h.at >= h.per) {
       h.at = 0; h.apos++;
@@ -5843,7 +5951,8 @@ function dispatchTownContactEvent(g, task) {
     if (!o.alive) return;
     if (o.kind === "minecore" && !o.consumed) pickupMineCore(g, o);
     else if (o.kind === "proxfrag" || o.kind === "laser") releaseHazard(g, o);
-    else if (o.kind === "mamadrone") damageHazard(g, o);   // vychozi bit3
+    else if (o.kind === "mamadrone" || o.kind === "lavarock" ||
+             o.kind === "orbball") damageHazard(g, o);    // vychozi bit3
   }
 }
 
@@ -6391,6 +6500,8 @@ function step(g) {
         else if (s.beh === "seaplane") margin = -16;  // 0xb5a2
         else if (s.beh === "frog") margin = -8;       // 0x83e2
         else if (s.beh === "tap") margin = -16;       // 0x99e6
+        else if (s.beh === "geyser") margin = 32;     // 0xafa8
+        else if (s.beh === "orb") margin = -16;       // 0xb08c
         else if (s.beh === "corn") margin = -80;      // 0x8218
         else if (s.beh === "swappad0") margin = -16;  // 0xac70
         else if (s.beh === "trackzone") margin = 0;   // 0xad38: 0x9ac8(0)
@@ -6482,6 +6593,25 @@ function step(g) {
         s.cost = 13; s.hp = 0; s.scoreValue = 200;
         accountCost(g, s);
         s.fr = 2; s.at = 0; s.st = 0; s.z = 0; s.vz = 0; s.vx = 0; s.vy = 0;
+      } else if (s.beh === "geyser") {
+        // 0xaf9c (SCIFI): SF fp@(155), a2c6(_LAVA#20, 0x8000, 32, HP 0,
+        // 0 bodu, cost 0), +364 = 0. Korutina nikdy nevola 0x62d2, takze
+        // objekt neenqueueuje BOB (je neviditelny), nehybe se a cull
+        // 0x6480 s marginem 0 si dela sam na konci kazdeho cyklu.
+        s.cost = 0; s.hp = 0; s.scoreValue = 0;
+        accountCost(g, s);
+        g.bobGroundFlag = false;               // SF fp@(155), viz 0x63c8
+        s.noCull = true; s.hidden = true;
+        s.ang = 0; s.st = 0; s.t = 0; s.rocks = 0;
+      } else if (s.beh === "orb") {
+        // 0xb084 (SCIFI): a2c6(ORB#1, 0x8000, -16, HP 0, 0 bodu, cost 0),
+        // ST fp@(155), sest listu 0x6178(0xb0b4) s +276 = 5..0 a rodic
+        // hned konci (0xa34c) - sam se nikdy nevykresli.
+        s.cost = 0; s.hp = 0; s.scoreValue = 0;
+        accountCost(g, s);
+        g.bobGroundFlag = true;                // ST fp@(155)
+        for (let k = 5; k >= 0; k--) spawnOrbLeaf(g, s, k);
+        s.alive = false;
       } else if (s.beh === "bunny") {
         // 0x786e (SCIFI): a2c6(BUNNY#0, 34, -48, HP 1, 90 bodu, cost 10)
         // + guard 0x8822, +367 |= 16, z 32, rychlost 640/256 = 2.5,
@@ -7066,6 +7196,24 @@ function step(g) {
         s.t = 40; s.st = 3;
       } else if (s.st === 3 && --s.t <= 0) {
         if (--s.beams > 0) s.st = 2; else { s.st = 1; s.t = 100; }
+      }
+    } else if (s.beh === "geyser") {
+      // Poradi vetvi kopiruje 0xafb8: konec dlouheho cekani, novy oblacek
+      // a prvni kamen probehnou v jednom tiku, stejne jako v korutine.
+      if (s.st === 3 && --s.t <= 0) {            // 0xb006: cull a znovu
+        if (outsideCullMargin(s.x, s.sy, 0)) s.retireAfterField = true;
+        else s.st = 0;
+      }
+      if (s.st === 0) {                          // 0xafb8: zacatek cyklu
+        queueTownExplosionTask(g, s.x, s.y, 1, "geyser-puff");   // 0x894a
+        // zvuk 0x5350(x) neprepsan
+        s.rocks = ((g.rngState >>> 16) & 7) + 3; // fp@(11172), bez posunu RNG
+        s.st = 1;
+      }
+      if (s.st === 1) throwLavaRock(g, s);
+      else if (s.st === 2 && --s.t <= 0) {       // 0xaff6: konec rozestupu
+        if (--s.rocks > 0) throwLavaRock(g, s);
+        else { s.t = Math.max(1, (g.rngState >>> 16) & 127); s.st = 3; }
       }
     } else if (s.beh === "bunny") {
       s.x += s.vx; s.y += s.vy;                  // bit4: obrazovkove

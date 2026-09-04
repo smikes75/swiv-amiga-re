@@ -1575,3 +1575,59 @@ Overeno bez nalezu: delo BOS (HP 0, trida 34) je nezranitelne, protoze
 `0xa2a2` dava typ 0, 1, 2; tabulky `0x78fa` a `0x9a5e`; RNG
 `0x883c` = posun longu `fp@(11172)` s XOR `0x1d872b41`; SEAPLANE typ 2
 (2 kusy) vzleta bez pojizdeni.
+
+## SCIFI - bossovy komplex (prepsano 2026-09-04; `build/survey/scifiboss/`)
+
+### Geyzir `_LAVA#20` (0x0284c → 0xaf9c) - **neviditelny emitor**
+
+- `SF fp@(155)`, `a2c6(_LAVA#20, 0x8000, 32, HP 0, 0 bodu, cost 0)`,
+  `+364 = 0`.
+- **Korutina nikdy nevola `0x62d2`**, jen surove `0x5f22`. Nedela tedy
+  zadny field: neenqueueuje BOB (je neviditelna), nehybe se a cull
+  `0x6480` s marginem 0 si dela sama na konci kazdeho cyklu. Trida
+  0x8000 navic vyrazuje uzel z kolizi.
+- Cyklus `0xafb8`: oblacek `0x6178(0x894a)` (z + 1), zvuk `0x5350(x)`
+  (**bez prepisu**), pocet kamenu `+276 = (horni slovo fp@(11172) & 7)
+  + 3` = 3..10 (**RNG jen cten, neposouva se**). Pak tolikrat:
+  `0x883c` → `uhel += (dolni slovo & 31) + 128` (kumulovane, kameny
+  se stridave klopi na obe strany), kamen `0x6178(0xb014)`, surovy wait
+  `10 − zbyvajici pocet`. Nakonec surovy wait `horni slovo & 127` a
+  novy cyklus.
+- Rozestupy kamenu tedy **rostou** a jsou dane poctem: pri N = 5 vysla
+  sonda 5, 6, 7, 8 tiku (zrozeni 3656, kameny 4009, 4014, 4020, 4027,
+  4035; dalsi cyklus 4059).
+- **Kamen `0xb014`:** `a2c6(_LAVA#20, 38, −16, HP 1, 30 bodu, cost 10)`
+  + guard `0x8822` (pri odmitnuti se nespotrebuje zadne RNG), anim
+  `0x0b032` _LAVA#20/#21 perioda 8 loop, rychlost `(0x883c & 127) + 320`
+  = 1.25..1.75 px/t ve zdedenem uhlu, `z = 1`,
+  `vz = ((0x883c & 0x1ffff) jako 16.16) + 2` = 2..4 px/t,
+  `az = −6144/65536`. Pada, dokud je cele slovo `z` nenulove; `0x6328`
+  klampne zaporne `z` (a nuluje `vz` i `az`), takze dopad je vzdy presne
+  na nule. Pak `0xa36a` **bez zasahu hrace = oblacek bez skore**.
+
+### Lusk `ORB#0` (0x0052 → 0xb084)
+
+- `a2c6(**ORB#1**, 0x8000, −16, HP 0, 0 bodu, cost 0)` - mapa kresli
+  ORB#0, korutina zaklada ORB#1; rodic hned zalozi sest listu
+  `0x6178(0xb0b4)` s `+276 = 5, 4, ..., 0` a **konci (`0xa34c`) drive,
+  nez by udelal prvni field**, takze sam se nikdy nevykresli. Take
+  `ST fp@(155)`.
+- **List `0xb0b4`:** gfx z tabulky `0xb108` = ORB#1..#6 podle `+276`,
+  `a2c6(gfx, 0x8000, −16, HP 0, 0 bodu, cost 7)`, `+367 |= 1`. Do
+  `0x9afa(typ + 64)` stoji na miste lusku - **sest prekrytych listu je
+  zavreny ORB**. Pak `uhel = horni slovo fp@(11172)` (bez posunu RNG,
+  takze vsechny listy leti temer stejnym smerem), koule
+  `0x6178(0xb114)`, `z = 32`, rychlost `1536` = 6 px/t, wait 15 a konec
+  bez vybuchu. Listy odpadavaji po radcich 64..69, tedy po ~4 ticich.
+- **Koule `0xb114`:** `x −= 4`, `y += 2`,
+  `a2c6(ORB#7, 34, −32, HP 1, 70 bodu, cost 10)` **bez guardu**; surovy
+  wait `(typ + 1) × 64` (0x5f22 nedela field - koule je do te doby
+  neviditelna a nekolidujici), pak `+364 = −10`, anim `0x0b144`
+  ORB#15, #16, #17, #18, #13 perioda 8 (drzi #13) a wait 50. Teprve pak
+  `z = 32`, rychlost 128 = 0.5 px/t, uhel 192 a lovecka smycka `0xb16a`
+  kazdych 15 tiku: uhel na hrace s limitem **33**, zaokrouhleni
+  `(uhel + 16) & 224` na osminy, smerovy snimek `0xa27c` od ORB#7
+  (**meni i uzel**) a `+356 += 64` (**bez stropu**).
+- Simulace: lusk zrozen 11244, listy odpadly 11564..11584, koule se
+  objevily 11628 + 64 × typ; prvni se rozjela v tiku 11680 (uhel 224)
+  a za 80 tiku zrychlila z 0.5 na 2.0 px/t.
