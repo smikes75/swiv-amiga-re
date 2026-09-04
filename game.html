@@ -376,6 +376,9 @@ const IMPLEMENTED_BEHAVIORS = new Map([
   // SCIFI (bossovy komplex - davka A)
   [0x284C, { coroutine: 0xAF9C, id: "geyser" }],
   [0x0052, { coroutine: 0xB084, id: "orb" }],
+  // SCIFI (bossovy komplex - davka B)
+  [0x0631, { coroutine: 0xBB2E, id: "inst3" }],
+  [0x1831, { coroutine: 0xBD3A, id: "inst3emit" }],
 ]);
 
 function parsePam(pam, dico, pal0) {
@@ -1909,7 +1912,7 @@ function composeTownBobs(g, top) {
         s.beh === "inst2" || s.beh === "inst2gun" ||
         s.beh === "edge" || s.beh === "ski" || s.beh === "bos" ||
         s.beh === "seaplane" || s.beh === "bunny" || s.beh === "frog" ||
-        s.beh === "tap") {
+        s.beh === "tap" || s.beh === "inst3") {
       bob(s.beh, s.file, s.fr, s.x, sy, Math.floor(s.z) | 0, {
         ordinal: s.bobOrdinal,
         objectFlags: s.noShadow ? 1 : 0,        // +367 bit 0
@@ -4181,6 +4184,9 @@ const NODE_GRAPHIC = {
   lavarock: ["_LAVA.LIN", 20],                               // 0xb014
   orbleaf: ["ORB.LIN", 1],                                   // 0xb0b4
   orbball: ["ORB.LIN", 7],                                   // 0xb114
+  inst3: ["INST3.LIN", 3],                                   // 0xbb34
+  inst3pod: ["INST3.LIN", 7],                                // 0xbcce
+  inst3drone: ["INST3.LIN", 12],                             // 0xbd7a
   tank: ["MEDTANK.LIN", 0],                                  // 0x9eec
   tankTurret: ["MEDTANK.LIN", 4],                            // 0x9fba
   roto: ["ROTOBASE.LIN", 4],                                 // 0x995c
@@ -4262,6 +4268,11 @@ function deathBoomZ(s) {                       // 0x894a: z rodice + 1
   return 1;
 }
 function killSpawnCredited(g, s) {             // 0xa36a z player eventu
+  // Zabity task jeste jednou pokracuje, aby dobehl svuj epilog za "bnes":
+  // INST3#3 tam odemyka 0x5efc(6) a snizuje fp@(140) pres 0xb6ba (0xbbac).
+  // Cull tuto cestu neprovadi - +538 rovnou uvolni zaznam.
+  if (s.beh === "inst3")
+    g.inst1Factories = Math.max(0, (g.inst1Factories | 0) - 1);
   if (!s.alive && !s.townResumeActive) return;
   if (s.beh === "egg") {
     // 0x8510: pri HP 0 se +358 vynuluje a 16x 0x95ca s krokem 16 v +359
@@ -4597,6 +4608,46 @@ function spawnOrbBall(g, h) {                   // 0xb114 (dite 0x6178)
               animFresh: true, animHold: true };
   accountCost(g, b);
   assignBobOrdinal(g, b); g.hazards.push(b);
+}
+function spawnWalkerFlash(g, x, y) {             // 0xbd00 (dite 0x6178)
+  // a2c6(INST3#8, 0x8000, -16, HP 0, 0 bodu, cost 4), z = 33, +367 |= 1,
+  // anim 0x0bd24 INST3#8..#11 perioda 1 a 0x8800 (kill) - zablesk zije
+  // ctyri tiky, pak se sam zabije bez vybuchu.
+  const h = { kind: "inst3flash", file: "INST3.LIN", x, y, z: 33,
+              alive: true, dead: false, hp: 0, cost: 4, scoreValue: 0,
+              seq: [8, 9, 10, 11], per: 1, apos: 0, at: 0,
+              animFresh: true, animKill: true };
+  accountCost(g, h);
+  assignBobOrdinal(g, h); g.hazards.push(h);
+}
+function spawnWalkerPod(g, s, dx, dy) {         // 0xbbba -> 0xbcce
+  // 0xbbba posune bosse o (dx, dy), zalozi 0x6178(0xbcce) a posun vrati.
+  // 0xbcce: a2c6(INST3#7, 6, -63, HP 0, 0 bodu, cost 10), z = 0, zablesk
+  // 0x6178(0xbd00) jeste na puvodnim miste, pak y += 20 a vy = 6 px/t;
+  // 0x9b70 = pole az do zabiti. Trida 6 = smrtici kontakt, HP 0 = bolt
+  // ji neznici (a2c6 pri HP 0 neinstaluje zadny handler).
+  const px = s.x + dx, py = s.y + dy;
+  const h = { kind: "inst3pod", file: "INST3.LIN", x: px, y: py + 20, z: 0,
+              vx: 0, vy: 6, frame: 7, nodeKey: "inst3pod",
+              alive: true, dead: false, hp: 0, cost: 10, scoreValue: 0,
+              lethal: true, castShadow: true };
+  accountCost(g, h);
+  assignBobOrdinal(g, h); g.hazards.push(h);
+  spawnWalkerFlash(g, px, py);
+}
+function spawnInst3Drone(g, s) {                // 0xbd7a (dite 0x6178)
+  // a2c6(INST3#12, 38, **16**, HP 1, 50 bodu, cost 10), z = 3, +367 |= 1,
+  // anim 0x0bd9c INST3#12/#13 perioda 1 loop; wait 50, pak rychlost 512
+  // = 2 px/t a jedno absolutni zamireni (0x72ee + 0x65be s limitem 0);
+  // leti rovne, dokud je fp@(140) nenulove.
+  const h = { kind: "inst3drone", file: "INST3.LIN", x: s.x, y: s.y, z: 3,
+              vx: 0, vy: 0, ang: 0, nodeKey: "inst3drone",
+              alive: true, dead: false, hp: 1, cost: 10, scoreValue: 50,
+              lethal: true, armMargin: 16,
+              seq: [12, 13], per: 1, apos: 0, at: 0, animFresh: true,
+              st: 0, t: 50 };
+  accountCost(g, h);
+  assignBobOrdinal(g, h); g.hazards.push(h);
 }
 function spawnInst2Beam(g, s) {                 // 0xba9e (dite 0x617a)
   // a2c6(INST2#8, 6, -63, HP 0, 0 bodu, cost 20), +367 |= 1, z = 1,
@@ -5240,6 +5291,26 @@ function advanceTownHazardField(g, h) {
       queueTownExplosionTask(g, h.x, h.y, 1, "death-seaplanebomb");
       h.retireAfterField = true;               // fp@(-1414): bez skore
     }
+  } else if (h.kind === "inst3pod") {
+    h.x += h.vx; h.y += h.vy;                  // 0x9b70: jen pole do zabiti
+  } else if (h.kind === "inst3drone") {
+    if (h.st === 0) {                          // 0x629c(50)
+      if (--h.t <= 0) {                        // 0xbdae
+        const p = g.player;
+        h.ang = angTo(h.x, h.y - scrollTop(g),  // 0x65be s limitem 0
+                      p.alive ? p.x : 160, p.alive ? p.y : 192);
+        const v = angVel(h.ang, 2); h.vx = v.vx; h.vy = v.vy;
+        h.st = 1;
+      }
+    } else {
+      h.x += h.vx; h.y += h.vy;
+      if ((g.inst1Factories | 0) === 0) {      // 0xbdc8: konec instalaci
+        // 0xa36a bez zasahu hrace: oblacek z +376, ale bez skore.
+        queueTownExplosionTask(g, h.x, h.y, Math.floor(h.z) + 1,
+                               "death-inst3drone");
+        h.retireAfterField = true;
+      }
+    }
   } else if (h.kind === "lavarock") {
     h.x += h.vx; h.y += h.vy;
     h.vz += h.az; h.z += h.vz;
@@ -5405,7 +5476,9 @@ function advanceTownHazardField(g, h) {
       h.kind === "inst2wave" || h.kind === "inst2beam" ||
       h.kind === "bosgun" || h.kind === "seaplanebomb" ||
       h.kind === "tapshot" || h.kind === "lavarock" ||
-      h.kind === "orbleaf" || h.kind === "orbball") {
+      h.kind === "orbleaf" || h.kind === "orbball" ||
+      h.kind === "inst3pod" || h.kind === "inst3flash" ||
+      h.kind === "inst3drone") {
     if (h.animFresh) h.animFresh = false;
     else if (++h.at >= h.per) {
       h.at = 0; h.apos++;
@@ -5952,7 +6025,8 @@ function dispatchTownContactEvent(g, task) {
     if (o.kind === "minecore" && !o.consumed) pickupMineCore(g, o);
     else if (o.kind === "proxfrag" || o.kind === "laser") releaseHazard(g, o);
     else if (o.kind === "mamadrone" || o.kind === "lavarock" ||
-             o.kind === "orbball") damageHazard(g, o);    // vychozi bit3
+             o.kind === "orbball" || o.kind === "inst3drone")
+      damageHazard(g, o);                                 // vychozi bit3
   }
 }
 
@@ -6502,6 +6576,8 @@ function step(g) {
         else if (s.beh === "tap") margin = -16;       // 0x99e6
         else if (s.beh === "geyser") margin = 32;     // 0xafa8
         else if (s.beh === "orb") margin = -16;       // 0xb08c
+        else if (s.beh === "inst3") margin = -32;     // 0xbb3a
+        else if (s.beh === "inst3emit") margin = 32;  // 0xbd42
         else if (s.beh === "corn") margin = -80;      // 0x8218
         else if (s.beh === "swappad0") margin = -16;  // 0xac70
         else if (s.beh === "trackzone") margin = 0;   // 0xad38: 0x9ac8(0)
@@ -6593,6 +6669,25 @@ function step(g) {
         s.cost = 13; s.hp = 0; s.scoreValue = 200;
         accountCost(g, s);
         s.fr = 2; s.at = 0; s.st = 0; s.z = 0; s.vz = 0; s.vx = 0; s.vy = 0;
+      } else if (s.beh === "inst3") {
+        // 0xbb2e (SCIFI): zamek 0x5eda(6) (nemodelovan, stejne jako u
+        // INST2), a2c6(INST3#3, 38, -32, HP 300, 7500 bodu, cost 40),
+        // z = 4, handler 0xb8ca pro bit 0 (0x653e) i bity 3 a 4
+        // (0x6564), +376 = 0x8876. 0x9ae8(80) ceka na radek 80 s
+        // vynulovanou tridou, pak 0xb6ae (fp@(140)++).
+        s.cost = 40; s.hp = 0; s.armedHp = 300; s.scoreValue = 7500;
+        accountCost(g, s);
+        s.bigDeath = true; s.flashOnDeath = true;
+        s.fr = 3; s.z = 4; s.vx = 0; s.vy = 0;
+        s.st = 0; s.t = 0; s.marchDir = 0; s.shakeY = 0; s.hops = 0;
+      } else if (s.beh === "inst3emit") {
+        // 0xbd3a (SCIFI): a2c6(INST3#12, 0x8000, 32, HP 0, 0 bodu,
+        // cost 0). Jako geyzir nevola 0x62d2 - neviditelny emitor,
+        // ktery si cull 0x6480 (margin -64) dela sam.
+        s.cost = 0; s.hp = 0; s.scoreValue = 0;
+        accountCost(g, s);
+        s.noCull = true; s.hidden = true;
+        s.st = 0; s.t = 0;
       } else if (s.beh === "geyser") {
         // 0xaf9c (SCIFI): SF fp@(155), a2c6(_LAVA#20, 0x8000, 32, HP 0,
         // 0 bodu, cost 0), +364 = 0. Korutina nikdy nevola 0x62d2, takze
@@ -7196,6 +7291,65 @@ function step(g) {
         s.t = 40; s.st = 3;
       } else if (s.st === 3 && --s.t <= 0) {
         if (--s.beams > 0) s.st = 2; else { s.st = 1; s.t = 100; }
+      }
+    } else if (s.beh === "inst3") {
+      s.y -= s.shakeY || 0; s.shakeY = 0;        // 0xbc54: sundani zatresu
+      if (s.st === 0) {                          // 0x9ae8(80): bez kolizi
+        if (s.sy >= 80) {
+          s.hp = s.armedHp;                      // trida zpet
+          g.inst1Factories = (g.inst1Factories | 0) + 1;   // 0xb6ae
+          s.st = 1;
+        }
+      }
+      if (s.st === 6 && --s.t <= 0) s.st = 1;    // 0xbba6: konec wait 10
+      if (s.st === 1) {                          // 0xbc60: novy pochod
+        s.marchDir = ~(s.marchDir | 0);          // notw +284: strany se stridaji
+        s.vx = s.marchDir < 0 ? 3 : -3;
+        s.st = 2;
+      } else if (s.st === 2) {                   // test az po poli
+        if (s.marchDir < 0 ? positionWord(s.x) >= 296
+                           : positionWord(s.x) <= 24) { s.vx = 0; s.st = 3; }
+      } else if (s.st === 3) {                   // 0xbc9c: dojezd k hraci
+        const p = g.player;                      // ukazatel z 0x72ee v +276
+        const d = signedWord(positionWord(p.alive ? p.x : 160) -
+                             positionWord(s.x));
+        if (Math.abs(d) >= 24) s.vx = d >= 0 ? 2 : -2;
+        else { s.vx = 0; s.st = 4; s.t = 4; }    // 0xbb76: wait 4
+      } else if (s.st === 4 && --s.t <= 0) {
+        // 0xbb7c: zvuk 0x5436(x) neprepsan, dva pody a skok o 16 px.
+        spawnWalkerPod(g, s, 19, 20);            // 0xbbba(+19, +20)
+        spawnWalkerPod(g, s, -19, 20);           // 0xbbba(-19, +20)
+        s.y -= 16; s.hops = 16;                  // 0xbb90
+        s.y += 1; s.hops--;                      // 0xbb9a: prvni krok dolu
+        s.st = 5;
+      } else if (s.st === 5) {                   // 16x { y += 1, wait 1 }
+        if (s.hops > 0) { s.y += 1; s.hops--; }
+        else { s.st = 6; s.t = 10; }
+      }
+      if (s.st >= 1) {                           // 0xbbfa: krok kazdeho cekani
+        if (s.hp <= 50) {                        // 0xbbfe: pod 50 HP
+          const r = random32(g);
+          s.shakeY = (r & 3) - 2;                // 0xbc10: -2..+1
+          if ((r & 15) === 0) {                  // 0xbc18
+            spawnXevBomb(g, s);                  // 0x6178(0x7f9a)
+            const r2 = random32(g);              // 0xbc2c: posun oblacku
+            queueTownExplosionTask(g, s.x + ((r2 & 31) - 15),
+                                   s.y + (((r2 >>> 16) & 31) - 15), 1,
+                                   "inst3-smoke");
+          }
+        }
+        s.x += s.vx; s.y += s.vy;                // housekeeping 0x62fe
+        s.y += s.shakeY;                         // 0xbc46: jen po dobu pole
+      }
+    } else if (s.beh === "inst3emit") {
+      if (s.st === 1 && --s.t <= 0) {            // 0xbd6c: cull a novy cyklus
+        if (outsideCullMargin(s.x, s.sy, -64)) s.retireAfterField = true;
+        else s.st = 0;
+      }
+      if (s.st === 0) {                          // 0xbd4e
+        if ((g.inst1Factories | 0) !== 0) spawnInst3Drone(g, s);
+        s.t = Math.max(1, 50 + (random32(g) & 127));   // 0x5f22
+        s.st = 1;
       }
     } else if (s.beh === "geyser") {
       // Poradi vetvi kopiruje 0xafb8: konec dlouheho cekani, novy oblacek

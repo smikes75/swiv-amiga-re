@@ -378,7 +378,8 @@ Pruchod celym levelem (`TOWN-SURVEY.md`) ukazal dva systemove rozdily:
   FROG +364 = −16); zbyva ze SCIFI bossovy komplex (24 objektu v 7
   druzich, zadani `docs/ZADANI-SCIFI-BOSS.md`: hotova davka A =
   geyzir _LAVA#20 s kameny (8) a lusk ORB#0 s listy a koulemi (6),
-  zbyva INST3#3, INST3#12, INST4#6, INST4#0, INST4#3) a zaverecny boss FINAL
+  davka B = kraci boss INST3#3 s pody a zablesky (1) a emitory dronu
+  INST3#12 (5); zbyva pevnost INST4#6, INST4#0, INST4#3) a zaverecny boss FINAL
   (INST5#0). Overeno zatim jen
   simulaci a archy snimku; porovnani s baseline vAmigy po objektech
   (jako u TOWN) zbyva. Zvuky DESERTu (`0x5436` strela vejce, `0x541e`

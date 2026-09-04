@@ -1631,3 +1631,65 @@ Overeno bez nalezu: delo BOS (HP 0, trida 34) je nezranitelne, protoze
 - Simulace: lusk zrozen 11244, listy odpadly 11564..11584, koule se
   objevily 11628 + 64 × typ; prvni se rozjela v tiku 11680 (uhel 224)
   a za 80 tiku zrychlila z 0.5 na 2.0 px/t.
+
+### Kraci boss `INST3#3` (0x0631 → 0xbb2e)
+
+- Zamek `0x5eda(6)` (**nemodelovan**, stejne jako u INST2 - v prepisu se
+  proto scroll nezastavi a boss nakonec odjede a je cullnut),
+  `a2c6(INST3#3, 38, −32, HP 300, 7500 bodu, cost 40)`, `z = 4`,
+  handler `0xb8ca` pro bit 0 (`0x653e`) **i bity 3 a 4** (`0x6564`
+  instaluje tentyz handler na obe), `+376 = 0x8876` (velky vybuch).
+  `0x9ae8(80)` ceka na radek 80 s vynulovanou tridou (do te doby je
+  nezasazitelny), pak `0xb6ae` = `fp@(140)++` a bit 3 v `fp@(166)`.
+- **Cyklus** `0xbb6e`: pochod `0xbc60` → dojezd `0xbc9c` → wait 4 →
+  zvuk `0x5436(x)` (**bez prepisu**) → dva pody na `(+19, +20)` a
+  `(−19, +20)` → skok `y −= 16` a 16× { `y += 1`, wait 1 } → wait 10.
+- **Pochod `0xbc60`:** `notw +284` prepina strany, takze se stridaji:
+  `vx = 3` dokud `x < 296`, pak `vx = −3` dokud `x > 24`. Test je vzdy
+  az za polem.
+- **Dojezd `0xbc9c`:** ukazatel na hrace z `0x72ee` v `+276` (long),
+  kazdy tik `vx = ±2` k aktualnimu `x` hrace, dokud `|dx| >= 24`.
+  Prvni pole probehne jeste s `vx = 0`.
+- **Krok `0xbbfa`** (misto `0x62d2` u kazdeho cekani bosse): `+282 = 0`;
+  je-li **HP <= 50**, `0x883c` da zatres `+282 = (r & 3) − 2` (−2..+1)
+  a pri `(r & 15) == 0` bombu XEVIOUS `0x6178(0x7f9a)` + oblacek
+  `0x6178(0x894a)` posunuty o `((r' & 31) − 15, (r'>>16 & 31) − 15)`.
+  Zatres se pricte k `y` **jen na dobu pole** (kresleni + kolize) a hned
+  za nim se odecte - neni to pohyb.
+- **Pod `0xbcce`:** `a2c6(INST3#7, 6, −63, HP 0, 0 bodu, cost 10)`,
+  `z = 0`, zablesk `0x6178(0xbd00)` jeste na puvodnim miste, pak
+  `y += 20` a `vy = 6` px/t; `0x9b70` = jen pole az do zabiti. Trida 6 =
+  smrtici kontakt, HP 0 = **bolt ji neznici** (`a2c6` pri HP 0
+  neinstaluje zadny handler ani nezapina bity tridy).
+- **Zablesk `0xbd00`:** `a2c6(INST3#8, 0x8000, −16, HP 0, 0, cost 4)`,
+  `z = 33`, `+367 |= 1`, anim `0x0bd24` INST3#8..#11 perioda 1 a
+  `0x8800` (kill) - zije ctyri tiky.
+- Smrt (`0xbbac`): zabity task jeste jednou pokracuje za `bnes` a dobehne
+  epilog `0x5efc(6)` + **`0xb6ba` = `fp@(140)−−`** (pri nule jeste
+  `bclr #3,fp@(166)`). Cull tuto cestu neprovadi.
+- Simulace: pochod 101 → 288 (x >= 296 az po poli), dojezd na 24 px od
+  hrace, skok o 16 px nahoru a 16 tiku zpet dolu, dva pody na cyklus;
+  po srazeni na 40 HP 21 bomb za ~400 tiku (~1 z 16 tiku) a zatres
+  v kazdem tiku; sestrel dal 7500 bodu a `fp@(140)` kleslo 1 → 0.
+
+### Emitor dronu `INST3#12` (0x1831 → 0xbd3a) - **neviditelny**
+
+- `a2c6(INST3#12, 0x8000, 32, HP 0, 0 bodu, cost 0)`. Jako geyzir
+  **nikdy nevola `0x62d2`**: nekresli se, nema kolizi a cull `0x6480`
+  (margin zustava −64) si dela sam. Smycka: je-li `fp@(140) != 0` dron
+  `0x6178(0xbd7a)`, surovy wait `50 + (0x883c & 127)`, cull, znovu.
+- **Dron `0xbd7a`:** `a2c6(INST3#12, 38, **16**, HP 1, 50 bodu,
+  cost 10)` - d2 = 16 znamena, ze dron vznikne az 16 px pod hornim
+  okrajem; `z = 3`, `+367 |= 1`, anim `0x0bd9c` INST3#12/#13 perioda 1
+  loop. Wait 50 na miste, pak rychlost `512` = 2 px/t a **jedno**
+  absolutni zamireni (`0x72ee` + `0x65be` s limitem 0); dal leti rovne,
+  dokud je `fp@(140)` nenulove. Jakmile klesne na nulu, `0xa36a` bez
+  zasahu hrace = **oblacek bez skore**.
+- Simulace: peti emitory vyrobily za 900 tiku 42 dronu; po sestreleni
+  kraciho bosse (`fp@(140)` = 0) vsech deset zivych dronu zmizelo
+  v temze tiku a emitory prestaly rodit.
+
+**Pozor na mapu:** INST3#3 i pet emitoru lezi na `ry` 137..179, tedy
+v uvodnim okne mapy SCIFI. Pri primem startu urovne z vyberu je
+map-reader nezaradi (stejne jako v originale); objevi se az pri
+prubeznem prujezdu z ICE - dlouhy beh zonou 5 je proto vypisuje.
