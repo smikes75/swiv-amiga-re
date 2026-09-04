@@ -1437,3 +1437,72 @@ nenulovym z maji stin, hazardy jej kresli jen s `castShadow: true`);
 `a2c6` d2 u paprsku INST2 je aktivace, ne cull margin. Zmereno po
 oprave: bomby v serii po 7 ticich, mezi seriemi 392 tiku pri trech
 instalacich; vlna 4 + 1 letcu.
+
+## ICE (prepsano 2026-09-04; overeno simulaci `build/survey/ice/`)
+
+### Dva globaly, ktere ICE pouziva (zmereno)
+
+- **`fp@(11172)` je stav RNG** (`0x883c` jej cte i zapisuje jako long).
+  EDGE jej `tstw` jen **cte**, negeneruje nove cislo: znamenko horniho
+  slova urcuje stranu naletu. Stejne jej pouzivaji PROXMINE (`0xaac6`)
+  a dalsi.
+- **`fp@(3616)` prepina barvu HW spritu** (`0x2b16`): nastavena = 0xFFF
+  (bila), nulova = 0x999 (seda). Nastavuje ji SKI (`st`), nuluje BUNNY
+  (`sf`) a start urovne (`0x1d4c`). Prepis to uz umel jako
+  `g.spriteColorFlash`, jen to nikdo nenastavoval.
+
+### EDGE (0x0008 → 0x77c6)
+
+- `x = (horni slovo RNG < 0) ? 256 : 64`, formace `0xa2a2(0, −4, 6, 0)`
+  = sest kusu po 4 px nad sebou na jedne strane obrazovky.
+- `a2c6(EDGE#0, 34, −48, HP 1, 50 bodu, cost 10)`, `+367 |= 16`
+  (obrazovka), `z = 32`, rychlost `+356 = 768` = 3 px/t, uhel 64 (dolu),
+  smerovy snimek `0xa27c` (zaklad EDGE#0 → #0..#7, **meni i uzel**).
+- Po `0x9afa(32)`: pri obtiznosti >= 4 mireny kanon `0x95d2`. Po
+  `0x9afa(156)`: 7× { uhel += `x <= 160 ? +32 : −32` (tedy vzdy pryc od
+  stredu), `0x65f2`, novy snimek, wait 5 }, pak mireny kanon a `0x62cc`.
+- Simulace: zrozeni 132 (x 64), spirala od radku 156, konecny uhel 32.
+
+### SKI (0x0030 → 0x9e60)
+
+- `ST fp@(3616)` (bila barva spritu), `a2c6(SKI#0, 36, **190**, HP 4,
+  15 bodu, cost 10)` — aktivace az u spodniho okraje; `+374 = 5` (dekal
+  EXPL1#0), uhel 32, `x −= 32`, `vx = 2`, `vy = −2` (slova),
+  `ax = −1536/65536`, `ay = +1536/65536`.
+- Smycka `0x9ea6` bezi, dokud **cele slovo `vx`** neni nula (~43 tiku),
+  pak `0x6d96` (stop) a { `0x95ca` v uhlu 32, wait 10 } do zabiti.
+- Simulace: zrozeni 14068 (x −14, sy 188), zastavi v tiku +43 na
+  (47.8, 141), pak strili kazdych 10 tiku.
+
+### BOS (0x0050 → 0x7aea) — v ICE 1×, v SCIFI 27×
+
+- `a2c6(BOS#0, 34, −48, HP 4, 100 bodu, cost 35)` + guard `0x8822`
+  (cost 35 je vysoky, pri plnem rozpoctu se objekt vubec nezalozi),
+  `+367 |= 16`, `z = 32`, vazane delo `0x6144(0x7b54)`, anim `0x07b1c`
+  BOS#0..#3 perioda 1 loop, `vy = 2`; po `0x9afa(200)` `vy = −3` a
+  `ax = 4096/65536` — stroj se otoci a odleti vzhuru s driftem.
+- **Delo `0x7b54`:** `a2c6(BOS#4, 34, −48, HP 0, 0 bodu, cost 0)`,
+  `+538 = −1`, `+367 |= 12` (blika s rodicem, vazane dite s nulovym
+  ofsetem); po `0x9afa(192)` anim `0x07b7c` BOS#5, #6, #7 perioda 8
+  (drzi #7) a smycka { wait 20, je-li `sy > 32` strela
+  `0x6178(0xa9a0)` = **tataz strela jako u hnizda EGGS** }.
+- Simulace (SCIFI): zrozeni 8640, otoceni na radku 200 (tik +160),
+  prvni strela hned po nem.
+
+### SEAPLANE (0x002f → 0xb59c)
+
+- `a2c6(SEAPLANE#0, 36, −16, HP 8, 45 bodu, cost 20)`. `subqw #1,+276`:
+  **typ 1 nejdriv pojizdi po hladine** (`0xb608`), typ 2 rovnou vzleta.
+- Pojizdeni: jedno `0x883c` → `vx = (horni slovo se znamenkem) >> 1`,
+  `vy = (dolni slovo bez znamenka) >> 1` jako 16.16 longy (tedy do
+  ±0.25 a 0..0.5 px/t); pak smycka: `0x883c & 7 == 0` → cakanec
+  `0x6178(0x9358)`, dokud `sy < 48`.
+- Vzlet: `+397 &= ~1`, `0x65ae`, handler bitu 3, `+504 = 34` (smrtici
+  kontakt), `vz = 0.5` do `z >= 32`, pak `vz = 0`, `ay = 2048/65536` a
+  smycka { bomba `0x6178(0xb64a)`, wait 10 (`0x62b8`) }.
+- **Bomba `0xb64a`:** `a2c6(SEAPLANE#1, 34, −16, HP 1, 10 bodu, cost 5)`,
+  `z = 32` (long), `0x6d96`, `vy = 0.5`, anim `0x0b674` #1/#2 perioda 2
+  loop; po wait 20 `az = −2048/65536` a jakmile je cele slovo `z` nulove,
+  oblacek `0x6178(0x894a)` a **tiche zabiti** (`fp@(-1414)`, bez skore).
+- Simulace: zrozeni 9840, pojizdeni s cakanci do radku 48, vzlet do
+  z 32 (tik +200), pak bomba kazdych 10 tiku.
