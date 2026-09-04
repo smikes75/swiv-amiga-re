@@ -4460,7 +4460,7 @@ function spawnInst2Beam(g, s) {                 // 0xba9e (dite 0x617a)
   const h = { kind: "inst2beam", file: "INST2.LIN", parent: s,
               x: s.x, y: s.y + 105, z: 1, vx: 0, vy: 0,
               alive: true, dead: false, hp: 0, cost: 20, budgeted: true,
-              scoreValue: 0, castShadow: false, cullMargin: -63,
+              scoreValue: 0, castShadow: false,
               seq: [8, 9, 10, 11, 12], per: 1, apos: 0, at: 0,
               animFresh: true, animKill: true, lethal: true, lethalT: 5 };
   g.activeCost = (g.activeCost || 0) + h.cost;
@@ -4471,6 +4471,7 @@ function spawnInst2Wave(g, s) {                // 0x8008 (dite 0x6178)
   // +276 = 1 a (4 - fp@(140)) * 4 opakovani { dite 0x8066, raw wait 10 }.
   // fp@(146) = 0 znamena, ze kazdy potomek si v 0x8066 vola vlastni
   // 0x813a, tedy ma vlastni nahodne x i vx.
+  g.waveSeq = 0;                              // 0x8008: clrw fp@(146)
   const h = { kind: "inst2wave", file: "INST2.LIN", parent: s,
               x: s.x, y: scrollTop(g) - 32, z: 0, vx: 0, vy: 0,
               alive: true, dead: false, hp: 0, cost: 0, budgeted: false,
@@ -4521,6 +4522,7 @@ function spawnJunhatchDrone(g, s) {            // 0xa60e (dite 0x6178)
               vx: 0, vy: 0, vz: 1, ang: 64, spd: 3,
               alive: true, dead: false, hp: 4, cost: 10, budgeted: true,
               scoreValue: 70, lethal: true, cullMargin: -10,
+              castShadow: true,                  // bez +367 bitu 0, z 32
               seq: [9, 10, 11, 14], per: 8, apos: 0, at: 0,
               animFresh: true, animHold: true, st: 0, t: 10, wait: 10 };
   g.activeCost = (g.activeCost || 0) + h.cost;
@@ -4533,7 +4535,7 @@ function spawnHoverSkirt(g, s) {               // 0xb512 (dite 0x6144)
   const h = { kind: "hoverskirt", file: "HOVER.LIN", parent: s,
               x: s.x, y: s.y, z: s.z, vx: 0, vy: 0,
               alive: true, dead: false, hp: 0, cost: 0, budgeted: false,
-              scoreValue: 0, flashWithParent: true,
+              scoreValue: 0, flashWithParent: true, castShadow: true,
               seq: [6], per: 1, apos: 0, at: 0, animFresh: true };
   assignBobOrdinal(g, h); g.hazards.push(h);
   s.skirtTask = h;
@@ -4547,6 +4549,7 @@ function spawnHoverMissile(g, s) {             // 0xb532 (dite 0x6178)
               z: 0, vx: 0, vy: 0, vz: 1,
               alive: true, dead: false, hp: 10, cost: 10, budgeted: true,
               scoreValue: 50, lethal: true, cullMargin: -8,
+              castShadow: true,                  // bez +367 bitu 0, z 32
               seq: [7], per: 1, apos: 0, at: 0, animFresh: true,
               st: 0, sweep: 0 };
   g.activeCost = (g.activeCost || 0) + h.cost;
@@ -4578,6 +4581,7 @@ function spawnLakesubShot(g, t, ang) {         // 0xb41a (dite 0x6178)
               z: 0, vz: 0, az: 0, vx: v.vx, vy: v.vy, ang,
               alive: true, dead: false, hp: 0, cost: 1, budgeted: true,
               scoreValue: 0, lethal: true, cullMargin: 0,
+              castShadow: true,                  // stin skace po hladine
               seq: [11], per: 1, apos: 0, at: 0, animFresh: true };
   g.activeCost = (g.activeCost || 0) + h.cost;
   assignBobOrdinal(g, h); g.hazards.push(h);
@@ -5064,9 +5068,11 @@ function advanceTownHazardField(g, h) {
   } else if (h.kind === "inst2wave") {
     if (!h.parent.alive) { releaseHazard(g, h); return; }   // +542 = 0x6db4
     h.y = scrollTop(g) - 32;
-    if (h.left > 0 && --h.t <= 0) {            // raw wait 10 (0x5f22)
-      spawnInst2Fodder(g, h); h.left--; h.t = 10;
-      if (h.left <= 0) releaseHazard(g, h);
+    if (--h.t <= 0) {                          // raw wait 10 (0x5f22)
+      spawnInst2Fodder(g, h);
+      if (h.left-- > 0) h.t = 10;
+      // 0x8046: po smycce propadne spoustec sam do 0x8066 = posledni letec
+      else releaseHazard(g, h);
     }
   } else if (h.kind === "inst2beam") {
     if (h.lethalT > 0 && --h.lethalT <= 0) h.lethal = false;  // 0xbadc
@@ -5091,7 +5097,7 @@ function advanceTownHazardField(g, h) {
       if (h.z >= 32) {
         h.vz = 0; h.st = 1; h.ang = 64; h.spd = 3;
         const v = angVel(h.ang, h.spd); h.vx = v.vx; h.vy = v.vy;
-        h.t = 10; h.wait = 10;
+        h.t = 1; h.wait = 10;                    // 0xa672 miri hned
       }
     } else {
       h.x += h.vx; h.y += h.vy;
@@ -6890,12 +6896,17 @@ function step(g) {
         }
       } else if (s.st === 5 && --s.t <= 0) { s.st = 1; s.t = 1; }
     } else if (s.beh === "inst2gun") {
+      // 0xbafa: je-li fp@(140) != 0, hned bomba a pak 4x { wait 7, bomba };
+      // po serii (i bez ni) wait fp@(140) * 128 + 1 (0xbb1c) a znovu.
       if (--s.t <= 0) {
-        if (s.shots > 0) {                      // 0xbb06: bomba a wait 7
+        const n = g.inst1Factories | 0;
+        if (s.st === 1 && s.shots > 0) {        // 0xbb06: wait 7 -> bomba
           spawnXevBomb(g, s); s.shots--; s.t = 7;
-        } else if ((g.inst1Factories | 0) !== 0) {
-          s.shots = 5; s.t = 1;                 // 0xbafa: nova serie
-        } else s.t = ((g.inst1Factories | 0) << 7) + 1;
+        } else if (s.st === 1) {                // konec serie: dlouhe cekani
+          s.st = 0; s.t = (n << 7) + 1;
+        } else if (n !== 0) {                   // nova serie: prvni bomba hned
+          spawnXevBomb(g, s); s.shots = 4; s.t = 7; s.st = 1;
+        } else s.t = 1;                         // (0 << 7) + 1
       }
     } else if (s.beh === "juntank") {
       const turret = s.turretChild;

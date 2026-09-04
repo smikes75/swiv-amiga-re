@@ -1423,3 +1423,17 @@ polohuji v kroku hazardu, tedy o tik za rodicem (0.5 px pri 0.5 px/t).
   XEVIOUS#9** — po sedmi ticich; pak wait `fp@(140) × 128 + 1` a znovu.
 - Simulace: dve veze zrozeny 13956; palba zacne, jakmile se instalace
   zaregistruji (tik ~14500), bomby miri na hrace s rozptylem ±16.
+
+### Revize RIVER (2026-09-04, Fable po Opusovi)
+
+Vsechny konstanty sekce porovnany s `work/prog.txt`, sondy prehrany.
+Opraveno: vez INST2#0 vynechavala dlouhe cekani `fp@(140) × 128 + 1`
+(`0xbb1c`) mezi seriemi bomb, takze bombardovala desetkrat casteji;
+spoustec vln `0x8008` po smycce propada do `0x8066` a sam se stane
+posledni letcem (`0x8046`) a nuluje `fp@(146)` (`g.waveSeq`); dron
+JUNTANK#2 miri poprve hned po zdvihu (`0xa672` bez cekani); stiny
+raketa HOVER, dron a odrazova strela LAKESUB (bez `+367` bitu 0 a s
+nenulovym z maji stin, hazardy jej kresli jen s `castShadow: true`);
+`a2c6` d2 u paprsku INST2 je aktivace, ne cull margin. Zmereno po
+oprave: bomby v serii po 7 ticich, mezi seriemi 392 tiku pri trech
+instalacich; vlna 4 + 1 letcu.
