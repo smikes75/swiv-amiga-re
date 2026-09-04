@@ -1554,3 +1554,24 @@ instalacich; vlna 4 + 1 letcu.
   zmizi po 56 ticich.
 - Simulace: zrozeni 2748, kola s nahodnym krokem (napr. −15, pak +11),
   ctyri strely na svetove strany po kazdem kole.
+
+### Revize ICE a SCIFI (Fable, 2026-09-04)
+
+Kazde cislo obou davek proti `work/prog.txt`, prehrani sond se
+sestrely (skore 50/15/45/100/90/55/60 sedi, pocty zasahu = HP).
+Tri opravy:
+
+- **EDGE:** smycka `0x783a` ma wait 5 (`0x7858`) i po sedme otocce,
+  teprve pak `0x95d2`; prepis strilel hned pri sedme otocce. Zaroven
+  `0x9afa(156)` testuje pred yieldem, prvni otocka je tedy v tiku, kdy
+  podminka nastane.
+- **Bomba SEAPLANE `0xb64a`:** `a2c6` d2 = −16 je aktivace, `+364`
+  zustava vychozich −64; prepis mel cull −16 (past 4 ze zadani RIVER).
+- **FROG:** `0x8410` po `0x9afa(8)` nastavi `+364 = −16`; bylo
+  zdokumentovano, ale ne prepsano.
+
+Overeno bez nalezu: delo BOS (HP 0, trida 34) je nezranitelne, protoze
+`a2c6` pri HP 0 neinstaluje handler zasahu (`0xa2fc`); formace BUNNY
+`0xa2a2` dava typ 0, 1, 2; tabulky `0x78fa` a `0x9a5e`; RNG
+`0x883c` = posun longu `fp@(11172)` s XOR `0x1d872b41`; SEAPLANE typ 2
+(2 kusy) vzleta bez pojizdeni.
