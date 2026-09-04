@@ -4294,13 +4294,6 @@ function deathBoomZ(s) {                       // 0x894a: z rodice + 1
   return 1;
 }
 function killSpawnCredited(g, s) {             // 0xa36a z player eventu
-  // Zabity task jeste jednou pokracuje, aby dobehl svuj epilog za "bnes":
-  // INST3#3 tam odemyka 0x5efc(6) a snizuje fp@(140) pres 0xb6ba (0xbbac).
-  // Cull tuto cestu neprovadi - +538 rovnou uvolni zaznam.
-  // 0xb89e (tovarna), 0xba96 (INST2#2), 0xbbb2 (INST3#3). INST4#0 se
-  // nesnizuje - drzi scroll az do konce urovne.
-  if (s.beh === "inst3" || s.beh === "factory" || s.beh === "inst2")
-    g.inst1Factories = Math.max(0, (g.inst1Factories | 0) - 1);
   if (s.beh === "inst4boss") g.inst4BossDead = true;   // 0xbe60: ST fp@(3617)
   if (!s.alive && !s.townResumeActive) return;
   if (s.beh === "egg") {
@@ -4313,6 +4306,13 @@ function killSpawnCredited(g, s) {             // 0xa36a z player eventu
   awardScore(g, s.scoreValue ?? 100);
   if (s.flashOnDeath && (g.inst1Factories | 0) <= 1)
     startWhiteFlash(g);                        // 0xb8d8 (sdileno s 0xb810)
+  // Zabity task jeste jednou pokracuje, aby dobehl svuj epilog za "bnes",
+  // kde odemkne 0x5efc(6) a snizi fp@(140) pres 0xb6ba: 0xb89e (tovarna),
+  // 0xba96 (INST2#2), 0xbbb2 (INST3#3). Bezi az za zablesk vyse, ktery
+  // jeste vidi puvodni pocet. INST4#0 se nesnizuje - drzi scroll do konce
+  // urovne, a cull tuto cestu neprovadi (+538 rovnou uvolni zaznam).
+  if (s.beh === "inst3" || s.beh === "factory" || s.beh === "inst2")
+    g.inst1Factories = Math.max(0, (g.inst1Factories | 0) - 1);
   if (s.beh === "dada" || s.burstDeath) {
     // 0x88ec: zvuk 0x4c3c, 0x6d96 a osm 0x8952 chvostu po dvou ticich,
     // uhel +100 a rychlost +1536/256 na kazdy dalsi (jako 0x88fc).
