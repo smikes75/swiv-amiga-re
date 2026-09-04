@@ -379,7 +379,12 @@ Pruchod celym levelem (`TOWN-SURVEY.md`) ukazal dva systemove rozdily:
   druzich, zadani `docs/ZADANI-SCIFI-BOSS.md`: hotova davka A =
   geyzir _LAVA#20 s kameny (8) a lusk ORB#0 s listy a koulemi (6),
   davka B = kraci boss INST3#3 s pody a zablesky (1) a emitory dronu
-  INST3#12 (5); zbyva pevnost INST4#6, INST4#0, INST4#3) a zaverecny boss FINAL
+  INST3#12 (5), davka C = pevnost INST4#6 (1), INST4#0 s finale a
+  koncem urovne (1) a dve veze INST4#3 - **vsechna chovani SCIFI
+  prepsana**; pri davce C se navic domodeloval scroll lock z
+  `fp@(166)` bitu 3 (mapa stoji, dokud zije instalace) a snizovani
+  `fp@(140)` u tovarny, INST2#2 i INST3#3); zbyva jen zaverecny boss
+  FINAL a zaverecny boss FINAL
   (INST5#0). Overeno zatim jen
   simulaci a archy snimku; porovnani s baseline vAmigy po objektech
   (jako u TOWN) zbyva. Zvuky DESERTu (`0x5436` strela vejce, `0x541e`

@@ -1693,3 +1693,93 @@ Overeno bez nalezu: delo BOS (HP 0, trida 34) je nezranitelne, protoze
 v uvodnim okne mapy SCIFI. Pri primem startu urovne z vyberu je
 map-reader nezaradi (stejne jako v originale); objevi se az pri
 prubeznem prujezdu z ICE - dlouhy beh zonou 5 je proto vypisuje.
+
+### Scroll a `fp@(166)` - **zjisteno pri davce C, plati pro cely engine**
+
+`0x3cbe` (scroll task): `tstb fp@(166)` a je-li **nenulove, scroll se
+v tomto tiku vubec neposune**. Maska ma tyto bity:
+
+- start urovne nastavi `fp@(166) = 7` (`0x1d92`) a ceka, az ji init
+  tasky vynuluji (`0x35b2` bit 0, `0x345c` bit 1, `0x4468` bit 2);
+- **bit 3 nastavuje `0xb6ae`** spolu s `fp@(140)++` a uvolnuje jej
+  `0xb6ba` az pri poslednim `fp@(140)−−`. Tedy: **dokud zije aspon jedna
+  instalace, mapa stoji** - to je duvod, proc tovarna, INST2#2, kraci
+  boss i pevnost zustanou na obrazovce;
+- bit 1 nastavi INST4#0 na konci urovne (`0xbed0`).
+
+`fp@(140)` zvysuji ctyri objekty (`0xb84a` tovarna INST1#11, `0xba10`
+INST2#2, `0xbb6a` INST3#3, `0xbe96` INST4#0) a snizuji tri
+(`0xb89e`, `0xba96`, `0xbbb2`) - **jadro pevnosti nikoli**, drzi mapu az
+do konce urovne. Zamek `0x5eda(n)` je neco jineho: semafor citace
+(`0x48b2`), ktery s scrollem nesouvisi a zustava nemodelovan.
+
+Prepis to ted modeluje: `g.scrollHeld` zastavi scroll i interpolaci
+a `killSpawnCredited` snizuje `g.inst1Factories` u `factory`, `inst2`
+i `inst3`. **Meni to chovani DESERTu a RIVERu** (mapa u tovarny a
+u instalaci stoji, dokud je hrac nezniciju) - v sondach bez strelby se
+proto beh zastavi v tiku 11129 (DESERT, 1 instalace) resp. 14441
+(RIVER, 3 instalace).
+
+### Letajici boss `INST4#6` (0x0c32 → 0xbdd6)
+
+- Jeste pred `a2c6`: `y −= 512` (**objekt se posune o 512 radku dal do
+  urovne**, z ry 4580 na ~5092), zamek `0x5eda(6)`, `SF fp@(3617)`.
+- `a2c6(INST4#6, 32, −48, HP 0, 10000 bodu, cost 0)`, `z = 24`,
+  `+376 = 0x8876`, `+367 |= 16` (obrazovkovy), `vy = 0.5`. Trida 32 =
+  zasazitelny bez smrticiho kontaktu; HP 0 znamena, ze `a2c6`
+  **neinstaluje zadny handler** - do 0xbe4a je nezranitelny.
+- `0x9ae8(208)` sjede na radek 208 s vynulovanou tridou, pak
+  `vy = −0.25` zpet nahoru, dokud `sy > 68`, `vy = 0` a ceka, az
+  `fp@(140) != 0` (tedy az dojede jadro). Teprve pak `+360 = 250`,
+  handler `0xb8ca` na bity 0, 3 i 4 a `0x62cc`. Po smrti
+  `ST fp@(3617)`.
+- Simulace: zrozeni 19148, jadro 21080, boss zranitelny hned po nem;
+  sestrel dal **10000 bodu**.
+
+### Jadro pevnosti `INST4#0` (0x0032 → 0xbe6e)
+
+- `a2c6(INST4#0, 38, −48, HP 0, 0 bodu, cost 60)` **bez guardu**,
+  `z = 25`, `+534 = −1` (imunni vuci SMART), `+367 |= 1`.
+  `0x9afa(58)`, pak `0xb6ae` - od teto chvile **stoji mapa**.
+- Smycka: 5× { bomba XEVIOUS `0x6178(0x7f9a)`, wait 7 }, wait 50,
+  dokud je `fp@(3617)` nulove. Rozestup bomb je tedy 7 tiku, mezi
+  seriemi 57 tiku.
+- Po smrti letajiciho bosse **finale `0xbee0`** a konec urovne.
+
+### Finale a konec urovne (0xbee0, 0xbec6)
+
+- 100 kol; v kazdem `r = 0x883c` a porovnani **bajtu** `(r & 127)`
+  s citacem. Je-li mensi, kolo trva jediny tik. Jinak zablesk
+  `fp@(11166) = (r & 127) & 71` na jeden tik a v nasledujicim tiku
+  (pri `fp@(-76) < 5`) velky vybuch `0x6178(0x8876)` na
+  `(32 + (r'>>16 & 255), scroll + 16 + (r' & 63))`. **Cim nizsi citac,
+  tim pravdepodobnejsi vybuchy** - finale se zrychluje.
+- Konec: `fp@(3530) −= 319` (skok mapy o 319 radku), `SF fp@(3615)`
+  (COLOR07), `bset #1,fp@(166)` (scroll stoji) a `fp@(11166) = 256`
+  (fade do bila). Task konci.
+- Simulace: boss zabit 22001, finale od 22014 (citac 99), konec 22166 -
+  tedy 152 tiku, uvnitr rozsahu 100 az 200.
+
+### Veze pevnosti `INST4#3` (0x0632 → 0xbf42), 2×
+
+- Zamek `0x5eda(6)`, `a2c6(INST4#3, 38, −48, HP 0, 0 bodu, cost 60)`,
+  `+534 = −1`, wait 250. Jadro a obe veze stoji dohromady 180 z rozpoctu
+  160, takze u pevnosti propada kazdy guardovany objekt - verne.
+- Cyklus: 15× { `y −= 2` } (vysunuti o 30 px), `SF fp@(148)`; zije-li
+  boss, { wait 200; `bset #0,fp@(148)`; kdo najde bit uz nastaveny,
+  ceka dalsich 200 } - **handshake, ktery veze strida**; pak 15×
+  { `y += 2` }, salva a wait 10.
+- **Salva `0xbfcc`:** je-li boss mrtvy, nic. Jinak zaporne `0x883c`
+  zacina sekvenci A = (1, 0, 1, 2), kladne rovnou B = (3, 4, 3, 2);
+  po A pokracuje do B jen pri `(0x883c & 3) == 0`, po B se vraci do A
+  take jen pri `(0x883c & 3) == 0`.
+- **Polozka `0xc00e`:** tabulka `0xc040` po osmi bajtech (gfx
+  INST4#1..#5 pres `0x6d7c`, tedy **i uzel**, uhel a dva pary (dx, dy)).
+  Trik `bsr 0xc024` na nasledujici instrukci provede telo **dvakrat**:
+  dve navadene strely `0x8530(dx, dy, uhel)` s wait 5 mezi nimi.
+  Polozky: 0 = #1, 106, (−15, 16), (−22, 4); 1 = #2, 85, (−6, 21),
+  (−18, 14); 2 = #3, 64, (8, 20), (−8, 20); 3 = #4, 43, (6, 21),
+  (18, 14); 4 = #5, 22, (15, 16), (22, 4).
+- `0xbfaa` losuje `0x883c & 1` do d0, ale `0xbfcc` d0 ani d1 necte -
+  **mrtvy kod**, prepis losovani zachovava kvuli poradi RNG.
+- Simulace: sekvence B, snimky #4, #5, #4, #3, strely po 5 ticich.

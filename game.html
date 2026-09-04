@@ -379,6 +379,10 @@ const IMPLEMENTED_BEHAVIORS = new Map([
   // SCIFI (bossovy komplex - davka B)
   [0x0631, { coroutine: 0xBB2E, id: "inst3" }],
   [0x1831, { coroutine: 0xBD3A, id: "inst3emit" }],
+  // SCIFI (bossovy komplex - davka C, pevnost)
+  [0x0C32, { coroutine: 0xBDD6, id: "inst4boss" }],
+  [0x0032, { coroutine: 0xBE6E, id: "inst4core" }],
+  [0x0632, { coroutine: 0xBF42, id: "inst4turret" }],
 ]);
 
 function parsePam(pam, dico, pal0) {
@@ -1912,7 +1916,9 @@ function composeTownBobs(g, top) {
         s.beh === "inst2" || s.beh === "inst2gun" ||
         s.beh === "edge" || s.beh === "ski" || s.beh === "bos" ||
         s.beh === "seaplane" || s.beh === "bunny" || s.beh === "frog" ||
-        s.beh === "tap" || s.beh === "inst3") {
+        s.beh === "tap" || s.beh === "inst3" ||
+        s.beh === "inst4boss" || s.beh === "inst4core" ||
+        s.beh === "inst4turret") {
       bob(s.beh, s.file, s.fr, s.x, sy, Math.floor(s.z) | 0, {
         ordinal: s.bobOrdinal,
         objectFlags: s.noShadow ? 1 : 0,        // +367 bit 0
@@ -3949,6 +3955,11 @@ function startMapObjectTask(g, s) {
     } else if (s.beh === "skyeye" || s.beh === "skyeyea") {
       s.x = -16; s.typ = 7;                     // 0x76ec/0x75f8, 0x7606
       spawnFormationCopies(g, s, 6, -40, 0, -1);// 0xa2a2(-40, 0, 6, -1)
+    } else if (s.beh === "inst4boss") {
+      // 0xbdd6: jeste pred a2c6 se objekt posune o 512 radku dal do
+      // urovne (v modelu y klesa s postupem) a shodi fp@(3617).
+      s.y -= 512;
+      g.inst4BossDead = false;
     } else if (s.beh === "bunny") {
       // 0x786e: SF fp@(3616) (seda barva spritu), +276 = 0 a pak
       // 0xa2a2(-48, 6, 3, 1) = tri kusy s typem 0, 1, 2.
@@ -4187,6 +4198,9 @@ const NODE_GRAPHIC = {
   inst3: ["INST3.LIN", 3],                                   // 0xbb34
   inst3pod: ["INST3.LIN", 7],                                // 0xbcce
   inst3drone: ["INST3.LIN", 12],                             // 0xbd7a
+  inst4boss: ["INST4.LIN", 6],                               // 0xbde6
+  inst4core: ["INST4.LIN", 0],                               // 0xbe6e
+  inst4turret: ["INST4.LIN", 3],                             // 0xbf48
   tank: ["MEDTANK.LIN", 0],                                  // 0x9eec
   tankTurret: ["MEDTANK.LIN", 4],                            // 0x9fba
   roto: ["ROTOBASE.LIN", 4],                                 // 0x995c
@@ -4217,6 +4231,18 @@ for (let i = 0; i < 4; i++)
   NODE_GRAPHIC["tap" + i] = ["TAP.LIN", i];                     // 0x9a16
 for (let i = 0; i < 8; i++)
   NODE_GRAPHIC["orbball" + i] = ["ORB.LIN", 7 + i];             // 0xb1a0
+for (let i = 0; i < 5; i++)
+  NODE_GRAPHIC["inst4turret" + i] = ["INST4.LIN", 1 + i];       // 0xc040
+/* 0xc040: pet polozek po osmi bajtech - gfx INST4#1..#5, uhel a dva pary
+   (dx, dy) pro dve navadene strely 0x8530 s wait 5 mezi nimi. */
+const INST4_SALVO = [
+  { fr: 1, ang: 106, sh: [[-15, 16], [-22, 4]] },
+  { fr: 2, ang: 85, sh: [[-6, 21], [-18, 14]] },
+  { fr: 3, ang: 64, sh: [[8, 20], [-8, 20]] },
+  { fr: 4, ang: 43, sh: [[6, 21], [18, 14]] },
+  { fr: 5, ang: 22, sh: [[15, 16], [22, 4]] },
+];
+const INST4_SEQ_A = [1, 0, 1, 2], INST4_SEQ_B = [3, 4, 3, 2];
 /* 0x78fa: tabulka 16 smeru pro 0xa268; pouzitelne jsou jen indexy 2..6
    (BUNNY#0..#4), zbytek je 0x2200 mimo dosah uhlu 32..96. */
 const BUNNY_DIR = [0, 0, 0, 1, 2, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4];
@@ -4271,8 +4297,11 @@ function killSpawnCredited(g, s) {             // 0xa36a z player eventu
   // Zabity task jeste jednou pokracuje, aby dobehl svuj epilog za "bnes":
   // INST3#3 tam odemyka 0x5efc(6) a snizuje fp@(140) pres 0xb6ba (0xbbac).
   // Cull tuto cestu neprovadi - +538 rovnou uvolni zaznam.
-  if (s.beh === "inst3")
+  // 0xb89e (tovarna), 0xba96 (INST2#2), 0xbbb2 (INST3#3). INST4#0 se
+  // nesnizuje - drzi scroll az do konce urovne.
+  if (s.beh === "inst3" || s.beh === "factory" || s.beh === "inst2")
     g.inst1Factories = Math.max(0, (g.inst1Factories | 0) - 1);
+  if (s.beh === "inst4boss") g.inst4BossDead = true;   // 0xbe60: ST fp@(3617)
   if (!s.alive && !s.townResumeActive) return;
   if (s.beh === "egg") {
     // 0x8510: pri HP 0 se +358 vynuluje a 16x 0x95ca s krokem 16 v +359
@@ -4648,6 +4677,64 @@ function spawnInst3Drone(g, s) {                // 0xbd7a (dite 0x6178)
               st: 0, t: 50 };
   accountCost(g, h);
   assignBobOrdinal(g, h); g.hazards.push(h);
+}
+function stepInst4Finale(g, s) {                 // 0xbee0: sto kol
+  // Kolo: r = 0x883c; je-li (r & 127) < citac, jen jeden yield. Jinak
+  // zablesk fp@(11166) = (r & 127) & 71 na jeden tik, pak (pri
+  // fp@(-76) < 5) velky vybuch 0x6178(0x8876) na nahodne pozici a druhy
+  // yield. Se snizujicim se citacem je vetev se zableskem cim dal
+  // pravdepodobnejsi.
+  if (s.finaleSub === 1) {                       // 0xbefe: druhy tik kola
+    g.fadeWhite = 0;
+    const r2 = random32(g);                      // 0xbf14
+    queueTownExplosionTask(g, 32 + ((r2 >>> 16) & 255),
+                           scrollTop(g) + 16 + (r2 & 63), 1,
+                           "inst4-finale", 0, "big");
+    s.finaleSub = 0;
+    if (--s.finale <= 0) endScifiLevel(g, s);
+    return;
+  }
+  const r = random32(g);
+  if ((r & 127) >= (s.finale & 0xFF)) {          // 0xbeec: cmpb s citacem
+    g.fadeWhite = (r & 127) & 71;                // 0xbef6
+    s.finaleSub = 1;
+    return;
+  }
+  if (--s.finale <= 0) endScifiLevel(g, s);      // 0xbf3a
+}
+function endScifiLevel(g, s) {                   // 0xbec6..0xbedc
+  g.scroll -= 319;                               // subiw #319, fp@(3530)
+  g.townColor07Enabled = false;                  // SF fp@(3615)
+  g.levelEndHold = true;                         // bset #1, fp@(166)
+  g.fadeWhite = 256;                             // fp@(11166) = 256
+  s.retireAfterField = true;                     // 0xa34c
+}
+function startInst4Salvo(g, s) {                 // 0xbfcc
+  // Je-li letajici boss mrtvy, vez nestrili. Jinak zaporne 0x883c zacina
+  // sekvenci A (1, 0, 1, 2), kladne rovnou B (3, 4, 3, 2).
+  if (g.inst4BossDead) { s.salvo = null; return; }
+  const r = random32(g);
+  s.salvo = (r >>> 0) & 0x80000000 ? INST4_SEQ_A : INST4_SEQ_B;
+  s.salvoIdx = 0; s.salvoShot = 0; s.t = 0;
+}
+function stepInst4Salvo(g, s) {                  // 0xc00e: dve strely na polozku
+  if (--s.t > 0) return;                         // 0x629c(5) mezi strelami
+  const e = INST4_SALVO[s.salvo[s.salvoIdx]];
+  if (s.salvoShot === 0) {                       // 0x6d7c: nova hlaven i uzel
+    s.fr = e.fr;
+    s.nodeKey = "inst4turret" + (e.fr - 1); s.nodeExt = null;
+  }
+  const [dx, dy] = e.sh[s.salvoShot];
+  fireHoming(g, s.x + dx, s.sy + dy, e.ang, 0, 0);   // 0x8530
+  s.t = 5;
+  if (++s.salvoShot < 2) return;
+  s.salvoShot = 0;
+  if (++s.salvoIdx < s.salvo.length) return;
+  // 0xbfe8 / 0xc002: po sekvenci rozhodne dalsi 0x883c.
+  const r = random32(g) & 3;
+  if (s.salvo === INST4_SEQ_A && r === 0) { s.salvo = INST4_SEQ_B; s.salvoIdx = 0; }
+  else if (s.salvo === INST4_SEQ_B && r === 0) { s.salvo = INST4_SEQ_A; s.salvoIdx = 0; }
+  else { s.salvo = null; s.st = 5; s.t = 10; }   // 0xbfba: wait 10
 }
 function spawnInst2Beam(g, s) {                 // 0xba9e (dite 0x617a)
   // a2c6(INST2#8, 6, -63, HP 0, 0 bodu, cost 20), +367 |= 1, z = 1,
@@ -6317,7 +6404,12 @@ function step(g) {
   stepFade(g);
   stepPostLifeSequence(g);
   const oldTop = scrollTop(g);
-  g.scroll -= SCROLL * TICK * (g.scrollMul ?? 1);   // scroll nahoru (fixture: 0 = stoji)
+  // 0x3cbe: scroll task scrolluje jen pri fp@(166) == 0. Bit 3 nastavuje
+  // 0xb6ae (aktivni instalace nebo boss) a uvolni jej 0xb6ba pri
+  // poslednim; bit 1 nastavi INST4#0 na konci urovne (0xbed0).
+  g.scrollHeld = (g.inst1Factories | 0) > 0 || !!g.levelEndHold;
+  if (!g.scrollHeld)
+    g.scroll -= SCROLL * TICK * (g.scrollMul ?? 1); // scroll nahoru (fixture: 0 = stoji)
   // fp@(3542) je WORD = cela cast 16.16 citace (0x1da6: +0x4000 za VBL),
   // takze screen-y objektu i kompenzace bitu 4 (+372, 0x6434) pracuji s
   // celociselnym scrollem, ktery skoci o 1 px kazde 4 VBL. Zmereno:
@@ -6578,6 +6670,9 @@ function step(g) {
         else if (s.beh === "orb") margin = -16;       // 0xb08c
         else if (s.beh === "inst3") margin = -32;     // 0xbb3a
         else if (s.beh === "inst3emit") margin = 32;  // 0xbd42
+        else if (s.beh === "inst4boss") margin = -48; // 0xbdec
+        else if (s.beh === "inst4core") margin = -48; // 0xbe74
+        else if (s.beh === "inst4turret") margin = -48;  // 0xbf4e
         else if (s.beh === "corn") margin = -80;      // 0x8218
         else if (s.beh === "swappad0") margin = -16;  // 0xac70
         else if (s.beh === "trackzone") margin = 0;   // 0xad38: 0x9ac8(0)
@@ -6669,6 +6764,30 @@ function step(g) {
         s.cost = 13; s.hp = 0; s.scoreValue = 200;
         accountCost(g, s);
         s.fr = 2; s.at = 0; s.st = 0; s.z = 0; s.vz = 0; s.vx = 0; s.vy = 0;
+      } else if (s.beh === "inst4boss") {
+        // 0xbdd6 (SCIFI): a2c6(INST4#6, 32, -48, HP 0, 10000 bodu,
+        // cost 0), z = 24, +376 = 0x8876, +367 |= 16 (obrazovkovy),
+        // vy = 0.5. Trida 32 = zasah bez smrticiho kontaktu; HP 0 az do
+        // 0xbe4a znamena, ze a2c6 neinstaluje zadny handler.
+        s.cost = 0; s.hp = 0; s.armedHp = 250; s.scoreValue = 10000;
+        accountCost(g, s);
+        s.bigDeath = true;
+        s.fr = 6; s.z = 24; s.scrollLocked = true;
+        s.vx = 0; s.vy = 0.5; s.st = 0;
+      } else if (s.beh === "inst4core") {
+        // 0xbe6e (SCIFI): a2c6(INST4#0, 38, -48, HP 0, 0 bodu, cost 60),
+        // z = 25, +534 = -1 (imunni vuci SMART), +367 |= 1. Guard se
+        // nevola, cost se pricte vzdy.
+        s.cost = 60; s.hp = 0; s.scoreValue = 0;
+        accountCost(g, s);
+        s.fr = 0; s.z = 25; s.st = 0; s.t = 0; s.bombs = 0;
+      } else if (s.beh === "inst4turret") {
+        // 0xbf42 (SCIFI): zamek 0x5eda(6), a2c6(INST4#3, 38, -48, HP 0,
+        // 0 bodu, cost 60), +534 = -1; wait 250 a pak cyklus.
+        s.cost = 60; s.hp = 0; s.scoreValue = 0;
+        accountCost(g, s);
+        s.fr = 3; s.nodeKey = "inst4turret"; s.st = 0; s.t = 250;
+        s.rise = 0; s.salvo = null; s.salvoIdx = 0; s.salvoShot = 0;
       } else if (s.beh === "inst3") {
         // 0xbb2e (SCIFI): zamek 0x5eda(6) (nemodelovan, stejne jako u
         // INST2), a2c6(INST3#3, 38, -32, HP 300, 7500 bodu, cost 40),
@@ -7292,6 +7411,62 @@ function step(g) {
       } else if (s.st === 3 && --s.t <= 0) {
         if (--s.beams > 0) s.st = 2; else { s.st = 1; s.t = 100; }
       }
+    } else if (s.beh === "inst4boss") {
+      s.y += s.vy;                               // housekeeping 0x62fe
+      if (s.st === 0) {                          // 0x9ae8(208): bez kolizi
+        if (s.sy >= 208) { s.vy = -0.25; s.st = 1; }   // 0xbe1e
+      } else if (s.st === 1) {                   // 0xbe26: zpet nahoru
+        if (s.sy <= 68) { s.vy = 0; s.st = 2; }
+      } else if (s.st === 2) {                   // 0xbe3e: ceka na instalaci
+        if ((g.inst1Factories | 0) !== 0) {      // 0xbe44
+          s.hp = s.armedHp;                      // 0xbe4a: HP 250 + 0xb8ca
+          s.st = 3;
+        }
+      }
+    } else if (s.beh === "inst4core") {
+      if (s.st === 0) {                          // 0x9afa(58)
+        if (s.sy >= 58) {
+          g.inst1Factories = (g.inst1Factories | 0) + 1;   // 0xb6ae
+          s.st = 1;
+        }
+      }
+      if (s.st === 3 && --s.t <= 0) {            // 0xbebe: konec wait 50
+        if (!g.inst4BossDead) s.st = 1;          // 0xbec2: dalsi serie
+        else { s.st = 4; s.finale = 100; s.finaleSub = 0; }
+      }
+      if (s.st === 1) {                          // 0xbe9a: nova serie peti bomb
+        spawnXevBomb(g, s); s.bombs = 4; s.t = 7; s.st = 2;
+      } else if (s.st === 2 && --s.t <= 0) {     // 0xbea8: wait 7
+        if (s.bombs > 0) { spawnXevBomb(g, s); s.bombs--; s.t = 7; }
+        else { s.t = 50; s.st = 3; }             // 0xbeb6: wait 50
+      } else if (s.st === 4) stepInst4Finale(g, s);
+    } else if (s.beh === "inst4turret") {
+      // Konce cekani lezi pred akcemi, aby dalsi krok probehl jeste
+      // v tomtez tiku jako v korutine (0xbf94 propada na 0xbf96).
+      if (s.st === 0 && --s.t <= 0) { s.st = 1; s.rise = 15; }  // 0xbf5e
+      if (s.st === 5 && --s.t <= 0) { s.st = 1; s.rise = 15; }  // 0xbfc0
+      if (s.st === 2 && --s.t <= 0) {
+        // 0xbf8e: bset #0 - kdo najde priznak uz nastaveny, ceka znovu.
+        if (g.inst4Handshake) s.t = 200;
+        else { g.inst4Handshake = true; s.st = 3; s.rise = 15; }
+      }
+      if (s.st === 1) {                          // 0xbf66: 15x { y -= 2 }
+        if (s.rise > 0) { s.y -= 2; s.rise--; }
+        else {                                   // 0xbf7a: SF fp@(148)
+          g.inst4Handshake = false;
+          if (g.inst4BossDead) { s.st = 3; s.rise = 15; }
+          else { s.st = 2; s.t = 200; }          // 0xbf84: wait 200
+        }
+      }
+      if (s.st === 3) {                          // 0xbf96: 15x { y += 2 }
+        if (s.rise > 0) { s.y += 2; s.rise--; }
+        else {
+          random32(g);                           // 0xbfaa: vysledek se nepouzije
+          startInst4Salvo(g, s);                 // 0xbfcc
+          if (!s.salvo) { s.st = 5; s.t = 10; }
+          else { s.st = 4; stepInst4Salvo(g, s); }
+        }
+      } else if (s.st === 4) stepInst4Salvo(g, s);
     } else if (s.beh === "inst3") {
       s.y -= s.shakeY || 0; s.shakeY = 0;        // 0xbc54: sundani zatresu
       if (s.st === 0) {                          // 0x9ae8(80): bez kolizi
@@ -8564,7 +8739,7 @@ function smoothSpriteCanvas(spr, palWords, op, c07) {
 }
 function renderSmoothField(ctx, g, S, composed) {
   const alpha = Math.max(0, Math.min(1, g.frac / TICK));
-  const mul = g.scrollMul ?? 1;
+  const mul = g.scrollHeld ? 0 : (g.scrollMul ?? 1);
   const scrollF = Math.max(0, Math.min(g.mapH - 256,
                                        g.scroll - alpha * SCROLL * TICK * mul));
   const topI = Math.floor(scrollF), fy = scrollF - topI;
