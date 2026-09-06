@@ -4612,7 +4612,7 @@ function spawnLavaRock(g, s) {                  // 0xb014 (dite 0x6178)
   const h = { kind: "lavarock", file: "_LAVA.LIN", x: s.x, y: s.y,
               ang: s.ang, vx: 0, vy: 0, z: 1, vz: 0, az: -6144 / 65536,
               alive: true, dead: false, hp: 1, cost: 10, scoreValue: 30,
-              lethal: true, castShadow: true, cullMargin: -16,
+              lethal: true, castShadow: true,   // +364 zustava -64
               seq: [20, 21], per: 8, apos: 0, at: 0, animFresh: true };
   if (!reserveCost(g, h)) return;               // 0x8822: pri odmitnuti
   const r = random32(g);                        // se zadne RNG nespotrebuje
@@ -4846,7 +4846,7 @@ function stepInst4Finale(g, s) {                // 0xbee0: sto kol
 function endScifiLevel(g, s) {                   // 0xbec6..0xbedc
   g.scroll -= 319;                               // subiw #319, fp@(3530)
   g.townColor07Enabled = false;                  // SF fp@(3615)
-  g.levelEndHold = true;                         // bset #1, fp@(166)
+  g.levelEndHold = true; g.levelEndTicks = 10;   // bset #1, fp@(166); 0x3422
   g.fadeWhite = 256;                             // fp@(11166) = 256
   s.retireAfterField = true;                     // 0xa34c
 }
@@ -5638,9 +5638,11 @@ function advanceTownHazardField(g, h) {
     } else if (h.st === 4) {
       if (h.z <= 0) { h.z = 0; h.vz = 0; h.lethal = false; h.st = 5; h.t = 20; }
     } else if (h.st === 5 && --h.t <= 0) { h.st = 1; h.t = 1; }
-    // 0xc560: snimek dir8 od INSECTS#7, obcas prehozeny na #15
+    // 0xc560: zaklad #15, kdyz je horni slovo fp@(11172) & 31 nulove;
+    // jinak na zemi #7 a v letu (z != 0) stridave #7 / #15 (notw +278).
     const d = dir8(h.ang);
-    const alt = ((g.rngState >>> 0) & 31) === 0;
+    let alt = ((g.rngState >>> 16) & 31) === 0;
+    if (!alt && h.z > 0) { h.flip = !h.flip; alt = !!h.flip; }
     h.seq = [(alt ? 15 : 7) + d];
     h.nodeKey = "inst5weaver" + d; h.nodeExt = null;
   } else if (h.kind === "inst5lampa" || h.kind === "inst5lampb") {
@@ -6720,6 +6722,11 @@ function step(g) {
   while ((g.levelPhase | 0) < (g.junctionRows || []).length &&
          scrollTop(g) <= g.junctionRows[g.levelPhase | 0])
     g.levelPhase = (g.levelPhase | 0) + 1;
+  // 0x3422 (stavba terennich pruhu): dokud je scroll min nez 32 radku pred
+  // pripravenym pruhem fp@(3538), staví se dalsi pruh po 32 radcich; jakmile
+  // je pruh napred, 0x345c maze bit 1 fp@(166). Skok o 319 radku na konci
+  // SCIFI (0xbec6) tedy drzi bit 1 na 10 pruhu. Modelovano jako 10 tiku.
+  if (g.levelEndHold && --g.levelEndTicks <= 0) g.levelEndHold = false;
   const p = g.player;
   ensureSmartPulseTasks(g);
   const collisionResumeTasks = townCollisionResumeTasks(g);
@@ -7072,6 +7079,7 @@ function step(g) {
         s.cost = 0; s.hp = 200; s.scoreValue = 20000;
         accountCost(g, s);
         s.smartImmune = true;                  // +534 = -1
+        s.lethal = true;                       // trida 38 (uzel 32x32)
         s.nodeExt = Object.freeze({ ex: 32, ey: 32, sweeps: true });
         s.hidden = true; s.st = 0; s.sub = 0; s.t = 0;
         s.dying = false; s.dst = 0; s.shakePhase = 0;
@@ -7092,6 +7100,7 @@ function step(g) {
         s.cost = 60; s.hp = 0; s.scoreValue = 0;
         accountCost(g, s);
         s.smartImmune = true;                  // +534 = -1
+        s.lethal = true; s.noShadow = true;    // trida 38, +367 |= 1
         s.fr = 0; s.z = 25; s.st = 0; s.t = 0; s.bombs = 0;
       } else if (s.beh === "inst4turret") {
         // 0xbf42 (SCIFI): zamek 0x5eda(6), a2c6(INST4#3, 38, -48, HP 0,
@@ -7099,6 +7108,7 @@ function step(g) {
         s.cost = 60; s.hp = 0; s.scoreValue = 0;
         accountCost(g, s);
         s.smartImmune = true;                  // +534 = -1
+        s.lethal = true;                       // trida 38
         s.fr = 3; s.nodeKey = "inst4turret"; s.st = 0; s.t = 250;
         s.rise = 0; s.salvo = null; s.salvoIdx = 0; s.salvoShot = 0;
       } else if (s.beh === "inst3") {
@@ -7802,7 +7812,7 @@ function step(g) {
       s.y -= s.shakeY || 0; s.shakeY = 0;        // 0xbc54: sundani zatresu
       if (s.st === 0) {                          // 0x9ae8(80): bez kolizi
         if (s.sy >= 80) {
-          s.hp = s.armedHp;                      // trida zpet
+          s.hp = s.armedHp; s.lethal = true;     // trida 38 zpet
           g.inst1Factories = (g.inst1Factories | 0) + 1;   // 0xb6ae
           s.st = 1;
         }

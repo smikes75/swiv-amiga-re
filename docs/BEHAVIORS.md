@@ -1922,3 +1922,41 @@ byt imunni. Doplnen priznak `smartImmune` a nastaven u INST4#0,
 INST4#3, INST5#0 a obou svetel. (Dalsi objekty s `st +534` - MAMA bar,
 `0x936a`, `0x96f0`, `0x9916`, `0xac7c`, `0xacc8` - zustavaji jak byly;
 ty se do fronty vetsinou nedostanou z jinych duvodu.)
+
+### Revize SCIFI boss a FINAL (Fable, 2026-09-06)
+
+Vsechny tri davky bossoveho komplexu, tri davky FINAL a prurezove zmeny
+enginu proti `work/prog.txt`; prehrany sondy A/B/C, prechod SCIFI → FINAL
+v souvisle hre a oba kontrakty. Sedm oprav:
+
+- **Kamen geyziru `0xb014`:** `cullMargin: -16` byla aktivace `a2c6` d2,
+  `+364` zustava −64 (tataz past jako paprsek INST2 a bomba SEAPLANE -
+  potreti).
+- **Smrtici kontakt tridy 38 chybel** u kraciho bosse INST3#3 (az po
+  `0x9ae8(80)`, kdy se trida vraci), jadra INST4#0, obou vezi INST4#3 a
+  rodice INST5#0 (uzel 32x32 - dotyk neviditelneho stredu zabiji hrace
+  a pres handler bitu 3 bosse zranuje). Trida je v uzlu `+504` bez
+  ohledu na HP; HP 0 jen znamena, ze objekt sam nic nedostane.
+- **Jadro INST4#0** melo `+367 |= 1` (bez stinu) jen v komentari.
+- **Bit 1 `fp@(166)` se nikdy nemazal**, takze FINAL po prechodu zustal
+  navzdy v bilem blikani. Dekodovano `0x3422`: je to task stavby
+  terennich pruhu - dokud je scroll min nez 32 radku pred pripravenym
+  pruhem `fp@(3538)`, stavi po 32 radcich; jakmile je pruh napred,
+  `0x345c` bit maze. Skok o 319 radku = 10 pruhu, modelovano jako 10
+  tiku (`g.levelEndTicks`). Zmereno: konec SCIFI 22170, bit smazan
+  22180, boss ve stavu 1 v 22181, prvni nosic 22191, telo 22193.
+- **Snimek klicujiciho hmyzu `0xc560`:** cte se **horni** slovo
+  `fp@(11172)`, a v letu (`z != 0`) se zaklad #7/#15 stridá kazdy field
+  (`notw +278`); prepis mel dolni slovo a bez stridani.
+
+Bez nalezu: tuple `a2c6` vsech 20 novych objektu, animacni skripty,
+poradi RNG (guard pred losovanim u kamene i vypoustece), rozestupy
+(jadro 7/57, veze 5, geyzir 10 − zbytek), dva skoky nosice (druhy trva
+jediny field, protoze `vz = 1.0` da po prvnim poli `z < 1` - verne),
+chyba originalu u posunu vybuchu INST5 (`0xc166`/`0xc174` obe do x).
+
+**Nemodelovano a zapsano:** zamky `0x5eda` (semafor `0x48b2`, s scrollem
+nesouvisi), zapis −1 do `+84` obou hracu pri smrti INST5
+(`fp@(11260)`, `fp@(11440)`), `bset #3,fp@(12353)` (jen `g.gameEnded`),
+`fp@(-1422)` s citacem `fp@(12534)` (deti INST5 v prepisu umiraji s
+rodicem primo).

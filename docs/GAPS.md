@@ -449,3 +449,13 @@ primo: dat obema stranam vypsat pocet snimku Agnusu v okamziku snimku
 (`wasm_agnus_frame` uz existuje, na strane VAHeadless je potreba
 prikaz RetroShellu) a sekvenci ridit podle nej, ne podle sekund.
 Take je potreba najit bazi A6, aby se daly cist zaznamy uloh z chip RAM.
+
+## Junkce map a `levelPhase` (nalezeno pri revizi 2026-09-06)
+
+`g.levelPhase` se inicializuje cislem urovne (`lv`), ale `g.junctionRows`
+se stavi jen pro nactenou retezovou mapu (pri startu ze zony 6 ma jedinou
+polozku `[768]`). Smycka `levelPhase < junctionRows.length` se proto pri
+primem startu z vyberu nikdy nespusti a prechod map se nedetekuje;
+jediny, kdo to dnes cte, je obtiznost (`0x35d4`, `fp@(184)`). Pri startu
+z TOWN indexy sedi. Opravit az spolu s porovnanim po objektech, kdy bude
+zmereno, kde presne original pocita konec mapy.
