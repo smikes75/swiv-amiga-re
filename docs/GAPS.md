@@ -459,3 +459,32 @@ primem startu z vyberu nikdy nespusti a prechod map se nedetekuje;
 jediny, kdo to dnes cte, je obtiznost (`0x35d4`, `fp@(184)`). Pri startu
 z TOWN indexy sedi. Opravit az spolu s porovnanim po objektech, kdy bude
 zmereno, kde presne original pocita konec mapy.
+
+## Plynuly rezim ("vylepseno") - tri opravy po hlaseni z hrani (2026-09-06)
+
+Hlaseno: zadne podstatne zlepseni, obcas problikne artefakt, chybi
+kratery po tancich. Zmereno sondou (DESERT po sestreleni tanku, TOWN
+900 snimku pri 60 Hz vcetne simulovaneho skrtnuti displeje):
+
+- **Kratery a vsechny dekaly chybely.** `renderSmoothField` barvil holy
+  `g.mapIndex`; klasicka cesta dela v `composeTownBobs` prepass dekalu
+  (`0x898c` zapisuje do mapy). Ted se barvi okno mapy s tymz prepassem
+  pres `colorizeIndexedField` s absolutni Copper paletou. Chybely tak i
+  stopy min a cele telo bosse FINAL (312 dekalu).
+- **Probliknuti = spatne sparovani mezi tiky.** `bob()` ukladal creation
+  ordinal jen do fronty `pending`, ne do `spec`, takze kazdy kresleny
+  zaznam (i hrac) dostal pozicni serial fronty. Pri kazdem prichodu nebo
+  odchodu objektu se klice posunuly a sprite se na jeden snimek
+  interpoloval z cizi polohy - zmereno 21 z 900 snimku, skoky az 70 px.
+  Ordinal je ted ve spec; zaznam bez nej se neparuje a kresli se na
+  aktualni poloze (zadna interpolace je lepsi nez spatna). Po oprave
+  0 skoku z 900 snimku.
+- **Skrtnuti displeje.** Pri dvou a vice ticich v jednom snimku byl
+  `bobPrev` o tik starsi, nez alfa predpoklada; ted se v takovem snimku
+  neinterpoluje.
+
+Co zustava: teren se v originale posouva 1 px za 4 tiky (12,5 px/s),
+takze jeho vyhlazeni je na 60 Hz nenapadne - videt je hlavne na rychlych
+objektech a na vlastnim stroji. HW sprity (hrac, strely) jdou stejnou
+frontou jako BOBy, interpoluji se tedy take. Kontrakt `tools/compare.py`
+se tyka jen klasicke cesty; pro plynulou zatim zadny neni.

@@ -1811,7 +1811,11 @@ function composeTownBobs(g, top) {
         : frame(opts.secondaryFile, opts.secondaryFrame),
       x, y, z, objectFlags: opts.objectFlags || 0,
       castShadow: opts.castShadow,
-      primaryOp: opts.primaryOp };
+      primaryOp: opts.primaryOp,
+      // creation ordinal objektu: klic pro parovani poloh mezi tiky
+      // (smooth). Drive zustaval jen v pending a zaznamy dostaly serial,
+      // ktery se posouva s kazdym prichozim/odchozim objektem.
+      ordinal: Number.isInteger(opts.ordinal) ? opts.ordinal : undefined };
     pending.push({ spec,
       priority: Number.isInteger(opts.priority) ? opts.priority : 100,
       ordinal: Number.isInteger(opts.ordinal)
@@ -9051,7 +9055,10 @@ function step(g) {
    secondary (0x0B0A) = barva 0, bily flash = barva 9. HUD prouzek se
    prebira z klasickeho snimku. Pixelova presnost tady neni cilem. */
 function smoothBobKey(r) {
-  return r.id + "#" + (Number.isInteger(r.ordinal) ? r.ordinal : "s" + r.serial);
+  // Zaznam bez creation ordinalu se neparuje: kresli se na aktualni poloze.
+  // Serial fronty je pozicni a po zmene poctu objektu by sparoval cizi
+  // sprite (zmereno: skoky 70 px na jeden snimek).
+  return Number.isInteger(r.ordinal) ? r.id + "#" + r.ordinal : null;
 }
 function smoothSpriteCanvas(spr, palWords, op, c07) {
   const cache = spr.smoothCache || (spr.smoothCache = new Map());
@@ -9091,15 +9098,24 @@ function renderSmoothField(ctx, g, S, composed) {
     st.img = new ImageData(st.buf, 320, rows);
     st.cv = document.createElement("canvas"); st.cv.width = 320; st.cv.height = rows;
   }
-  colorizeIndexedRows(g.mapIndex, 320, state.mapMeta.height, state.mapMeta.margin,
-                      topI, rows, state.copperChecks, st.buf,
-                      g.fadeBlack, g.fadeWhite);
+  const c07 = g.lv === 0 && g.townColor07Enabled !== false && !g.fadeBlack
+    ? townObjectColor07Word(g.tick) : undefined;
+  // Okno mapy o `rows` radcich od topI a dekaly (0x898c zapisuje do mapy,
+  // viz composeTownBobs) - drive se barvil holy g.mapIndex a kratery,
+  // stopy min i telo INST5 v plynulem rezimu chybely.
+  if (!st.idx || st.idx.length !== 320 * rows) st.idx = new Uint8Array(320 * rows);
+  st.idx.set(g.mapIndex.subarray(topI * 320, (topI + rows) * 320));
+  for (const ef of g.effects || []) {
+    const decal = indexedFrameFor(state, ef.file, ef.frame);
+    if (decal) blitIndexedCookie(st.idx, 320, rows, decal, ef.x, ef.y - topI);
+  }
+  colorizeIndexedField(st.idx, 320, rows, state.mapMeta.height,
+                       state.mapMeta.margin, topI, state.copperChecks, st.buf,
+                       g.fadeBlack, g.fadeWhite, c07);
   st.cv.getContext("2d").putImageData(st.img, 0, 0);
   const pal = compileCopperPaletteLines(state.copperChecks, state.mapMeta.height,
                                         state.mapMeta.margin, topI, rows,
                                         g.fadeBlack, g.fadeWhite);
-  const c07 = g.lv === 0 && g.townColor07Enabled !== false && !g.fadeBlack
-    ? townObjectColor07Word(g.tick) : undefined;
   ctx.save();
   ctx.imageSmoothingEnabled = false;
   ctx.scale(S, S);
@@ -9108,7 +9124,7 @@ function renderSmoothField(ctx, g, S, composed) {
   for (const r of composed.ordered) {
     if (!r.spr) continue;
     const key = smoothBobKey(r);
-    const p = prev ? prev.byKey.get(key) : null;
+    const p = prev && key !== null ? prev.byKey.get(key) : null;
     const wyC = cur.top + r.y, wyP = p ? prev.top + p.y : wyC;
     const x = p ? p.x + (r.x - p.x) * alpha : r.x;
     const sy = wyP + (wyC - wyP) * alpha - scrollF;
@@ -9150,9 +9166,10 @@ function frame(now) {
   const composed = composeTownBobs(g, top);
   if (smooth && (stepped || !g.bobCur)) {
     // polohy publikovane v tomto tiku; predchozi tik drzi g.bobPrev
-    g.bobPrev = stepped ? g.bobCur : null;
-    g.bobCur = { top, byKey: new Map(composed.ordered.map(r =>
-      [smoothBobKey(r), { x: r.x, y: r.y }])) };
+    g.bobPrev = stepped === 1 ? g.bobCur : null;
+    g.bobCur = { top, byKey: new Map(composed.ordered
+      .filter(r => smoothBobKey(r) !== null)
+      .map(r => [smoothBobKey(r), { x: r.x, y: r.y }])) };
   }
   colorizeIndexedField(composed.index, 320, 256, state.mapMeta.height,
                        state.mapMeta.margin, top, state.copperChecks,
