@@ -426,3 +426,26 @@ porovnani po objektech (vAmiga ve WebAssembly), zacne se rovnou
 s `FRAME_SKIPPING 0`. Postup a pasti prevzaty z projektu Turrican
 (`tools/shot.py`): `screenshot save` emulator ukonci (jeden beh = jeden
 cas) a "std::exception" u `wait` je kosmeticke.
+
+## Harness s vAmigou ve WebAssembly (2026-09-06)
+
+Jadro vAmiga prelozene do WebAssembly bezi v prohlizeci i pro SWIV:
+`tools/build-wasm.sh` (prevzato z projektu Turrican) prelozi
+`web/vamiga.js` + `.wasm`, stranka `web/vacmp.html` je bezobsluzna a
+`tools/survey/vacmp.py` ji ridi pres Playwright - nabootuje SWIVFIX.ADF
+s Kickstartem, projede vstupni sekvenci a ulozi snimek (716x285 RGB24,
+stejny vyrez jako VAHeadless) nebo kus chip RAM. Jeden snimek v case
+t=17 s trva 14 s.
+
+**Otevrene: zarovnani casu.** Prevod "1 sekunda = 50 snimku" nesouhlasi
+s `wait N` z RetroShellu. Na kontrolnim case t=17 vysel rozdil 1268 z
+612180 bajtu (0,21 %), ale je to **falesna shoda** - v tom okamziku
+obrazovka stmiva a je skoro staticka, takze sedi i posun o celou
+sekundu. Na t=30 je nejlepsi shoda v okne +-6 s teprve 3,3 % a lezi 59
+snimku od mista, kam ji prevod klade.
+
+Nez se harness pouzije k porovnavani po objektech, musi se cas merit
+primo: dat obema stranam vypsat pocet snimku Agnusu v okamziku snimku
+(`wasm_agnus_frame` uz existuje, na strane VAHeadless je potreba
+prikaz RetroShellu) a sekvenci ridit podle nej, ne podle sekund.
+Take je potreba najit bazi A6, aby se daly cist zaznamy uloh z chip RAM.

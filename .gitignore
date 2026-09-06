@@ -11,3 +11,10 @@ work/
 __pycache__/
 *.pyc
 .DS_Store
+
+# Prelozene jadro vAmiga (vznika z tools/build-wasm.sh) a lokalni soubory.
+web/vamiga.js
+web/vamiga.wasm
+web/local/
+build/vamiga-src/
+build/wasm/
