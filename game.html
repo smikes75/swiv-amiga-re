@@ -6706,6 +6706,7 @@ function step(g) {
   stepFade(g);
   stepPostLifeSequence(g);
   const oldTop = scrollTop(g);
+  g.scrollPrev = g.scroll;                    // pro interpolaci (smooth)
   // 0x3cbe: scroll task scrolluje jen pri fp@(166) == 0. Bit 3 nastavuje
   // 0xb6ae (aktivni instalace nebo boss) a uvolni jej 0xb6ba pri
   // poslednim; bit 1 nastavi INST4#0 na konci urovne (0xbed0).
@@ -9087,10 +9088,19 @@ function smoothSpriteCanvas(spr, palWords, op, c07) {
 }
 function renderSmoothField(ctx, g, S, composed) {
   const alpha = Math.max(0, Math.min(1, g.frac / TICK));
-  const mul = g.scrollHeld ? 0 : (g.scrollMul ?? 1);
-  const scrollF = Math.max(0, Math.min(g.mapH - 256,
-                                       g.scroll - alpha * SCROLL * TICK * mul));
-  const topI = Math.floor(scrollF), fy = scrollF - topI;
+  // Teren i objekty se interpoluji stejne: od predchoziho tiku k aktualnimu.
+  // Bez bobPrev (prvni snimek, skrtnuti displeje) se kresli aktualni tik.
+  // Skok scrollu o vic nez 4 radky (konec SCIFI 0xbec6: -319) se
+  // neinterpoluje - original mapu prepne v jednom tiku.
+  const prevScroll = Number.isFinite(g.scrollPrev) ? g.scrollPrev : g.scroll;
+  const scrollLerp = g.bobPrev && Math.abs(g.scroll - prevScroll) <= 4
+    ? prevScroll + (g.scroll - prevScroll) * alpha : g.scroll;
+  const scrollF = Math.max(0, Math.min(g.mapH - 256, scrollLerp));
+  // Polohy se kvantuji na 1/S px smerem dolu jako 68k high-word (klasicka
+  // cesta: Math.floor v blitIndexedOperation), aby pri alfa = 1 vysel presne
+  // klasicky snimek; prohlizec by jinak zlomky zaokrouhlil k nejblizsimu.
+  const q = v => Math.floor(v * S) / S;
+  const topI = Math.floor(scrollF), fy = q(scrollF - topI);
   const rows = Math.min(257, g.mapH - topI);
   const st = state.smoothState || (state.smoothState = {});
   if (!st.buf || st.rows !== rows) {
@@ -9131,7 +9141,7 @@ function renderSmoothField(ctx, g, S, composed) {
     const row = Math.max(0, Math.min(rows - 1, Math.floor(sy)));
     const cv = smoothSpriteCanvas(r.spr, pal.subarray(row * 16, row * 16 + 16),
                                   r.op, c07);
-    ctx.drawImage(cv, x + r.spr.ox, sy + r.spr.oy);
+    ctx.drawImage(cv, q(x + r.spr.ox), q(sy + r.spr.oy));
   }
   // HUD prouzek (5. bitplane) z klasickeho snimku
   if (!st.hud) { st.hud = document.createElement("canvas"); st.hud.width = 320; st.hud.height = 16; }
