@@ -4205,6 +4205,10 @@ const NODE_GRAPHIC = {
   inst4turret: ["INST4.LIN", 3],                             // 0xbf48
   inst5lampa: ["INST5.LIN", 1],                              // 0xc1d2
   inst5lampb: ["INST5.LIN", 7],                              // 0xc230
+  inst5bug: ["INSECTS.LIN", 23],                             // 0xc342
+  inst5bomb: ["INSECTS.LIN", 0],                             // 0xc3d6
+  inst5hunter: ["INSECTS.LIN", 4],                           // 0xc42c
+  inst5weaver: ["INSECTS.LIN", 7],                           // 0xc49e
   tank: ["MEDTANK.LIN", 0],                                  // 0x9eec
   tankTurret: ["MEDTANK.LIN", 4],                            // 0x9fba
   roto: ["ROTOBASE.LIN", 4],                                 // 0x995c
@@ -4237,6 +4241,12 @@ for (let i = 0; i < 8; i++)
   NODE_GRAPHIC["orbball" + i] = ["ORB.LIN", 7 + i];             // 0xb1a0
 for (let i = 0; i < 5; i++)
   NODE_GRAPHIC["inst4turret" + i] = ["INST4.LIN", 1 + i];       // 0xc040
+for (let i = 0; i < 8; i++)
+  NODE_GRAPHIC["inst5weaver" + i] = ["INSECTS.LIN", 7 + i];     // 0xc560
+/* 0xc332: osm polozek ukazuje na tri rutiny utocniku (3x, 3x, 2x). */
+const INST5_ROUTE = ["inst5hunter", "inst5hunter", "inst5hunter",
+                     "inst5bomb", "inst5bomb", "inst5bomb",
+                     "inst5weaver", "inst5weaver"];
 /* 0xc040: pet polozek po osmi bajtech - gfx INST4#1..#5, uhel a dva pary
    (dx, dy) pro dve navadene strely 0x8530 s wait 5 mezi nimi. */
 const INST4_SALVO = [
@@ -4699,6 +4709,64 @@ function spawnInst5Lamp(g, s, kind) {            // 0xc1ca / 0xc228
               smartImmune: true,               // +534 = -1
               hidden: true, st: 0, t: 1 };
   assignBobOrdinal(g, h); g.hazards.push(h);
+}
+function spawnInst5Launcher(g, s) {              // 0xc280 (task 0x6160)
+  // Nema a2c6: zadna grafika, zadna kolize, jen vypousti nosice.
+  const h = { kind: "inst5launch", parent: s, x: s.x + 4, y: s.y + 4,
+              ang: 16, spd: 0.5, jit: 0, left: 0, route: INST5_ROUTE[0],
+              alive: true, dead: false, hp: 0, cost: 0, scoreValue: 0,
+              smartImmune: true, hidden: true, st: 0, t: 1 };
+  assignBobOrdinal(g, h); g.hazards.push(h);
+}
+function spawnInst5Carrier(g, h) {              // 0xc342 (dite 0x6160)
+  // a2c6(INSECTS#23, 38, 0, HP 3, 70 bodu, cost 10); jednorazovy skok
+  // o 40 px v zdedenem uhlu (rychlost 10240 na jeden krok), pak anim
+  // 0x0c37c #23..#27 perioda 6 (drzi) a dva skoky vzhuru: vz 2.0 a 1.0
+  // s az = -4096/65536, mezi nimi 0x6d96 (stop).
+  const v = angVel(h.ang, 40);
+  const b = { kind: "inst5bug", file: "INSECTS.LIN", route: h.route,
+              x: h.x + v.vx, y: h.y + v.vy, z: 0, ang: h.ang, spd: h.spd,
+              vz: 2, az: -4096 / 65536, nodeKey: "inst5bug",
+              alive: true, dead: false, hp: 3, cost: 10, scoreValue: 70,
+              lethal: true, castShadow: true,
+              seq: [23, 24, 25, 26, 27], per: 6, apos: 0, at: 0,
+              animFresh: true, animHold: true, st: 0 };
+  const w = angVel(h.ang, h.spd); b.vx = w.vx; b.vy = w.vy;
+  accountCost(g, b);
+  assignBobOrdinal(g, b); g.hazards.push(b);
+}
+function spawnInst5Attacker(g, b) {             // 0xc3a2: 0x6178(+276)
+  const kind = b.route;
+  const a = { kind, file: "INSECTS.LIN", x: b.x, y: b.y, z: 0,
+              vx: 0, vy: 0, vz: 0, az: 0, ang: 0, spd: 0, nodeKey: kind,
+              alive: true, dead: false, hp: 5, cost: 15, scoreValue: 70,
+              castShadow: true, st: 0, t: 0, apos: 0, at: 0,
+              animFresh: true };
+  if (kind === "inst5bomb") {                   // 0xc3d6: trida 36
+    a.seq = [0, 1, 2, 3, 2, 1]; a.per = 1;      // 0x0c3fc, loop
+    a.vy = 0.5; a.t = 1;                        // 0xc3f0
+  } else if (kind === "inst5hunter") {          // 0xc42c: trida 34
+    a.seq = [4, 5, 6, 5]; a.per = 2;            // 0x0c44e, loop
+    a.z = 32; a.spd = 2; a.lethal = true; a.t = 1;
+  } else {                                      // 0xc49e: trida 36
+    a.seq = [7]; a.per = 1; a.animHold = true;
+    a.z = 32; a.spd = 1; a.ang = 64;
+    a.turnStep = (random32(g) & 64) - 32;       // 0xc4ba: +276
+    a.st = 1; a.sub = 0; a.t = 0;
+  }
+  accountCost(g, a);
+  assignBobOrdinal(g, a); g.hazards.push(a);
+}
+function inst5WeaverAim(g, a) {                 // 0xc4fa: otaceni k hraci
+  a.ang = (a.ang + a.turnStep) & 255;
+  const p = g.player;
+  const want = angTo(a.x, a.y - scrollTop(g),
+                     p.alive ? p.x : 160, p.alive ? p.y : 192);
+  let d = ((want - a.ang + 128) & 255) - 128;
+  if (d < 0) d = -d;
+  // 0xc540: hotovo, kdyz je odchylka do 16 a uhel v dolni polovine
+  // (0xc546 hlida, aby spodni bajt +358 nebyl nad 0x80).
+  return d <= 16 && (a.ang & 255) <= 0x80;
 }
 function shakeInst5(g, s) {                     // 0xc1ba: dva tiky
   // fp@(3530) -= 3, yield, +3, yield. Scroll drzi bit 3 fp@(166), takze
@@ -5432,6 +5500,83 @@ function advanceTownHazardField(g, h) {
       queueTownExplosionTask(g, h.x, h.y, 1, "death-seaplanebomb");
       h.retireAfterField = true;               // fp@(-1414): bez skore
     }
+  } else if (h.kind === "inst5launch") {
+    if (!h.parent.alive) { releaseHazard(g, h); return; }
+    if (h.st === 3 && --h.t <= 0) h.st = 0;    // 0xc300: surove cekani 200
+    if (h.st === 0) {                          // 0xc296: guard 0x8822
+      if ((g.activeCost | 0) > 160) { h.st = 3; h.t = 200; return; }
+      const r = random32(g);
+      h.jit = r & 0xFFFF;                      // +286
+      h.route = INST5_ROUTE[(r >>> 16) & 7];   // tabulka 0xc332
+      h.ang = 16; h.spd = 0.5; h.left = 5;     // 0xc2b8..0xc2c4
+      h.st = 1; h.t = 10;                      // 0xc2ca: surove cekani 10
+    } else if (h.st === 1 && --h.t <= 0) {
+      for (let k = 0; k < 2; k++) {            // 0xc2d6 a 0xc2da
+        spawnInst5Carrier(g, h);
+        h.ang = ((h.ang ^ 127) + 1) & 255;     // 0xc326: zrcadleni
+      }
+      h.ang = ((16 + h.jit + h.ang) & 31) - 16;   // 0xc2de
+      h.spd += 72 / 256;                       // 0xc2f4
+      if (--h.left > 0) h.t = 10;
+      else { h.st = 3; h.t = 200; }
+    }
+    return;
+  } else if (h.kind === "inst5bug") {          // 0xc342: nosic
+    h.x += h.vx; h.y += h.vy;
+    h.vz += h.az; h.z += h.vz;
+    if (h.z < 0) { h.z = 0; h.vz = 0; h.az = 0; }   // 0x6328
+    if (h.st === 0 && Math.floor(h.z) === 0) { // 0xc3ce: konec prvniho skoku
+      h.vx = 0; h.vy = 0;                      // 0x6d96
+      h.vz = 1; h.az = -4096 / 65536; h.st = 1;
+    } else if (h.st === 1 && Math.floor(h.z) === 0) {
+      spawnInst5Attacker(g, h);                // 0xc3a2
+      h.seq = [28, 29]; h.per = 4; h.apos = 0; h.at = 0;
+      h.animFresh = true; h.animKill = true; h.animHold = false;
+      h.st = 2;                                // 0x0c3ae konci 0x8800
+    }
+  } else if (h.kind === "inst5bomb") {         // 0xc3d6
+    h.y += h.vy;
+    if (--h.t <= 0) {                          // 0xc40e
+      spawnXevBomb(g, h);                      // 0x6178(0x7f9a)
+      h.t = 150 + (random32(g) & 127);         // 0xc416
+    }
+  } else if (h.kind === "inst5hunter") {       // 0xc42c
+    h.x += h.vx; h.y += h.vy;
+    if (--h.t <= 0) {                          // 0xc460: kazdych 8 tiku
+      const p = g.player;
+      let a = angTo(h.x, h.y - scrollTop(g),
+                    p.alive ? p.x : 160, p.alive ? p.y : 192);
+      a = (a + ((random32(g) & 31) - 15)) & 255;   // 0xc468
+      h.ang = a & 0x7F;                        // 0xc478: bclr #7 v +359
+      const v = angVel(h.ang, h.spd); h.vx = v.vx; h.vy = v.vy;
+      h.t = 8;
+    }
+  } else if (h.kind === "inst5weaver") {       // 0xc49e
+    h.x += h.vx; h.y += h.vy; h.vz = h.vz || 0; h.z += h.vz;
+    if (h.st === 1) {                          // 0xc4fa: otaceni po dvou ticich
+      if (--h.t <= 0) {
+        h.t = 2;
+        if (inst5WeaverAim(g, h)) { h.st = 2; h.t = 0; }
+        const v = angVel(h.ang, h.spd); h.vx = v.vx; h.vy = v.vy;
+      }
+    } else if (h.st === 2) {                   // 0xc4d8: losovani rezimu
+      const r = random32(g) & 7;
+      if (r === 0 && h.z < 32) {               // 0xc584: stoupani
+        h.vz = 1; h.spd = 2; h.st = 3;
+      } else if (r >= 1 && r <= 2 && h.z > 0) {// 0xc5c0: klesani
+        h.vz = -1; h.spd = 0.5; h.st = 4;
+      } else { h.st = 5; h.t = 20; }           // 0xc4f0: wait 20
+      const v = angVel(h.ang, h.spd); h.vx = v.vx; h.vy = v.vy;
+    } else if (h.st === 3) {
+      if (h.z >= 32) { h.z = 32; h.vz = 0; h.lethal = true; h.st = 5; h.t = 20; }
+    } else if (h.st === 4) {
+      if (h.z <= 0) { h.z = 0; h.vz = 0; h.lethal = false; h.st = 5; h.t = 20; }
+    } else if (h.st === 5 && --h.t <= 0) { h.st = 1; h.t = 1; }
+    // 0xc560: snimek dir8 od INSECTS#7, obcas prehozeny na #15
+    const d = dir8(h.ang);
+    const alt = ((g.rngState >>> 0) & 31) === 0;
+    h.seq = [(alt ? 15 : 7) + d];
+    h.nodeKey = "inst5weaver" + d; h.nodeExt = null;
   } else if (h.kind === "inst5lampa" || h.kind === "inst5lampb") {
     if (!h.parent.alive) { releaseHazard(g, h); return; }
     h.x = h.parent.x; h.y = h.parent.y;
@@ -5642,7 +5787,9 @@ function advanceTownHazardField(g, h) {
       h.kind === "tapshot" || h.kind === "lavarock" ||
       h.kind === "orbleaf" || h.kind === "orbball" ||
       h.kind === "inst3pod" || h.kind === "inst3flash" ||
-      h.kind === "inst3drone") {
+      h.kind === "inst3drone" || h.kind === "inst5bug" ||
+      h.kind === "inst5bomb" || h.kind === "inst5hunter" ||
+      h.kind === "inst5weaver") {
     if (h.animFresh) h.animFresh = false;
     else if (++h.at >= h.per) {
       h.at = 0; h.apos++;
@@ -6191,7 +6338,8 @@ function dispatchTownContactEvent(g, task) {
     if (o.kind === "minecore" && !o.consumed) pickupMineCore(g, o);
     else if (o.kind === "proxfrag" || o.kind === "laser") releaseHazard(g, o);
     else if (o.kind === "mamadrone" || o.kind === "lavarock" ||
-             o.kind === "orbball" || o.kind === "inst3drone")
+             o.kind === "orbball" || o.kind === "inst3drone" ||
+             o.kind === "inst5bug" || o.kind === "inst5hunter")
       damageHazard(g, o);                                 // vychozi bit3
   }
 }
@@ -7523,6 +7671,7 @@ function step(g) {
       if (s.st === 1) {                          // 0xc0c6: handler a deti
         spawnInst5Lamp(g, s, 'a');               // 0xc1ca
         spawnInst5Lamp(g, s, 'b');               // 0xc228
+        spawnInst5Launcher(g, s);                // 0xc280
         s.st = 2;                                // 0xc10a: wait 100 do zabiti
       }
       if (s.whiteT && --s.whiteT <= 0) g.fadeWhite = 0;   // 0xc138
