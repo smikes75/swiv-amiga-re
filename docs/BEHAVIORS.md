@@ -1803,3 +1803,70 @@ proto beh zastavi v tiku 11129 (DESERT, 1 instalace) resp. 14441
 - `0xbfaa` losuje `0x883c & 1` do d0, ale `0xbfcc` d0 ani d1 necte -
   **mrtvy kod**, prepis losovani zachovava kvuli poradi RNG.
 - Simulace: sekvence B, snimky #4, #5, #4, #3, strely po 5 ticich.
+
+## FINAL - zaverecny boss INST5#0 (davka 1 z 3, 2026-09-06)
+
+Mapa FINAL ma **jediny objekt** (`ry` 278, x 153), ale je to cely komplex:
+neviditelny rodic, ctyri samostatne tasky a tri druhy hmyzu. Prepsana je
+zatim prvni davka: rodic, zasahovy handler s koncem hry a obe svetla.
+
+### Rodic `INST5#0` (0x0056 → 0xc068)
+
+- Nejdriv **ceka na bit 3 `fp@(166)`** (`0xc074`), tedy na aktivni
+  instalaci. Nikdo v FINALu ji nezaklada - **bit se dedi po SCIFI**,
+  protoze jadro pevnosti `0xbe96` zvysi `fp@(140)` a jako jedine ze
+  ctyr mist ho nikdy nesnizi. Proto se FINAL nedostane ke slovu drive,
+  nez hrac dojede SCIFI, a proto v nem mapa stoji.
+- Zamek `0x5eda` (inline slovo 0x0057), **`a2c6(gfx 0`, 38, 0, HP 200,
+  20000 bodu, cost 0)** - graficke slovo je nula, telo kresli deti;
+  `+534 = -1` (imunni vuci SMART), uzel **32x32** (`+500/+502`),
+  `+397 |= 128` = BOB se vubec neenqueueuje.
+- Dokud je nastaveny **bit 1** `fp@(166)` (konec predchozi urovne),
+  strida po tiku `fp@(11166) = 0`, `fp@(11170) = 256` a naopak. Posledni
+  zapis je bila 256; ta pak klesa krokem `fp@(11168) = -4` (`0x1028`).
+- Pak instaluje handler `0xc124` na bit 0, zalozi ctyri tasky `0x6160`
+  (`0xc1ca`, `0xc228`, `0xc280`, `0xc5f8`) a jen ceka po 100 ticich.
+
+### Zasah a konec hry (0xc124)
+
+- Zvuk `0xb6aa` → `0x4e2e` (**bez prepisu**), `HP--`. Pri HP > 0 bila
+  `fp@(11166) = 64` na jeden tik.
+- Pri HP <= 0: `fp@(12534)++` (uvolni ctyri deti), `0x8852` (bily pulz),
+  zamek, **12× { velky vybuch `0x6178(0x8876)`, 4× cukani `0xc1ba` }**,
+  pak `fp@(142) = -1` (fade do cerne) a cukani, dokud fade nedobehne;
+  nakonec `-1` do obou hracu (`fp@(11260)`, `fp@(11440)`),
+  `bset #3,fp@(12353)` a `0xa36a` (20000 bodu).
+- **Chyba originalu prepsana verne:** `0xc166` i `0xc174` pricitaji
+  nahodny posun do `+320`, takze **obe slozky jdou do x** a `y` vybuchu
+  se nikdy neposune.
+- `0xc1ba` = `fp@(3530) -= 3`, yield, `+= 3`, yield. Scroll drzi bit 3,
+  takze se nic neposune - je to cukani obrazu, dva tiky na volani.
+- Simulace: smrt spustena v tiku 620, task konci 732 (12×8 tiku cukani
+  + 16 tiku fade), skore **20000**, `fadeBlack` 256.
+
+### Svetla `0xc1ca` (INST5#1..#6) a `0xc228` (INST5#7..#11)
+
+- Obe `a2c6(gfx, **trida 0**, 0, HP 0, 0 bodu, cost 0)`, `+534 = -1`.
+  Trida 0 = zadna kolize.
+- Kolo: `0x883c & 7`; je-li >= 6 (resp. >= 5), nova pauza **surovym**
+  cekanim `0x5f22` - task pri nem nedela pole, takze **svetlo zhasne**
+  (A: `100 + (r & 127)` tiku, B: `3 + (r & 7)`). Jinak snimek z tabulky
+  `0xc21c` / `0xc276` a cekani 5 tiku (A) resp. 1 tik (B, `0x629a`).
+
+**Zbyva (davka 2 a 3):** vypoustec hmyzu `0xc280` s tabulkou `0xc332`,
+nosic `0xc342` (INSECTS#23, dva skoky a vysazeni utocnika) a tri
+utocnici `0xc3d6` (bomby XEVIOUS), `0xc42c` (lovec s rozptylem) a
+`0xc49e` (kliceni se stoupanim a klesanim); dale task `0xc5f8`, ktery
+zaklada **13 prstencu po 24 kusech INST5#17** (`0xc700`, uhel
+`index * 2730 / 256`, rychlost 12, polomer podle prstence) a trosky
+`0xc73c`. Graficky slot **0x57 = INSECTS.LIN** (jmenna tabulka
+AMPROG.OBJ).
+
+### Imunita vuci SMART (`+534 = -1`) - doplneno v enginu
+
+`0x6468` vola pri aktivnim SMART pulzu handler `+534`; `st +534` jej
+vypina. Prepis to dosud nemodeloval a pulz zabijel i objekty, ktere maji
+byt imunni. Doplnen priznak `smartImmune` a nastaven u INST4#0,
+INST4#3, INST5#0 a obou svetel. (Dalsi objekty s `st +534` - MAMA bar,
+`0x936a`, `0x96f0`, `0x9916`, `0xac7c`, `0xacc8` - zustavaji jak byly;
+ty se do fronty vetsinou nedostanou z jinych duvodu.)

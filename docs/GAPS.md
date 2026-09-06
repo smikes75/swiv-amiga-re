@@ -385,7 +385,9 @@ Pruchod celym levelem (`TOWN-SURVEY.md`) ukazal dva systemove rozdily:
   `fp@(166)` bitu 3 (mapa stoji, dokud zije instalace) a snizovani
   `fp@(140)` u tovarny, INST2#2 i INST3#3); zbyva jen zaverecny boss
   FINAL a zaverecny boss FINAL
-  (INST5#0). Overeno zatim jen
+  (INST5#0) - z nej je prepsana **prvni ze tri davek** (rodic, handler
+  s koncem hry, obe svetla); zbyva vypoustec hmyzu s nosicem a tremi
+  utocniky a task s 13 prstenci po 24 kusech. Overeno zatim jen
   simulaci a archy snimku; porovnani s baseline vAmigy po objektech
   (jako u TOWN) zbyva. Zvuky DESERTu (`0x5436` strela vejce, `0x541e`
   paprsek, `0x4e2e` zasah tovarny) zatim bez prepisu.
