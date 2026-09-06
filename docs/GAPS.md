@@ -405,3 +405,21 @@ respawnu pri plne pameti (`0x6162` ceka na 546 B z loaderoveho alokatoru
 
 Starsi seznam odchylek je v `MAPS.md` („Deliberately not rendered")
 a tyka se statickych renderu, ne behu hry.
+
+## Baseline snimky a DENISE_FRAME_SKIPPING (zmereno 2026-09-06)
+
+`tools/baseline.sh` nenastavuje `denise set FRAME_SKIPPING 0`. Ve warp
+rezimu Denise prehazuje buffery jen kazdy 17. snimek, takze ulozena
+textura muze byt az o 16 snimku (0,32 s) starsi nez zadany cas. Zmereno
+na checkpointu t=17: snimek s `FRAME_SKIPPING 0` se od dnesni cache
+`build/baseline/orig_t17.raw` lisi ve **181 428 z 612 180 bajtu**
+(cache se shoduje s variantou bez nastaveni).
+
+Neni to samo o sobe chyba: radky mapy pro checkpointy `tools/compare.py`
+byly zmereny z tychz snimku, takze system je vnitrne konzistentni.
+Zapnuti volby by ale znamenalo **premerit vsechny checkpointy a znovu
+usadit zarazku prahu**, proto se to nedela mimochodem. Az se bude stavet
+porovnani po objektech (vAmiga ve WebAssembly), zacne se rovnou
+s `FRAME_SKIPPING 0`. Postup a pasti prevzaty z projektu Turrican
+(`tools/shot.py`): `screenshot save` emulator ukonci (jeden beh = jeden
+cas) a "std::exception" u `wait` je kosmeticke.

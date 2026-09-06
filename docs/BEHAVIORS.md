@@ -1713,6 +1713,26 @@ INST2#2, `0xbb6a` INST3#3, `0xbe96` INST4#0) a snizuji tri
 do konce urovne. Zamek `0x5eda(n)` je neco jineho: semafor citace
 (`0x48b2`), ktery s scrollem nesouvisi a zustava nemodelovan.
 
+**Overeno na originalu (2026-09-06).** `tools/survey/origshot.py` pusti
+hru s trainerem F1 (unlimited lives) a **bez jedineho vstupu**, takze
+hrac nic nezniti; snimky se berou v rostoucich casech od stisku FIRE.
+Porovnani sousednich snimku (pas bez HUD, prah 24):
+
+| usek [s] | ruznych pixelu |
+|---|---|
+| 480 → 500 → 520 → 540 → 560 → 580 | 41 az 55 % (mapa jede) |
+| **580 → 600** | **6,5 %** |
+| 600 → 660 → 720 → 840 → 960 | 6,3 az 9,3 % |
+
+Od ~590 s je teren **pixelove totozny** a lisi se jen pohybujici se
+nepratele; na obrazovce stoji cely ten cas tovarni instalace DESERTu
+(vez "1", vez "2", stredovy emitor, na snimku t=720 s cervenym
+paprskem). Mapa tak stoji nejmene 380 emulovanych sekund.
+
+Konec mapy to neni: tovarna lezi na `ry` 3051 z 5826 radku DESERTu,
+tedy pred polovinou urovne. Zamek instalace je tim doloreny primo na
+originalu, ne jen ctenim `0x3cbe`.
+
 Prepis to ted modeluje: `g.scrollHeld` zastavi scroll i interpolaci
 a `killSpawnCredited` snizuje `g.inst1Factories` u `factory`, `inst2`
 i `inst3`. **Meni to chovani DESERTu a RIVERu** (mapa u tovarny a
