@@ -488,3 +488,29 @@ takze jeho vyhlazeni je na 60 Hz nenapadne - videt je hlavne na rychlych
 objektech a na vlastnim stroji. HW sprity (hrac, strely) jdou stejnou
 frontou jako BOBy, interpoluji se tedy take. Kontrakt `tools/compare.py`
 se tyka jen klasicke cesty; pro plynulou zatim zadny neni.
+
+Sjednoceno (tez 2026-09-06): teren se drive extrapoloval o tik dopredu,
+objekty interpolovaly o tik dozadu. Ted jde **oboji dozadu**: interpoluje
+se mezi dvema klasickymi snimky - scroll (`g.scrollPrev` ze zacatku
+`step()`) i rohy spritu jsou v obou tikach cela cisla (68k high-word,
+klasicky blit `Math.floor`) a mezipoloha se zaokrouhli na nejblizsi 1/S
+px; objekty odcitaji tentyz kvantovany scroll jako teren (drive odcitaly
+zlomkovy a byly vuci terenu trvale o pixel jinde). Skok scrollu o vic nez
+4 radky (konec SCIFI, −319) se neinterpoluje, bez `bobPrev` se kresli
+aktualni tik. Vzhled spritu (snimek animace, zablesk zasahu) je vzdy
+z aktualniho tiku.
+
+**Kontrakt `tools/smoothtest.py`** (S = 1, bez HUD): pri alfa → 1 se
+plynuly snimek rovna klasickemu snimku aktualniho tiku presne; pri
+alfa = 0 se od klasickeho snimku predchoziho tiku lisi jen uvnitr
+obdelniku spritu, kterym se mezi tiky zmenil snimek animace (TOWN tik
+3000: 1388 px, vsech 16 v letcich YELLOW), mimo ne nejvyse 150 px
+(zarazka; SCIFI tik 9000 dava 95 px na hranach prekryvu letících kamenu
+se stinem a BOSu orezaneho hornim okrajem). Kontrakt zaroven odhalil, ze
+kopie formaci (0x6178 pres `Object.assign`) dedily `bobOrdinal` rodice a
+v plynulem rezimu se parovaly navzajem - ted dostavaji vlastni poradi
+vzniku. Cena
+sjednoceni: obraz je za logikou o jeden tik (20 ms); klasicky rezim
+ukazuje aktualni tik hned. Na 120 Hz plynuly rezim odstrani
+nepravidelny rytmus 2-3-2-3 opakovanych snimku.
+

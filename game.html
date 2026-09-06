@@ -3985,7 +3985,7 @@ function startMapObjectTask(g, s) {
     } else if (s.beh === "airplane") {
       // 0x7970: 0x6178 kopie s aktivaci 127 (0x797e), rodic 176 (0x7978).
       s.airMargin = 176;
-      const c = Object.assign({}, s, { taskStarted: true, born: false,
+      const c = Object.assign({}, s, { bobOrdinal: undefined, taskStarted: true, born: false,
                                        alive: true, formationChild: true,
                                        nodeExt: null, airMargin: 127 });
       assignBobOrdinal(g, c); g.spawns.push(c);
@@ -4547,7 +4547,7 @@ function spawnFormationCopies(g, s, count, dx, dy, dtyp) {   // 0xa2a2
   // (vcetne +276), teprve pak posun rodice o (dx, dy, dtyp). Kopie
   // pokracuji za volanim, takze formaci uz neklonuji.
   for (let k = 0; k < count - 1; k++) {
-    const c = Object.assign({}, s, { taskStarted: true, born: false,
+    const c = Object.assign({}, s, { bobOrdinal: undefined, taskStarted: true, born: false,
                                      alive: true, formationChild: true,
                                      nodeExt: null });
     assignBobOrdinal(g, c);
@@ -5224,7 +5224,7 @@ function spawnJetFly(g, s) {                   // 0x9cde (dite 0x6178)
   // a2c6(JETS#2, 34, 288, HP 2, 90 bodu, cost 15); raw wait 100 (0x5f22,
   // bez pohybu i cullu), pak y = fp@(3542) + 288, z 32, vy -4, vx 0,
   // 0x62cc: leti vzhuru 4 px/t (mapove) az za horni okraj.
-  const c = Object.assign({}, s, {
+  const c = Object.assign({}, s, { bobOrdinal: undefined,
     beh: "jetfly", taskStarted: true, born: true, alive: true,
     formationChild: true, nodeExt: null, nodeKey: "jetfly",
     file: "JETS.LIN", idx: 2, fr: 2, cost: 15, hp: 2, scoreValue: 90,
@@ -9092,15 +9092,21 @@ function renderSmoothField(ctx, g, S, composed) {
   // Bez bobPrev (prvni snimek, skrtnuti displeje) se kresli aktualni tik.
   // Skok scrollu o vic nez 4 radky (konec SCIFI 0xbec6: -319) se
   // neinterpoluje - original mapu prepne v jednom tiku.
+  // Interpoluje se mezi dvema KLASICKYMI snimky: scroll i rohy spritu jsou
+  // v obou tikach cela cisla (68k high-word, blitIndexedOperation floor) a
+  // mezipoloha se zaokrouhli na nejblizsi 1/S px. Pri alfa = 0 tak vyjde
+  // presne klasicky snimek predchoziho tiku, pri alfa -> 1 aktualniho
+  // (kontrakt tools/smoothtest.py).
   const prevScroll = Number.isFinite(g.scrollPrev) ? g.scrollPrev : g.scroll;
-  const scrollLerp = g.bobPrev && Math.abs(g.scroll - prevScroll) <= 4
-    ? prevScroll + (g.scroll - prevScroll) * alpha : g.scroll;
-  const scrollF = Math.max(0, Math.min(g.mapH - 256, scrollLerp));
+  const lerpOK = !!g.bobPrev && Math.abs(g.scroll - prevScroll) <= 4;
+  const clampTop = v => Math.floor(Math.max(0, Math.min(g.mapH - 256, v)));
+  const topP = clampTop(prevScroll), topC = clampTop(g.scroll);
+  const rq = v => Math.round(v * S) / S;
+  const scrollF = lerpOK ? rq(topP + (topC - topP) * alpha) : topC;
   // Polohy se kvantuji na 1/S px smerem dolu jako 68k high-word (klasicka
   // cesta: Math.floor v blitIndexedOperation), aby pri alfa = 1 vysel presne
   // klasicky snimek; prohlizec by jinak zlomky zaokrouhlil k nejblizsimu.
-  const q = v => Math.floor(v * S) / S;
-  const topI = Math.floor(scrollF), fy = q(scrollF - topI);
+  const topI = Math.floor(scrollF), fy = scrollF - topI;   // nasobek 1/S
   const rows = Math.min(257, g.mapH - topI);
   const st = state.smoothState || (state.smoothState = {});
   if (!st.buf || st.rows !== rows) {
@@ -9135,13 +9141,17 @@ function renderSmoothField(ctx, g, S, composed) {
     if (!r.spr) continue;
     const key = smoothBobKey(r);
     const p = prev && key !== null ? prev.byKey.get(key) : null;
-    const wyC = cur.top + r.y, wyP = p ? prev.top + p.y : wyC;
-    const x = p ? p.x + (r.x - p.x) * alpha : r.x;
-    const sy = wyP + (wyC - wyP) * alpha - scrollF;
-    const row = Math.max(0, Math.min(rows - 1, Math.floor(sy)));
+    // rohy spritu v celych pixelech mapy (jako klasicky blit), pak lerp
+    const cxC = Math.floor(r.x + r.spr.ox);
+    const cyC = Math.floor(cur.top + r.y + r.spr.oy);
+    const cxP = p ? Math.floor(p.x + r.spr.ox) : cxC;
+    const cyP = p ? Math.floor(prev.top + p.y + r.spr.oy) : cyC;
+    const dx = lerpOK && p ? rq(cxP + (cxC - cxP) * alpha) : cxC;
+    const dy = (lerpOK && p ? rq(cyP + (cyC - cyP) * alpha) : cyC) - scrollF;
+    const row = Math.max(0, Math.min(rows - 1, Math.floor(dy - r.spr.oy)));
     const cv = smoothSpriteCanvas(r.spr, pal.subarray(row * 16, row * 16 + 16),
                                   r.op, c07);
-    ctx.drawImage(cv, q(x + r.spr.ox), q(sy + r.spr.oy));
+    ctx.drawImage(cv, dx, dy);
   }
   // HUD prouzek (5. bitplane) z klasickeho snimku
   if (!st.hud) { st.hud = document.createElement("canvas"); st.hud.width = 320; st.hud.height = 16; }
