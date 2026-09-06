@@ -4710,6 +4710,25 @@ function spawnInst5Lamp(g, s, kind) {            // 0xc1ca / 0xc228
               hidden: true, st: 0, t: 1 };
   assignBobOrdinal(g, h); g.hazards.push(h);
 }
+function inst5Piece(g, h, index, ring, frame) {  // 0xc752 + 0xc700 / 0xc73c
+  // Uhel = (index * 2730 + 128) >> 8 (24 kusu = plnych 256 jednotek),
+  // vzdalenost = (ring + 6) kroku po 12 px. Kus se vykresli do obou
+  // bufferu (0xc72e: y -= 320 a jeste jeden field) a task konci - v
+  // originale tedy zustane "vypaleny" v obraze. Prepis pouziva dekal.
+  const ang = ((index * 2730 + 128) >> 8) & 255;
+  const v = angVel(ang, 12), n = ring + 6;
+  addDecal(g, "INST5.LIN", frame, h.x + v.vx * n, h.y + v.vy * n);
+}
+function inst5Ring(g, h, ring, odd) {           // 0xc6b2 / 0xc6ae
+  for (let i = odd ? 23 : 22; i >= 0; i -= 2) inst5Piece(g, h, i, ring, 13);
+}
+function spawnInst5Sphere(g, s) {               // 0xc5f8 (task 0x6160)
+  const h = { kind: "inst5sphere", parent: s, x: s.x + 4, y: s.y + 4,
+              alive: true, dead: false, hp: 0, cost: 0, scoreValue: 0,
+              smartImmune: true, hidden: true, ring: 12, left: 0, d1: 0,
+              st: 0, t: 0 };
+  assignBobOrdinal(g, h); g.hazards.push(h);
+}
 function spawnInst5Launcher(g, s) {              // 0xc280 (task 0x6160)
   // Nema a2c6: zadna grafika, zadna kolize, jen vypousti nosice.
   const h = { kind: "inst5launch", parent: s, x: s.x + 4, y: s.y + 4,
@@ -5500,6 +5519,53 @@ function advanceTownHazardField(g, h) {
       queueTownExplosionTask(g, h.x, h.y, 1, "death-seaplanebomb");
       h.retireAfterField = true;               // fp@(-1414): bez skore
     }
+  } else if (h.kind === "inst5sphere") {
+    if (!h.parent.alive) { releaseHazard(g, h); return; }
+    if (h.st === 0) {                          // 0xc60a: jeden prstenec za tik
+      for (let i = 23; i >= 0; i--) inst5Piece(g, h, i, h.ring, 17);
+      if (--h.ring < 0) { h.st = 1; h.t = Math.max(1, 8 + (random32(g) & 127)); }
+      return;
+    }
+    if (h.st === 1) {                          // 0xc630: dlouhe surove cekani
+      if (--h.t > 0) return;
+      h.st = 2; h.ring = 12;
+    }
+    if (h.st === 2) {                          // 0xc648: 13x { prstenec, 5 }
+      if (h.t > 0 && --h.t > 0) return;
+      inst5Ring(g, h, h.ring, true);
+      h.t = 5;
+      if (--h.ring < 0) h.st = 3;
+      return;
+    }
+    if (h.st === 3) {                          // 0xc658
+      if (--h.t > 0) return;
+      if ((random32(g) & 3) === 0) { h.st = 4; h.left = 12; h.t = 0; }
+      else h.st = 5;
+    }
+    if (h.st === 4) {                          // 0xc662: 12x paprsek 0xc6ce
+      if (h.t > 0 && --h.t > 0) return;
+      let idx;                                 // 0xc6ce: odmitaci losovani
+      do { idx = random32(g) & 31; } while (idx >= 24);
+      for (let r = 12; r >= 0; r--) inst5Piece(g, h, idx, r, 13);
+      h.t = 5;
+      if (--h.left <= 0) h.st = 5;
+      return;
+    }
+    if (h.st === 5) {                          // 0xc66e: dve losovani
+      random32(g);
+      if ((random32(g) & 3) === 0) {
+        h.st = 6; h.left = 4; h.sub = 0; h.t = 0;
+        h.d1 = (random32(g) & 7) + 1;          // 0xc680
+      } else { h.st = 1; h.t = 1; return; }
+    }
+    if (h.st === 6) {                          // 0xc68e: 4x { lichy, sudy }
+      if (h.t > 0 && --h.t > 0) return;
+      inst5Ring(g, h, h.d1, h.sub === 0);
+      h.t = 5;
+      if (h.sub === 0) h.sub = 1;
+      else { h.sub = 0; if (--h.left <= 0) { h.st = 1; h.t = 1; } }
+    }
+    return;
   } else if (h.kind === "inst5launch") {
     if (!h.parent.alive) { releaseHazard(g, h); return; }
     if (h.st === 3 && --h.t <= 0) h.st = 0;    // 0xc300: surove cekani 200
@@ -7672,6 +7738,7 @@ function step(g) {
         spawnInst5Lamp(g, s, 'a');               // 0xc1ca
         spawnInst5Lamp(g, s, 'b');               // 0xc228
         spawnInst5Launcher(g, s);                // 0xc280
+        spawnInst5Sphere(g, s);                  // 0xc5f8
         s.st = 2;                                // 0xc10a: wait 100 do zabiti
       }
       if (s.whiteT && --s.whiteT <= 0) g.fadeWhite = 0;   // 0xc138

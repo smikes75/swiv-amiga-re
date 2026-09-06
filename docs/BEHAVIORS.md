@@ -1804,11 +1804,10 @@ proto beh zastavi v tiku 11129 (DESERT, 1 instalace) resp. 14441
   **mrtvy kod**, prepis losovani zachovava kvuli poradi RNG.
 - Simulace: sekvence B, snimky #4, #5, #4, #3, strely po 5 ticich.
 
-## FINAL - zaverecny boss INST5#0 (davka 1 z 3, 2026-09-06)
+## FINAL - zaverecny boss INST5#0 (2026-09-06)
 
 Mapa FINAL ma **jediny objekt** (`ry` 278, x 153), ale je to cely komplex:
-neviditelny rodic, ctyri samostatne tasky a tri druhy hmyzu. Prepsana je
-zatim prvni davka: rodic, zasahovy handler s koncem hry a obe svetla.
+neviditelny rodic, ctyri samostatne tasky a tri druhy hmyzu.
 
 ### Rodic `INST5#0` (0x0056 → 0xc068)
 
@@ -1853,14 +1852,67 @@ zatim prvni davka: rodic, zasahovy handler s koncem hry a obe svetla.
   (A: `100 + (r & 127)` tiku, B: `3 + (r & 7)`). Jinak snimek z tabulky
   `0xc21c` / `0xc276` a cekani 5 tiku (A) resp. 1 tik (B, `0x629a`).
 
-**Zbyva (davka 2 a 3):** vypoustec hmyzu `0xc280` s tabulkou `0xc332`,
-nosic `0xc342` (INSECTS#23, dva skoky a vysazeni utocnika) a tri
-utocnici `0xc3d6` (bomby XEVIOUS), `0xc42c` (lovec s rozptylem) a
-`0xc49e` (kliceni se stoupanim a klesanim); dale task `0xc5f8`, ktery
-zaklada **13 prstencu po 24 kusech INST5#17** (`0xc700`, uhel
-`index * 2730 / 256`, rychlost 12, polomer podle prstence) a trosky
-`0xc73c`. Graficky slot **0x57 = INSECTS.LIN** (jmenna tabulka
-AMPROG.OBJ).
+### Vypoustec hmyzu `0xc280` (davka 2)
+
+- Task **bez `a2c6`**: zadna grafika ani kolize. `x += 4`, `y += 4`,
+  pak kolo: guard `0x8822` (pri celkove cene nad 160 jen surove cekani
+  200), `0x883c` da `+286` (dolni slovo) a index do tabulky `0xc332`
+  (horni slovo & 7). Tabulka ma osm polozek ukazujicich na tri rutiny:
+  3x `0xc42c`, 3x `0xc3d6`, 2x `0xc49e`.
+- Uhel `+358 = 16`, rychlost `+356 = 128`, pak **5x** { surove cekani 10,
+  dvakrat `0xc318`, `uhel = ((16 + +286 + uhel) & 31) - 16`,
+  `+356 += 72` }, nakonec surove cekani 200.
+- `0xc318` zalozi nosic `0x6160(0xc342)`, preda mu vybranou rutinu v
+  `+276` a **prevrati uhel** (`uhel ^= 127; uhel += 1`), takze dvojice
+  leti zrcadlove.
+
+### Nosic `0xc342` (INSECTS#23)
+
+- `a2c6(INSECTS#23, 38, 0, HP 3, 70 bodu, cost 10)`. Nejdriv
+  **jednorazovy skok o 40 px** ve zdedenem uhlu (rychlost 10240 jen na
+  jeden krok, pak se vrati puvodni), anim `0x0c37c` #23..#27 perioda 6
+  (drzi). Pak dva skoky vzhuru: `vz = 2.0`, `az = -4096/65536`, dokud
+  neni cele slovo `z` nulove; `0x6d96` (stop); `vz = 1.0` a totez znovu.
+- Teprve pak vysadi utocnika `0x6178(+276)` a prehraje `0x0c3ae`
+  #28/#29 perioda 4 s `0x8800` - animator ho zabije.
+
+### Tri utocnici
+
+- **`0xc3d6` (INSECTS#0, trida 36):** `a2c6(..., HP 5, 70 bodu,
+  cost 15)`, `0x6d96`, `z = 0`, `vy = 0.5`, anim `0x0c3fc`
+  #0,#1,#2,#3,#2,#1 perioda 1 loop; smycka { bomba XEVIOUS
+  `0x6178(0x7f9a)`, wait `150 + (0x883c & 127)` }.
+- **`0xc42c` (INSECTS#4, trida 34 = smrtici):** `z = 32`, rychlost 512
+  = 2 px/t, anim `0x0c44e` #4,#5,#6,#5 perioda 2 loop; kazdych 8 tiku
+  absolutni zamireni na hrace, `uhel += (0x883c & 31) - 15` a
+  **`bclr #7,+359`**, takze uhel nikdy nemiri vzhuru (0..127).
+- **`0xc49e` (INSECTS#7, trida 36):** `z = 32`, rychlost 256,
+  `+276 = (0x883c & 64) - 32` = krok otaceni ±32. `0xc4fa` otaci po
+  dvou ticich, dokud neni odchylka od hrace do 16 **a** spodni bajt
+  uhlu nejvyse 0x80. Pak losuje `0x883c & 7`: 0 = stoupani `0xc584`
+  (vz 1, rychlost 512, do `z = 32`, pak trida **34**), 1-2 = klesani
+  `0xc5c0` (vz -1, rychlost 128, do `z = 0`, trida **36**), jinak nic;
+  wait 20 a znovu. Snimek `0xc560` je dir8 od INSECTS#7, ktery se pri
+  `(fp@(11172) & 31) == 0` prehodi na zaklad INSECTS#15.
+
+### Telo bosse `0xc5f8` (davka 3)
+
+- **13 prstencu po 24 kusech INST5#17**, jeden prstenec za tik.
+  `0xc752` da uhel `(index * 2730 + 128) >> 8` (24 kusu = plnych 256
+  jednotek) a polohu o `(prstenec + 6)` krocich po 12 px. Kus
+  (`0xc700`) se vykresli, posune o `y -= 320` a vykresli **jeste
+  jednou** - tedy do obou bufferu - a task konci. V originale proto
+  zustane v obraze "vypaleny"; prepis pouziva dekal (`0x898c`).
+- Pak nekonecna show: surove cekani `8 + (0x883c & 127)`, 13x
+  { `0xc6b2` = 12 trosek INST5#13 na lichych indexech, wait 5 };
+  pri `(0x883c & 3) == 0` jeste 12 paprsku `0xc6ce` (nahodny index
+  0..23 odmitacim losovanim, 13 kusu pres vsechny prstence, wait 5);
+  a pri dalsim `(0x883c & 3) == 0` ctyrikrat { liche, wait 5, sude,
+  wait 5 } na prstenci `(0x883c & 7) + 1`.
+- `0xc67c` pushne citac 12, ktery uz nikdo nesnizuje - **mrtvy kod**.
+
+Graficky slot **0x57 = INSECTS.LIN** (jmenna tabulka AMPROG.OBJ,
+`tools/dispatch.py game_order`).
 
 ### Imunita vuci SMART (`+534 = -1`) - doplneno v enginu
 
