@@ -157,8 +157,11 @@ Until 2026-09-07 the browser played `0x4C58` for both.
 
 `0x4F9E` and `0x523A` are complete voice routines with no reference anywhere
 in `AMPROG.OBJ` and are deliberately not wired up. `0x51D4` (four noise
-voices at periods 400, 480, 413 and 441, volume `counter >> 7`, endless loop)
-belongs to `0xF94` in the loader, outside the gameplay slice.
+voices at periods 400, 480, 413 and 441, volume `counter >> 7`, endless loop
+through the left selector) is called from `0xF94`, which is inside the
+conditional post-game `CONGRAT2.RAW` branch `0xF42..0x1042` — not the loader,
+as this file first stated. It waits for `fp@(12352)` and belongs to the
+post-game flow that has no runtime scene yet (docs/GAPS.md section 8).
 
 ## Attract music and verified A500 output path
 
