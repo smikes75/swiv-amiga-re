@@ -543,13 +543,10 @@ Ted `viewScale()`:
 - posuvnik `#zoombox` v testovaci liste: 0 = auto, dal 1x az na nejvetsi
   nasobek, ktery se do okna vejde (max se prepocitava pri resize);
   volba se uklada do `localStorage` (`swivZoom`);
-- vnitrni platno zustava 320*S (S = nadvzorkovani plynuleho rezimu), a S
-  se voli jako nejvetsi delitel nasobku do ctyr, aby `nasobek / S` bylo
-  cele cislo. U prvocisel (5, 7, 11) vyjde S = 1 - plynuly rezim pak jen
-  neopakuje snimky a nema subpixelove polohy; label to hlasi jako
-  "cele px" misto "1/S px". **Auto proto radeji o krok ustoupi**
-  (7 → 6, 5 → 4), aby S bylo aspon 2, a nezavisi na tom, jestli je
-  plynuly rezim zapnuty - prepnuti rezimu nemeni velikost obrazu.
+- vnitrni platno je 320*S (S = nadvzorkovani plynuleho rezimu) a S se
+  voli jako nejvetsi delitel nasobku **do osmi**, tedy zpravidla
+  S = nasobek: krok kvantovani je pak presne jeden bod displeje a platno
+  se uz nezvetsuje (pomer 1). Auto bere nejvetsi nasobek, ktery se vejde.
 
 Zmereno na ctyrech kombinacich (dpr 1 / 1,25 / 1,5 / 2): pomer
 sirka v bodech displeje / sirka platna vyjde vzdy cele cislo. Klasicka
@@ -558,4 +555,35 @@ cesta ma S = 1 vzdy, takze kontrakty `compare.py` a `smoothtest.py`
 
 Vyrez zustava 320x256; zobrazeni vetsi casti mapy je samostatna vec
 (viz `docs/ZADANI-TURRICAN.md`, kde se resi pro jinou hru).
+
+## "Sev" v obraze pri plynulem rezimu (nahlaseno 2026-09-07, opraveno)
+
+Hlaseno pri testu na 120 Hz: *"vzdycky v jedne ctvrtine je v obraze takovy
+sev"*. Zmereno a je to **kvantovani pohybu pozadi**, ne prostorovy sev.
+
+Mapa se posouva 0,25 px za tik. Puvodne se S (nadvzorkovani) volilo jako
+nejvetsi delitel nasobku **do ctyr**, takze pri zoomu 3x vyslo S = 3 a
+krok kvantovani 1/3 px byl **vetsi nez posun za tik**. Sonda: kroky
+pozadi za tik pri 3x byly `{0: 4, 0.333: 11}` - **jeden tik ze ctyr stal
+uplne**, presne ta "ctvrtina". Pri 2x `{0: 8, 0.5: 7}`, tedy kazdy druhy.
+Pri 6x vychazelo S = 3 (delitel), takze taky 2, 2, 2, 0 bodu.
+
+Oprava: strop S zvednut na 8, takze S = nasobek a krok kvantovani je
+jeden bod displeje. Pozadi pak ujede `nasobek / 4` bodu za tik:
+
+| zoom | S | kroky za tik | pozadi |
+|---:|---:|---|---|
+| 2x | 2 | 0 / 0,5 | stoji kazdy druhy tik |
+| 3x | 3 | 0 / 0,333 | stoji jeden ze ctyr |
+| 4x | 4 | 0,25 | **rovnomerne** (1 bod) |
+| 5x | 5 | 0,2 / 0,4 | strida 1 a 2 body |
+| 6x | 6 | 0,167 / 0,333 | strida 1 a 2 body |
+| 7x | 7 | 0,143 / 0,286 | strida 1 a 2 body |
+| 8x | 8 | 0,25 | **rovnomerne** (2 body) |
+
+Od 4x vys uz zadny tik nestoji. Pod 4x ujede tik min nez jeden bod
+displeje a cast tiku stat musi - to je mez pixeloveho rastru, ne chyba
+prepisu; label to hlasi jako "pozadi skace". Cena zvednuti stropu je
+pamet platna (pri 8x 2560x2048); teren se barvi v rozliseni mapy, takze
+na S nezavisi, roste jen rasterizace spritu na GPU.
 

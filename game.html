@@ -6659,13 +6659,21 @@ function startGame(lv) {
 
    Vnitrni platno ma sirku 320*S, kde S je nadvzorkovani plynuleho rezimu
    (polohy se kvantuji na 1/S px). Aby prohlizec zvetsoval cele, musi byt
-   `dev / S` cele cislo, takze S je nejvetsi delitel `dev` do ctyr - u
-   prvocisel (5, 7, 11) vyjde 1 a plynuly rezim pak jen neopakuje snimky,
-   nema subpixelove polohy. Klasicka cesta ma S = 1 vzdy.
+   `dev / S` cele cislo; S se proto voli co nejvetsi delitel `dev`, ideal
+   je S = dev, kdy je krok kvantovani presne jeden bod displeje a platno
+   se uz nezvetsuje vubec. Strop je 8 (pamet platna 2560x2048).
 
-   state.zoom: 0 = auto (nejvetsi nasobek, ktery se vejde do okna). */
-function bestS(dev) {                   // nejvetsi delitel `dev` do ctyr
-  for (let k = Math.min(4, dev); k >= 1; k--) if (dev % k === 0) return k;
+   Mapa se posouva **0,25 px za tik**, takze na obrazovce ujede `dev / 4`
+   bodu za tik. Pri nasobku delitelnem ctyrmi je to cely pocet bodu
+   (4x = 1, 8x = 2) a pohyb je uplne rovnomerny; pri 5x az 7x se stridaji
+   dva sousedni pocty (napr. 6x: 1 a 2 body), coz je okem nerozlisitelne.
+   **Pod 4x ale tik ujede min nez jeden bod displeje**, takze cast tiku
+   stoji: pri 3x jeden ze ctyr, pri 2x kazdy druhy. To uz je videt a nejde
+   to obejit - je to mez pixeloveho rastru, ne chyba prepisu.
+
+   state.zoom: 0 = auto (nejvetsi vhodny nasobek, ktery se vejde do okna). */
+function bestS(dev) {                   // nejvetsi delitel `dev` do osmi
+  for (let k = Math.min(8, dev); k >= 1; k--) if (dev % k === 0) return k;
   return 1;
 }
 function viewScale(smooth) {
@@ -6673,10 +6681,8 @@ function viewScale(smooth) {
   const fit = Math.max(1, Math.floor(Math.min(
     (window.innerWidth - 40) * dpr / 320, (window.innerHeight - 170) * dpr / 256)));
   let dev = (state.zoom | 0) > 0 ? Math.min(state.zoom | 0, fit) : fit;
-  // Auto radeji o krok mensi nasobek nez takovy, u ktereho by S vyslo 1:
-  // u prvocisel (5, 7, 11) by plynuly rezim prisel o subpixelove polohy.
-  // Nezavisi na `smooth`, aby prepnuti rezimu nemenilo velikost obrazu.
-  if (!(state.zoom | 0)) while (dev > 1 && bestS(dev) === 1) dev--;
+  // Auto bere nejvetsi nasobek, ktery se vejde: od 4x uz pozadi nestoji
+  // ani pri nasobku nedelitelnem ctyrmi, takze neni duvod ustupovat.
   return { dev, fit, S: smooth ? bestS(dev) : 1,
            cssW: 320 * dev / dpr, cssH: 256 * dev / dpr };
 }
@@ -6685,9 +6691,10 @@ function updateZoomLabel() {
   const box = document.getElementById("zoombox");
   box.max = String(z.fit);              // vetsi nez okno nema smysl nabizet
   if ((state.zoom | 0) > z.fit) box.value = String(z.fit);
+  // Pod 4x ujede pozadi za tik min nez jeden bod displeje a cast tiku stoji.
   document.getElementById("zoomval").textContent =
     ((state.zoom | 0) > 0 ? "" : "auto ") + z.dev + "\u00d7" +
-    (state.smooth ? z.S > 1 ? " (1/" + z.S + " px)" : " (cele px)" : "");
+    (state.smooth ? (z.dev < 4 ? " (pozadi skace)" : " (1/" + z.S + " px)") : "");
 }
 try {                                   // volba prezije reload (per-viewer)
   const saved = parseInt(localStorage.getItem("swivZoom") || "", 10);
