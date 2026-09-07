@@ -695,3 +695,36 @@ skutecne polohy 101,073 → 101,688 → 102,303 → 102,919, po zaokrouhleni
 drive u pozadi; naprava je interpolovat ze zlomkovych poloh a kontrakt
 zarovnat na tiky, kde poloha vyjde cela.
 
+## Zlomkove polohy spritu (2026-09-07, druhy krok po strelach)
+
+Kotvy objektu se v kazdem tiku zaokrouhlovaly dolu na cele pixely
+(`Math.floor` u BOBu, `positionWord` u HW spritu) a interpolace jela mezi
+temito zaokrouhlenymi konci. Objekt pomalejsi nez pixel za tik proto
+stridal stani a skok - zmereno na letci YELLOW s 0,615 px/tik: skutecne
+polohy 101,073 → 101,688 → 102,303 → 102,919, po zaokrouhleni 101, 101,
+102, 102.
+
+Ted se interpoluje ze zlomkovych poloh a kvantuje se az vysledek.
+Zmereno na temze letci pri zoomu 4x uvnitr jednoho tiku (alfa 0 →
+0,999): kreslena x 72 → 72,25 → 72,25 → 72,5 → 72,5 → 72,75, tedy
+rovnomerny posun po 1/4 px misto jednoho skoku.
+
+**Kvantuje se na NEJBLIZSI bod displeje, ne dolu.** Kvantovani dolu (jako
+68k high-word) tu nejde pouzit: interpolace konci tesne pod cilovou
+polohou, takze objekt lezici na celem pixelu by pri alfa → 1 spadl o
+pixel zpet. Dusledkem je, ze sprite muze byt v plynulem rezimu az o pul
+bodu jinde nez v klasickem snimku. Je to **vedoma cena za plynuly pohyb**
+- klasicka cesta zustava verna originalu (ten polohu orezava, protoze
+cte horni slovo 16.16) a kontrakt `tools/compare.py` se tyka jen ji.
+
+**Kontrakt `tools/smoothtest.py` proto zmenil masku:** drive pokryvala
+jen sprity se zmenenou animaci a mimo ne se nesmelo lisit nic. Ted
+pokryva obdelniky **vsech** spritu obou tiku (vcetne HW spritu, ktere
+nejdou pres `composeTownBobs`), rozsirene o 3 px. Mimo ne je zarazka 4 px
+na ojedinele pixely obrysu. Kontrakt uz tedy nehlida polohu spritu, ale
+porad chyta to, kvuli cemu vznikl - zamrzly pas, sev HUDu, chybejici
+dekaly, spatne parovani -, protoze ty jsou o dva rady vetsi. Pri padu
+vypise souradnice prvnich dvanacti bodu mimo masku.
+
+Zmereno ve vsech sedmi zonach: mimo masku 0 az 1 px.
+

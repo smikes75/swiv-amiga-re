@@ -3065,7 +3065,8 @@ function drawTownHardwareSprites(ctx, g, view) {
     g.hwPrev = g.hwTick === (g.tick | 0) - 1 ? g.hwCur : null;
     g.hwCur = new Map();
     for (const r of allocation.all || [])
-      g.hwCur.set(hwSmoothKey(r), { x: r.anchorX, y: r.anchorY, src: r.source });
+      g.hwCur.set(hwSmoothKey(r),
+                  { x: r.source.x, y: r.source.y, src: r.source });
     g.hwTick = g.tick;
   }
   const lerp = view && view.smooth && g.hwPrev;
@@ -3084,11 +3085,15 @@ function drawTownHardwareSprites(ctx, g, view) {
         // stejnou cestou jako BOBy: svet = kotva + cely scroll, interpolace
         // mezi tiky a odecteni interpolovaneho scrollu.
         const p = g.hwPrev.get(hwSmoothKey(r));
+        const wyC = r.source.y + view.top;
         if (p && p.src === r.source) {
-          const wyC = r.anchorY + view.top, wyP = p.y + view.topPrev;
-          ax = view.q(p.x + (r.anchorX - p.x) * view.alpha);
+          const wyP = p.y + view.topPrev;
+          ax = view.q(p.x + (r.source.x - p.x) * view.alpha);
           ay = view.q(wyP + (wyC - wyP) * view.alpha) - view.scrollF;
-        } else ay = r.anchorY + view.top - view.scrollF;
+        } else {
+          ax = view.q(r.source.x);
+          ay = view.q(wyC) - view.scrollF;
+        }
       }
       ctx.drawImage(spr.cv, ax + spr.ox, ay + spr.oy);
     }
@@ -9275,6 +9280,12 @@ function renderSmoothField(ctx, g, S, composed, hudCv) {
   const prevScroll = Number.isFinite(g.scrollPrev) ? clamp(g.scrollPrev) : clamp(g.scroll);
   const curScroll = clamp(g.scroll);
   const lerpOK = !!g.bobPrev && Math.abs(curScroll - prevScroll) <= 4;
+  // Zaokrouhleni na NEJBLIZSI bod displeje, spolecne pro scroll i sprity.
+  // Kvantovani dolu (jako 68k high-word) tu nejde: interpolace konci tesne
+  // pod cilovou polohou, takze objekt na celem pixelu by pri alfa -> 1
+  // spadl o pixel zpet. Dusledek: v tiku muze byt sprite az o pul bodu
+  // jinde nez v klasickem snimku - vedoma cena za plynuly pohyb, klasicka
+  // cesta zustava verna (viz docs/GAPS.md).
   const rq = v => Math.round(v * S) / S;
   // Pri zapnutem prolnuti se scroll nekvantuje vubec: teren se pak kresli
   // dvakrat pres sebe (viz nize) a pohyb je plynuly i pod 4x, kde jeden
@@ -9330,13 +9341,16 @@ function renderSmoothField(ctx, g, S, composed, hudCv) {
     if (!r.spr) continue;
     const key = smoothBobKey(r);
     const p = prev && key !== null ? prev.byKey.get(key) : null;
-    // rohy spritu v celych pixelech mapy (jako klasicky blit), pak lerp
-    const cxC = Math.floor(r.x + r.spr.ox);
-    const cyC = Math.floor(cur.top + r.y + r.spr.oy);
-    const cxP = p ? Math.floor(p.x + r.spr.ox) : cxC;
-    const cyP = p ? Math.floor(prev.top + p.y + r.spr.oy) : cyC;
-    const dx = lerpOK && p ? rq(cxP + (cxC - cxP) * alpha) : cxC;
-    const dy = (lerpOK && p ? rq(cyP + (cyC - cyP) * alpha) : cyC) - scrollF;
+    // Rohy spritu ze ZLOMKOVYCH poloh: drive se konce zaokrouhlovaly na
+    // cele pixely, takze objekt pomalejsi nez pixel za tik stridal stani
+    // a skok (zmereno na letci YELLOW s 0,615 px/tik: kroky 0, 1, 0, 1).
+    // Interpolace jde mezi skutecnymi polohami a kvantuje se az vysledek.
+    const cxC = r.x + r.spr.ox;
+    const cyC = cur.top + r.y + r.spr.oy;
+    const cxP = p ? p.x + r.spr.ox : cxC;
+    const cyP = p ? prev.top + p.y + r.spr.oy : cyC;
+    const dx = rq(lerpOK && p ? cxP + (cxC - cxP) * alpha : cxC);
+    const dy = rq(lerpOK && p ? cyP + (cyC - cyP) * alpha : cyC) - scrollF;
     const row = Math.max(0, Math.min(rows - 1, Math.floor(dy - r.spr.oy)));
     const cv = smoothSpriteCanvas(r.spr, pal.subarray(row * 16, row * 16 + 16),
                                   r.op, c07);
@@ -9615,7 +9629,7 @@ function frame(now) {
       // o kolik se scroll posunul mezi minulym a timto tikem: kotva
       // predchoziho tiku byla vuci jeho vlastnimu `top`
       topPrev: g.hwTopPrev ?? top,
-      q: v => state.blendBg ? v : Math.round(v * S) / S,
+      q: v => Math.round(v * S) / S,
     } : null);
   if (smooth) ctx.restore();
 
