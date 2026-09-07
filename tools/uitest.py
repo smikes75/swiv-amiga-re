@@ -428,17 +428,6 @@ def main():
               const pamName = state.order[fid];
               const file = state.files.find(f => f.name === pamName);
               const parsed = parsePam(unpackFile(state.adf, file), dico);
-              const desertInfo = levelInfo(state.prog, 1);
-              const desertFile = state.files.find(
-                f => f.name === state.order[desertInfo.fid]);
-              const desertParsed = parsePam(
-                unpackFile(state.adf, desertFile), desertInfo.dico);
-              const desertRawObjectColors =
-                desertParsed.checks[0].pal.slice(0, 10);
-              if (levelUsesTownObjectPalette(1))
-                applyTownObjectPalette(desertParsed.checks);
-              const desertObjectColors =
-                desertParsed.checks[0].pal.slice(0, 10);
               const margin = 160, top = parsed.height + margin - 256;
               const lines = compileCopperPaletteLines(
                 parsed.checks, parsed.height, margin, top, 256, 0, 0);
@@ -500,7 +489,11 @@ def main():
                 id: "ground", primary: popup, x: 100, y: 70, z: 0
               }, 0);
 
+              // nad TOWN jsou zretezene dalsi zony: hashe jen z vyrezu TOWN
               const mapIndex = state.g.mapIndex, width = 320;
+              const off = state.g.rowOffset | 0, townH = state.g.mapH - off;
+              const townIndex = mapIndex.subarray(off * width,
+                                                  (off + townH) * width);
               const colorRows = (top, rows) => {
                 const rgba = colorizeIndexedRows(
                   mapIndex, width, state.mapMeta.height, margin,
@@ -532,10 +525,10 @@ def main():
               // Toto okno skutecne protina tile pres checkpoint y=2127.
               // Stary RGBA vystup musi v kroku B zustat jiny; indexova cesta
               // uz ale musi dat spravnou scanline paletu pro dalsi krok.
-              const diffTop = 1454, diffRows = 21;
-              const correctRgb = colorRows(diffTop, diffRows);
+              const diffTop = 1454, diffRows = 21;   // radky TOWN
+              const correctRgb = colorRows(diffTop + off, diffRows);
               const legacyRgba = state.g.big.getContext('2d').getImageData(
-                0, 0, width, state.g.mapH).data;
+                0, off, width, townH).data;
               const legacyRgb = new Uint8Array(width * diffRows * 3);
               let paletteMismatches = 0;
               for (let i = 0; i < width * diffRows; i++) {
@@ -581,7 +574,7 @@ def main():
               };
               let runtimeRgb;
               try {
-                g.scroll = diffTop - runtimeScreenY;
+                g.scroll = diffTop + off - runtimeScreenY;
                 g.frac = 0; g.fadeBlack = 0; g.fadeWhite = 0;
                 g.fadeDir = 0; g.over = false; g.won = false;
                 g.spawns = []; g.effects = []; g.hazards = []; g.air = [];
@@ -614,12 +607,12 @@ def main():
               return {
                 town: {
                   name: pamName, height: parsed.height,
-                  lead: parsed.lead, startScroll: state.g.scroll,
+                  lead: parsed.lead,
+                  startScroll: state.g.scroll - (state.g.rowOffset | 0),
                   objectColors: Array.from(
                     state.copperChecks[0].pal.slice(0, 10)),
-                  allObjectColors: state.copperChecks.every(c =>
-                    c.pal.slice(0, 10).every((word, i) =>
-                      word === TOWN_OBJECT_COLORS[i])),
+                  objectColors104: Array.from(
+                    state.copperChecks[1].pal.slice(0, 10)),
                   color07Ticks,
                   color07Direct: Array.from(color07Direct),
                   color07BlackFade: Array.from(color07BlackFade),
@@ -635,32 +628,6 @@ def main():
                      lines[153 * 16 + 1]]
                   ],
                   fadedTop13: faded[13]
-                },
-                sharedPalette: {
-                  levels: [0, 1, 2, 3, 4, 5, 6].map(
-                    levelUsesTownObjectPalette),
-                  desertRawObjectColors,
-                  desertObjectColors,
-                  desertAllObjectColors: desertParsed.checks.every(c =>
-                    c.pal.slice(0, 10).every((word, i) =>
-                      word === TOWN_OBJECT_COLORS[i])),
-                  desertColor07: [
-                    activeObjectColor07Word({lv: 1, tick: 28,
-                                             fadeBlack: 0,
-                                             townColor07Enabled: true}),
-                    activeObjectColor07Word({lv: 1, tick: 28,
-                                             fadeBlack: 1,
-                                             townColor07Enabled: true}) ?? null,
-                    activeObjectColor07Word({lv: 1, tick: 28,
-                                             fadeBlack: 0,
-                                             townColor07Enabled: false}) ?? null
-                  ],
-                  desertTerrainCapture: [
-                    0xA85, 0x974, 0x864, 0x664, 0x443, 0x332
-                  ].map(word => capturedTerrainRgb12(
-                    word, VAMIGA_DESERT_TERRAIN_NIBBLE)),
-                  terrainNibble2ByLevel: [0, 1].map(level =>
-                    terrainCaptureNibblesForLevel(level)[2])
                 },
                 fade: {
                   black: levels.map(level => fadeRgb12Black(sample, level)),
@@ -693,7 +660,7 @@ def main():
                   sum: bobDst.reduce((n, color) => n + color, 0)
                 },
                 mapIndex: {
-                  size: [width, state.g.mapH], full: fnv1a(mapIndex),
+                  size: [width, townH], full: fnv1a(townIndex),
                   initial: fnv1a(initialIndex), initialRgb: fnv1a(initialRgb),
                   legacyRgba: fnv1a(legacyRgba),
                   differing: {
@@ -716,39 +683,30 @@ def main():
                    renderer_core["town"]["lead"] == 96 and
                    renderer_core["town"]["startScroll"] == 3249,
                    "Copper fixture nenacetla skutecnou mapu TOWN")
+            # Objektove barvy zapisuje PAM: hlavicka (ry 96) ma jen 5/8/9,
+            # checkpoint ry=104 doplni 1-4, 6, 7. Zadny engine override;
+            # drivejsi tmavsi "zmerena" sada byla gamma krivka emulatoru.
             expect(renderer_core["town"]["objectColors"] ==
-                   [0x000, 0x333, 0x465, 0x598, 0x765,
-                    0x666, 0x9A9, 0x800, 0xED6, 0xEEE],
-                   "TOWN nema zmerenou COLOR00-09 objektovou paletu: %s" %
-                   renderer_core["town"]["objectColors"])
-            expect(renderer_core["town"]["allObjectColors"] is True and
-                   renderer_core["town"]["color07Ticks"] ==
+                   [0x000, 0x000, 0x000, 0x000, 0x000,
+                    0x888, 0x000, 0x000, 0xFE8, 0xFFF] and
+                   renderer_core["town"]["objectColors104"] ==
+                   [0x000, 0x555, 0x687, 0x7BA, 0x987,
+                    0x888, 0xBCB, 0xB30, 0xFE8, 0xFFF],
+                   "TOWN nema PAM objektovou paletu (ry 96 / ry 104): %s / %s" %
+                   (renderer_core["town"]["objectColors"],
+                    renderer_core["town"]["objectColors104"]))
+            expect(renderer_core["town"]["color07Ticks"] ==
                    [0x800, 0x800, 0x900, 0xF00, 0xF00, 0xF00,
                     0xF00, 0xE00, 0x800, 0x800, 0x800] and
                    renderer_core["town"]["color07Direct"] ==
-                   [236, 0, 0, 255] and
+                   [255, 0, 0, 255] and
+                   # hlavicka PAM (ry 96) COLOR07 nezapisuje (az ry 104 = b30);
+                   # pri black fadu se CPU writer 0x28fe preskoci, takze
+                   # fixture s hlavickovou paletou da cernou
                    renderer_core["town"]["color07BlackFade"] ==
-                   [68, 0, 0, 255],
+                   [0, 0, 0, 255],
                    "TOWN COLOR07 nema nativni 8..15..8 trojuhelnik/fade: %s" %
                    renderer_core["town"])
-            expect(renderer_core["sharedPalette"] == {
-                     "levels": [True, True, True, True, True, False, False],
-                     "desertRawObjectColors":
-                       [0x000, 0x555, 0x687, 0x7BA, 0x000,
-                        0x000, 0x000, 0x000, 0xFE8, 0xFFF],
-                     "desertObjectColors":
-                       [0x000, 0x333, 0x465, 0x598, 0x765,
-                        0x666, 0x9A9, 0x800, 0xED6, 0xEEE],
-                     "desertAllObjectColors": True,
-                     "desertColor07": [0xF00, None, None],
-                     "desertTerrainCapture":
-                       [[141, 106, 56], [123, 89, 43],
-                        [106, 72, 43], [72, 72, 43],
-                        [43, 43, 28], [28, 28, 0]],
-                     "terrainNibble2ByLevel": [14, 0]
-                   },
-                   "DESERT nema sdileny TOWN..ICE objektovy fit/globalni COLOR07: %s" %
-                   renderer_core["sharedPalette"])
             expect(renderer_core["town"]["checks"] ==
                    [96, 104, 191, 383, 578, 734, 929, 1272, 1352,
                     1621, 2127, 2601, 2769],
@@ -790,18 +748,22 @@ def main():
                    },
                    "BOB depth/shadow/clear fixture nesedi s 0x481a/0x6364: %s" %
                    renderer_core["bob"])
-            # RGB hodnoty zahrnuji zmerene COLOR00-09 a nelinearni vAmiga
-            # DAC/capture radu pro terrain COLOR10-15. Legacy varianta navic
-            # propusti pozdejsi PAM prepis objektoveho indexu.
+            # RGB hodnoty jdou cistě z PAM checkpointu (vcetne objektovych
+            # barev z ry 104); legacy varianta se lisi jen na hranici
+            # checkpointu (21 pixelu na kontrolnich 21 radcich).
+            # Hashe vyrezu TOWN z retezene mapy: hornich 289 radku (MARGIN +
+            # prekryv 225 px z tabulky urovni, prvni dlazdice DESERTu na
+            # y 3312) uz patri DESERTu, proto se full/legacyRgba lisi od
+            # samostatne TOWN (3d426f35 / b6e13bf7).
             expect(renderer_core["mapIndex"] == {
                      "size": [320, 3761],
-                     "full": "3d426f35", "initial": "5870b220",
-                     "initialRgb": "022138be",
-                     "legacyRgba": "ccfec5ff",
+                     "full": "0838b308", "initial": "5870b220",
+                     "initialRgb": "89a47b97",
+                     "legacyRgba": "885adf87",
                      "differing": {
                        "top": 1454, "rows": 21,
-                       "correct": "4e305e10", "legacy": "ef98f632",
-                       "pixels": 5201
+                       "correct": "7f08f24f", "legacy": "2813671f",
+                       "pixels": 21
                      }
                    },
                    "TOWN mapIndex/Copper RGB nema presny obsah: %s" %
@@ -812,7 +774,7 @@ def main():
                    colorizer["rejected"] == 3,
                    "indexovy colorizer nema bezpecne horni/dolni hranice: %s" %
                    colorizer)
-            expect(colorizer["runtime"] == "4e305e10" and
+            expect(colorizer["runtime"] == "7f08f24f" and
                    colorizer["runtimeMismatches"] == 0,
                    "viditelny runtime nepouziva presnou scanline paletu: %s" %
                    colorizer)
@@ -895,13 +857,13 @@ def main():
                    "COLOR17..31 se nezachovaji behem black fade: %s" %
                    native_hud["retained"])
             expect(native_hud["firstPixel"][0] == 0 and
-                   native_hud["firstPixel"][2:] == [106,106,197,255],
+                   native_hud["firstPixel"][2:] == [136,136,221,255],
                    "HUD maska nema steady COLOR16 na prvnim tahu: %s" %
                    native_hud["firstPixel"])
             expect(native_hud["effectiveRows"] ==
-                   [["106,106,197"],["141,141,216"],
-                    ["178,178,236"],["178,178,236"],["178,178,236"],
-                    ["141,141,216"],["106,106,197"]],
+                   [["136,136,221"],["170,170,238"],
+                    ["204,204,255"],["204,204,255"],["204,204,255"],
+                    ["170,170,238"],["136,136,221"]],
                    "HUD nesmi zdedit lower4 ani blikajici sprite banky: %s" %
                    native_hud["effectiveRows"])
 
@@ -1047,10 +1009,10 @@ def main():
                    hw_allocator["pool"] == [1,1,False,30],
                    "HW source/geometry/30-slot pool nesedi: %s" % hw_allocator)
             expected_hw_banks = [
-                [[236,236,236],[123,123,123],[178,0,0]],
-                [[236,236,236],[123,123,123],[236,236,0]],
-                [[236,236,236],[123,123,123],[236,178,0]],
-                [[236,236,236],[123,123,123],[106,0,0]]]
+                [[255,255,255],[153,153,153],[204,0,0]],
+                [[255,255,255],[153,153,153],[255,255,0]],
+                [[255,255,255],[153,153,153],[255,204,0]],
+                [[255,255,255],[153,153,153],[136,0,0]]]
             expect(hw_allocator["banks"] == expected_hw_banks and
                    hw_allocator["whiteBanks"] == expected_hw_banks and
                    hw_allocator["layering"] ==
@@ -1137,9 +1099,9 @@ def main():
               };
             }""")
             expect(set(cannon_palette["frame28"]) ==
-                   {"236,236,236", "123,123,123", "178,0,0"} and
+                   {"255,255,255", "153,153,153", "204,0,0"} and
                    set(cannon_palette["frame44"]) ==
-                   {"236,236,236", "123,123,123"},
+                   {"255,255,255", "153,153,153"},
                    "kanonovy granat nema bilou/sedou HW-sprite paletu")
             expect(cannon_palette["accents"] ==
                    [0xC00, 0xFF0, 0xFC0, 0x800, 0xF80, 0xF00, 0xC00, 0xFF0,
@@ -1261,7 +1223,7 @@ def main():
               try {
                 g.spawns = [s]; g.air = []; g.hazards = []; g.shots = [];
                 g.bullets = []; g.plops = []; g.tokens = []; g.booms = [];
-                g.effects = []; g.activeCost = 0; g.scrollMul = 0.000001;
+                g.effects = []; g.activeCost = 0; g.scrollMul = 0;
                 g.over = false; g.won = false;
                 g.player.alive = true; g.player.x = 100; g.player.y = 220;
                 g.player.inv = 30000; g.player.bubbleTimer = 0;
@@ -1340,20 +1302,25 @@ def main():
 
                 // Projectile bit0 koaleskuje, player-contact bit3 je ale
                 // samostatny callback a muze ve stejnem VBL ubrat dalsi HP.
+                // Sweep 0xffff cte uzel z RESUME (0x6430): teleport hrace
+                // ve fixture proto doplni i snapshot uzlu.
+                const teleport = (x, y) => {
+                  g.player.x = x; g.player.y = y; snapNode(g, g.player, x, y);
+                };
                 g.bullets = [{ x: s.x, y: (s.y - g.scroll) + 9 }];
-                g.player.x = s.x; g.player.y = s.y - g.scroll;
+                teleport(s.x, s.y - g.scroll);
                 const bothHp0 = s.hp; step(g);
-                g.player.x = 100; g.player.y = 220; step(g);
+                teleport(100, 220); step(g);
                 const bothEvents = { before: bothHp0, after: s.hp,
                                      playerAlive: g.player.alive };
                 const childPart = s.parts.find(q => q.id === 'left');
                 const childPos = bossPartPosition(s, childPart, g.scroll);
-                g.bullets = []; g.player.x = childPos.x; g.player.y = childPos.y;
+                g.bullets = []; teleport(childPos.x, childPos.y);
                 const childHp0 = s.hp; step(g);
-                g.player.x = 100; g.player.y = 220; step(g);
+                teleport(100, 220); step(g);
                 const childOnly = { before: childHp0, after: s.hp,
                                     playerAlive: g.player.alive };
-                g.player.x = 100; g.player.y = 220;
+                teleport(100, 220);
 
                 // Izolovany home overshoot a escort offset replacement.
                 const microBoss = { x: 100, y: 200, parts: [],
@@ -1385,7 +1352,7 @@ def main():
                 // stejne vetve jako cela 72/64/128/192, nikoli za hranici.
                 function gooseWordBoundary(st, bsy, patch = {}) {
                   const bg = Object.assign({}, g, {
-                    tick: 0, scroll: 1000, scrollMul: 0.000001,
+                    tick: 0, scroll: 1000, scrollMul: 0,
                     over: false, won: false, keys: {},
                     player: Object.assign({}, g.player, {
                       x: patch.targetX ?? 100.25, y: 240, alive: true,
@@ -1432,7 +1399,7 @@ def main():
                 // Death synth, BIGEXPL, unlink i dva TOKENy pro timer>500
                 // vzniknou az pri resume parent tasku v N+1.
                 const deathGame = Object.assign({}, g, {
-                  tick: 0, scrollMul: 0.000001, over: false, won: false,
+                  tick: 0, scrollMul: 0, over: false, won: false,
                   keys: {}, player: Object.assign({}, g.player, {
                     x: 100, y: 220, alive: true, inv: 30000,
                     bubbleTimer: 0, bubbleBound: null, cool: 0
@@ -1701,6 +1668,7 @@ def main():
             expect(boss["salvo"] == ["can", "hom", "hom"],
                    "salva bosse ma byt mireny granat + dve navadene: %s"
                    % boss["salvo"])
+            # screen-y se pocita z celociselneho scrollu (word fp@(3542));
             expect(boss["wordBoundaries"] == {
                      "ingress": [True, 72],
                      "targetVx": 1536 / 65536,
@@ -1838,7 +1806,7 @@ def main():
                 }, playerPatch);
                 return {
                   mapH: live.mapH, mapW: 320, mapIndex: live.mapIndex,
-                  tick: 0, scroll: 1000, scrollMul: 0.000001,
+                  tick: 0, scroll: 1000, scrollMul: 0,
                   over: false, won: false, keys: {}, player,
                   nextBobOrdinal: 20, bullets: [], shots: [], plops: [],
                   spawns: [], booms: [], effects: [], tokens: [], air: [],
@@ -2014,7 +1982,7 @@ def main():
                 return {
                   mapH: live.mapH, mapW: 320, mapIndex: live.mapIndex,
                   terrainOpen: live.terrainOpen,
-                  tick: 0, scroll, scrollMul: 0.000001,
+                  tick: 0, scroll, scrollMul: 0,
                   over: false, won: false, keys: {}, player,
                   nextBobOrdinal: 50, bullets: [], shots: [], plops: [],
                   spawns: [], booms: [], effects: [], tokens: [], air: [],
@@ -2330,7 +2298,7 @@ def main():
             # hit-cooldown. Typ 3 pridava invulnerability, neni MINE bublina.
             token = page.evaluate("""() => {
               const g = state.g, p = g.player;
-              g.scrollMul = 0.000001;
+              g.scrollMul = 0;
               const mk = typ => {
                 const k = { x: 100, y: g.scroll + 100, ang: 64,
                             vx: 0, vy: .5, typ, cycles: 12, blink: false,
@@ -2529,7 +2497,7 @@ def main():
               const live = state.g;
               const makeGame = alive => ({
                 mapH: live.mapH, mapIndex: live.mapIndex,
-                tick: 0, scroll: 1000, scrollMul: .000001,
+                tick: 0, scroll: 1000, scrollMul: 0,
                 over: false, won: false, keys: {},
                 player: { x: 120, y: 100, ang: 192, alive, inv: 0,
                   bubbleTimer: 0, bubbleFrame: 9, bubbleZ: 0,
@@ -2555,8 +2523,8 @@ def main():
               });
 
               const g = makeGame(true), core = coreAtPlayer(g);
-              const corePose = h => [h.x,
-                Math.round((h.y - g.scroll) * 1e6) / 1e6, h.apos];
+              // fp@(3542) je WORD: screen-y = world-y - floor(scroll)
+              const corePose = h => [h.x, h.y - Math.floor(g.scroll), h.apos];
               g.hazards = [core]; g.activeCost = 5;
               step(g);                         // VBL N: pending contact bit3
               const queuedPickup = [g.player.bubbleTimer, core.consumed,
@@ -2759,7 +2727,8 @@ def main():
                    bubble["first"]["activeCost"] == 10 and
                    bubble["first"]["bubbleAt"] > bubble["first"]["playerAt"] and
                    bubble["first"]["coreVisible"] is False and
-                   bubble["first"]["coreFrozen"] == bubble["first"]["pickedPose"] and
+                   [round(v, 3) for v in bubble["first"]["coreFrozen"]] ==
+                   [round(v, 3) for v in bubble["first"]["pickedPose"]] and
                    bubble["first"]["bubbleKinds"] == ["main"] and
                    bubble["first"]["sfx"] == ["shield-bubble"],
                    "prvni bubble frame neni MINE#9 pred hracem bez stinu: %s"
@@ -2851,7 +2820,7 @@ def main():
                 }, playerPatch);
                 return {
                   mapH: live.mapH, mapIndex: live.mapIndex,
-                  tick: 0, scroll: 1000, scrollMul: .000001,
+                  tick: 0, scroll: 1000, scrollMul: 0,
                   over: false, won: false, keys: {}, player: p,
                   nextBobOrdinal: 1, bullets: [], shots: [], plops: [],
                   spawns: [], booms: [], effects: [], tokens: [], air: [],
@@ -2936,7 +2905,8 @@ def main():
               killPlayer(gr);
               gr.shots = [{ kind: 'can', x: 50, y: 50, ang: 0, spd: 0,
                             st: 0, accel: false, phase: 0 }];
-              for (let i = 0; i < 99; i++) step(gr);
+              // 0x9306 (D) -> +54 smazano D+1 -> rodic ceka od D+2 100 VBL
+              for (let i = 0; i < 101; i++) step(gr);
               const wait99 = [gr.player.alive, gr.player.respawnT, gr.lives];
               step(gr);
               const respawn = [gr.player.alive, gr.player.respawnT,
@@ -2946,7 +2916,7 @@ def main():
               const heli0WaitGame = makeGame();
               heli0WaitGame.lives = 2;
               killPlayer(heli0WaitGame);
-              for (let i = 0; i < 99; i++) step(heli0WaitGame);
+              for (let i = 0; i < 101; i++) step(heli0WaitGame);
               const heli0Wait99 = [heli0WaitGame.player.alive,
                 heli0WaitGame.player.respawnT, heli0WaitGame.lives,
                 heli0WaitGame.playerPhase];
@@ -2983,6 +2953,7 @@ def main():
                 hudStatusText(lastLife)];
 
               const creditWait = makeGame({ alive: false });
+              creditWait.scrollMul = 1;      // scroll bezi i behem continue
               creditWait.lives = 1; creditWait.continues = 2;
               creditWait.effects = [{ t: 0, life: 1000 }];
               respawnPlayer(creditWait);
@@ -2996,6 +2967,7 @@ def main():
                 creditWait.effects[0].t];
 
               const noCredit = makeGame({ alive: false });
+              noCredit.scrollMul = 1;        // scroll bezi i behem continue
               noCredit.lives = 1; noCredit.continues = 0;
               noCredit.effects = [{ t: 0, life: 1000 }];
               respawnPlayer(noCredit);
@@ -3436,7 +3408,8 @@ def main():
               // zahrnuji i neviditelny _STOP#3/flag0x14 na scrollu1553.
               const terrainRespawns = [3345, 827, 843, 1553, 1607]
                 .map(scroll => {
-                  const r = findPlayerRespawn({ scroll,
+                  const r = findPlayerRespawn({
+                    scroll: scroll + (live.rowOffset | 0),
                     terrainOpen: live.terrainOpen, mapW: live.mapW });
                   return [scroll, r.x, r.y, r.probes];
                 });
@@ -3452,7 +3425,7 @@ def main():
                 terrainOpen: fullyBlocked, mapW: 320 });
               const integratedRespawn = makeGame({ alive: false,
                 respawnT: 1, x: 40, y: 40 });
-              integratedRespawn.scroll = 1607;
+              integratedRespawn.scroll = 1607 + (live.rowOffset | 0);
               integratedRespawn.terrainOpen = live.terrainOpen;
               integratedRespawn.mapW = live.mapW;
               respawnPlayer(integratedRespawn);
@@ -3533,8 +3506,10 @@ def main():
                    [169,201,6,6,9], [160,205,0,9,10]] and
                    player_exact["latchedOrigin"] == [[148, 167], [152, 167]],
                    "power6 nebo previous-child origin nesedi: %s" % player_exact)
+            # fp@(3542) je WORD: 1000.0 -> 999.75 uz znamena delta -1,
+            # cerstvy bolt tedy dostane 188 - 9 + 1 = 180 v tomtez VBL.
             expect(player_exact["freshBolt"] ==
-                   [[158,179.25,180],[162,179.25,180]],
+                   [[158,180,180],[162,180,180]],
                    "fresh player bolt nema stejny-VBL camera delta/anchor: %s" %
                    player_exact["freshBolt"])
             expect(player_exact["wait99"] == [False, 1, 4] and
@@ -3624,7 +3599,7 @@ def main():
                    player_exact["cannonQueued"] == {
                      "player": [True, 99], "tank": True, "shots": 1,
                      "shot": [100.5, 100, 0, 1, False, 8, True],
-                     "hw": [24, 100, 101],
+                     "hw": [24, 100, 100],   # celociselny scroll: kotva = y
                      "sfx": ["cannon", True, 1], "cost": 14} and
                    player_exact["cannonResumed"] == {
                      "player": [True, 98], "shots": 0, "hw": 0,
@@ -3808,7 +3783,7 @@ def main():
                        "retire": True, "y": 1100, "half": 0,
                        "blink": False, "cost": 5, "bob": True},
                      "resumed": {"tokens": 0, "dead": True, "pending": 0,
-                       "y": 1099.75, "half": 0, "blink": False,
+                       "y": 1099, "half": 0, "blink": False,   # word delta
                        "picked": 1, "count": 1, "inv": 500, "score": 500,
                        "cost": 0, "audio": [[1, True, 159]],
                        "soundTasks": 1, "bob": False}},
@@ -4032,17 +4007,18 @@ def main():
                    "GOOSE parent task zmizel pred checksum tail: %s" %
                    last_field_matrix["lifecycle"]["goose"])
             expected_states = {
-                "air": [[-64, 1099.75, 0, 1], [-64, 1099.5, 0, 1]],
+                # scroll word: 1000 -> 999.75 je delta -1, dalsi tik 0
+                "air": [[-64, 1099, 0, 1], [-64, 1099, 0, 1]],
                 "prox": [[0, 1100, 0, 1], [0, 1100, 0, 1]],
-                "core": [[-64, 1099.75, 1, 0], [-64, 1099.5, 1, 0]],
+                "core": [[-64, 1099, 1, 0], [-64, 1099, 1, 0]],
                 "flame": [[-8, 1100, 1, 0], [-8, 1100, 1, 0]],
                 "spawn": [[-64, 1100, 0, 1], [-64, 1100, 0, 1]],
-                "token": [[-64, 1100.25, 1, False, -2],
-                          [-64, 1100, 1, False, -2]],
+                "token": [[-64, 1099.5, 1, False, -2],
+                          [-64, 1099.5, 1, False, -2]],
                 "roto": [[4, 4, 1, 49, 0], [4, 4, 1, 49, 0]],
-                "mill": [[1099.75, 1, 1, 0], [1099.5, 1, 1, 0]],
-                "goose": [[935.75, 3, False, 0],
-                          [935.5, 3, True, 0]],
+                "mill": [[1099, 1, 1, 0], [1099, 1, 1, 0]],
+                "goose": [[935, 3, False, 0],
+                          [935, 3, True, 0]],
             }
             for name, states in expected_states.items():
                 life = last_field_matrix["lifecycle"][name]
@@ -4058,8 +4034,8 @@ def main():
                    "PLOP margin0 nema prvni HW field a resume cleanup: %s"
                    % last_field_matrix["plop"])
             expect(last_field_matrix["negative"] == {
-                     "burst1": [-101, 1099.75, 4, False, False, 5],
-                     "burst2": [-102, 1099.5, 3, False, False, 5],
+                     "burst1": [-101, 1099, 4, False, False, 5],
+                     "burst2": [-102, 1099, 3, False, False, 5],
                      "train1": [-101, True, False, 15],
                      "train2": [-102, True, False, 15]},
                    "TOKEN burst nebo TRAIN dostal zakazany bounds cull: %s"
@@ -4377,10 +4353,10 @@ def main():
                    "TRAIN sy=272 nema posledni N field a N+1 frozen cleanup: %s"
                    % fresh_hazard_fields["trainBoundary"])
 
-            summary = page.evaluate("""() => ({
+            summary = page.evaluate("""() => { const townSpawns = state.g.spawns.filter(s => !s.mapIndex); return ({
               dispatch: state.behaviorDispatch.size,
               mapObjects: state.mapMeta.objects,
-              spawns: state.g.spawns.length,
+              spawns: townSpawns.length,
               lives: state.g.lives,
               firstSpawnHud: hudStatusText({ lives: state.g.lives,
                 player: { tokenCount: 0 }, score: 0 }),
@@ -4390,23 +4366,23 @@ def main():
                 hudStatusText({ lives: 4, player: { tokenCount: 0 }, score: 10000 }),
                 hudStatusText({ lives: 4, player: { tokenCount: 0 }, score: 99999 })
               ],
-              behaviors: state.g.spawns.reduce((counts, s) => {
+              behaviors: townSpawns.reduce((counts, s) => {
                 counts[s.beh] = (counts[s.beh] || 0) + 1;
                 return counts;
               }, {}),
-              missing: state.g.spawns.filter(s => s.coroutine === null).length,
-              camoguns: state.g.spawns.filter(s => s.beh === 'camogun').length,
-              camType1: state.g.spawns.filter(s => s.beh === 'camogun' &&
+              missing: townSpawns.filter(s => s.coroutine === null).length,
+              camoguns: townSpawns.filter(s => s.beh === 'camogun').length,
+              camType1: townSpawns.filter(s => s.beh === 'camogun' &&
                                                s.typ === 1).length,
-              camType2: state.g.spawns.filter(s => s.beh === 'camogun' &&
+              camType2: townSpawns.filter(s => s.beh === 'camogun' &&
                                                s.typ === 2).length,
-              wrongCam: state.g.spawns.filter(s => s.beh === 'camogun' &&
+              wrongCam: townSpawns.filter(s => s.beh === 'camogun' &&
                                                 s.coroutine !== 0xac12).length,
               animActual: [0xA6E8, 0xA72A, 0xC7FC, 0xC82E, 0xCAE2]
                 .filter(o => state.anims.some(a => a.offset === o)).length,
               animFalse: [0xA6E6, 0xA728, 0xC7FA, 0xC82C, 0xCAE0]
                 .filter(o => state.anims.some(a => a.offset === o)).length
-            })""")
+            }); }""")
             expect(summary["dispatch"] == 73, "dispatch nema 73 zaznamu")
             expect(summary["mapObjects"] == 155, "TOWN nema 155 mapovych objektu")
             expect(summary["lives"] == 4 and
@@ -4437,7 +4413,7 @@ def main():
               window.random32 = () => 0;
               try {
                 const game = spawns => ({
-                  tick: 0, scroll: 100, scrollMul: 1e-9,
+                  tick: 0, scroll: 100, scrollMul: 0,
                   over: false, won: false,
                   player: { x: 0, y: 0, alive: false }, keys: {},
                   bullets: [], shots: [], plops: [], spawns,
@@ -4734,12 +4710,13 @@ def main():
               step(t4g);
               const t4Born = [type4.born, type4.tankSetup, type4.hp,
                               t4g.activeCost];
-              type4.y = t4g.scroll + 287.5; step(t4g);
+              // sy je word: y - floor(scroll); prah 288 sondujeme celociselne
+              type4.y = Math.floor(t4g.scroll) + 287.5; step(t4g);
               const t4Below = [type4.tankSetup, t4g.activeCost];
-              type4.y = t4g.scroll + 287.75; step(t4g);
+              type4.y = Math.floor(t4g.scroll) + 288; step(t4g);
               const t4At = [type4.tankSetup, type4.hullF,
                             type4.turretTask && type4.turretTask.alive,
-                            t4g.activeCost, type4.y - t4g.scroll];
+                            t4g.activeCost, type4.y - Math.floor(t4g.scroll)];
 
               // Pred prvnim 0x62d2 raw-wait TYP4 zadny node nepublikuje:
               // skryty tank na sve budouci pozici nesmi pohltit HW bolt.
@@ -4758,7 +4735,7 @@ def main():
                 weapon: 5, mode: 1, reload: 11, cool: 0,
                 weaponX: 160, weaponY: 192, ang: 192,
                 bubbleTimer: 0, heliAnimPos: 0, heliAnimFresh: true });
-              fan.keys = { f: true }; fan.scrollMul = 0.000001;
+              fan.keys = { f: true }; fan.scrollMul = 0;
               step(fan);
               const fanVelocity = fan.bullets.map(b => [b.vx, b.vy]);
 
@@ -4847,9 +4824,9 @@ def main():
                    "TOKEN mode1 neprepina HELI na presny spread fan: %s" %
                    native_exact["fanVelocity"])
             expect(native_exact["shotSpace"] ==
-                   [["can",105,100.25],["hom",103,100]] and
+                   [["can",105,101],["hom",103,100]] and
                    native_exact["cannonDepth"] ==
-                   [45.25,70,44,32697,32697,32695] and
+                   [46,70,44,32697,32697,32695] and
                    native_exact["rotoFire"] == {"shots": 9, "rngCalls": 1,
                      "newAngles": [7,71,135,199], "next": [120,320]},
                    "cannon world-space nebo ROTO one-RNG/unguarded salvo nesedi: %s" %
@@ -5769,9 +5746,9 @@ def main():
                              scoreValue: 70 }]
                 };
                 step(gmi);
-                const millLockedSy = gmi.spawns[0].y - gmi.scroll;
+                const millLockedSy = gmi.spawns[0].y - Math.floor(gmi.scroll);
                 step(gmi);
-                const millMovedSy = gmi.spawns[0].y - gmi.scroll;
+                const millMovedSy = gmi.spawns[0].y - Math.floor(gmi.scroll);
                 for (let i = 0; i < 98; i++) step(gmi); // druhy krok uz odecetl 1
                 const millBefore = gmi.shots.length;
                 step(gmi);
@@ -5820,8 +5797,9 @@ def main():
                            afterTick: burstAfterTick,
                            first: [gbx.booms[0].x, gbx.booms[0].y],
                            last: [gbx.booms[15].x, gbx.booms[15].y] },
-                  locked: { birdSy: gs.air[0].y - gs.scroll,
-                            coreSy: gs.hazards[0].y - gs.scroll },
+                  // screen-y = world-y - floor(scroll) (fp@(3542) je word)
+                  locked: { birdSy: gs.air[0].y - Math.floor(gs.scroll),
+                            coreSy: gs.hazards[0].y - Math.floor(gs.scroll) },
                   mill: { locked: gmi.spawns[0].scrollLocked,
                           lockedSy: millLockedSy, movedSy: millMovedSy,
                           before: millBefore, shots: gmi.shots.length,
@@ -5899,7 +5877,7 @@ def main():
               g.shots = []; g.bullets = []; g.air = [];
               g.booms = []; g.score = 0;
               g.player.alive = false;
-              g.scrollMul = 0.000001;
+              g.scrollMul = 0;
               s.born = false; s.armed = true; s.alive = true; s.quiet = false;
               s.y = g.scroll + 100;
               const y0 = s.y;

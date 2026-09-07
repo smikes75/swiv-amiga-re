@@ -64,6 +64,7 @@ defaults at `0x61f4+`). Known fields:
 | +486 | cleared on spawn |
 | +508 | saved/restored around waits (`0x9ae8`) |
 | +510..+530 | six collision/event callbacks (default no-op `0x6288`) |
+| +367 bit 3 | linked child: `0x62d2` (0x62da..0x62f8) copies the parent's x/y/z (+320/+324/+328) and integrates exactly one step of the child's own velocity, so `+332/+336` act as a fixed offset (MEDTANK turret 0, FLATTANK turret (0,+4), MAMA bar (0,−30)); bit 2: the child flashes with its parent (`0x63ac`) |
 | +534/+538/+542 | routine pointers; `st` on the first byte makes them negative = disabled, `sf` re-enables. `+534` = smart-bomb handler (called each tick while `fp@(169)`, `a2c6` sets `0xa36a`), `+538` = off-screen cull handler (default `0x6db4` = kill self), `+542` = orphan handler (called each tick when `+308 == 0`; `0x6144` sets `0x6db4`, `0x617a` sets −1) — see `0x6458`–`0x64b4` |
 
 ## Key utilities (by call count, `tools/xref.py`)
@@ -177,7 +178,25 @@ word at zero until a hardware trace is available.
 Ordinary object tasks run at priority 100, the player projectile updater at
 `0xfffe` and the collision sweep at `0xffff`. Consequently a collision found
 at the end of VBL N is consumed by object callbacks on their resume in VBL
-N+1; `0x62d2` has already published the normal N frame. Events coalesce as a
+N+1; `0x62d2` has already published the normal N frame.
+
+Collision node `+488` (list at `fp@(11058)`, sorted by x): `+8/+10`
+position, `+12/+14` half-extents, `+16` class, `+18` event word. `0x6dce`
+installs it with extents 8/8; every `0xa2c6` object immediately overrides
+them via `0x6d7c` with words `+16/+18` of its d0 frame record, which the
+loader `0x457e` fills from **bytes 8/9 of the .LIN part header** (FODDERA#2
+= 10/20, MINE#0 = 12/14, POPUP#0 = 17/15 ...). The player (`0x6dc8`), its
+bolts and the cannon keep 8/8. The sweep `0x6ec2` tests each neighbour's
+*position* against the sweeping node's *own* box (inclusive) and ORs the
+classes into both event words; a node whose class has bit 15 (PLOP, MEDTANK
+turret) never sweeps itself. Node positions are copied from `+320/+324` at
+task resume (`0x6430`, before the bit-4 scroll compensation `0x6446`), so
+the sweep at the end of VBL N sees the positions the bodies computed in
+VBL N−1 — exactly what `0x642c` published as BOBs — while the N+1 callback
+reads coordinates one movement newer (measured: FODDERA death puff 4 px
+below the contact position). The browser keeps a per-object snapshot
+(`snapNode`/`nodePos`, valid for one tick) for the same effect and reads
+box extents from the frame header (`NODE_GRAPHIC`, `nodesTouch`). Events coalesce as a
 16-bit OR mask and callbacks dispatch in bit order `0,3,4,1,2,5`.
 The browser now keeps that boundary: the producing step only records pending
 bits and projectile consumption, while the next step clears the old hit flag,
@@ -324,14 +343,11 @@ Also read along the way:
   0x88D**. A set mask bit has the measured effective OCS result COLOR16,
   independent of lower4; conventional `16|lower4` is the AGA failure.
   Projectile sprite colours come separately from `0x2afc` (COLOR17–19).
-  Canvas prevod skutecnych COLOR16–31 slov pouziva z headless-vAmiga
-  baseline zmerenou radu high nibblu `106,123,141,159,178,197,216,236`.
-  True-DESERT checkpoint doplnil vlastni fitted terrain low-nibble radu
-  `0,0,0,28,43,56,72,89`; EGGS pixel index15 primo potvrzuje, ze raw
-  `$332` v tomto baseline vystupuje jako `(28,28,0)`. TOWN ratchet ale pro
-  stejny stupen zachovava zmerenych 14, proto renderer voli capture fit podle
-  levelu. Neni to tvrzeni o fyzicke zmene DAC. COLOR10–15 prochazi celym
-  zvolenym profilem, zatimco fitted objektova COLOR00–09 zustava oddelena.
+  Renderer prevadi vsechna RGB12 slova linearne (`nibble*17`), vcetne
+  HUD a HW spritu. Gamma profil vAmigy aplikuje az `tools/compare.py`
+  jedinou tabulkou `0,0,0,28,43,56,72,89,106,123,141,159,178,197,216,236`.
+  Starsi fitted objektova paleta a rozliseni TOWN/DESERT capture profilu
+  jsou prekonane merenim z 2026-09-03; do enginu se uz neaplikuji.
 - A level-select cheat handler reads raw keys at `0x20e4`.
 - The normal attract dispatcher starts at `0x0d64`. The browser follows its
   COVER -> Sales Curve -> HELI blueprint/scores -> JEEP blueprint/scores ->

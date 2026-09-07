@@ -1,75 +1,63 @@
-# Codex handoff — TOWN local working tree
+# Codex handoff — integrated game and display controls
 
-This file marks the state implemented by Codex on 2026-08-29/31. The latest
-HUD/audio follow-up is intentionally local and uncommitted. Older committed
-batches can still be found with `git log --grep='^codex:'`.
+Updated 2026-09-07. Local snapshot `5802d80` preserves all uncommitted
+DESERT work from the earlier checkout. Integration includes the 45 remote
+commits through `0eb84db` (2026-09-06); neither source was discarded wholesale.
 
-## Implemented
+## Current result
 
-- Fast-forwarded the local baseline through the three existing commits ending
-  at `3402838` (GAPS, GOOSE and TOKEN).
-- Replaced the visible static TOWN background with indexed `.LIN`/`.PAM`
-  rendering and the exact Copper palette for every scanline.
-- Added exact RGB12 fade helpers, indexed chained-frame decoding and clipping.
-- Switched the visible dynamic object path to the indexed global BOB queue:
-  unsigned depth keys, stable enqueue ordering, shadow projection,
-  cookie-copy, clear-to-index-0 and the special decal/prepass operations.
-- Corrected ROTOBASE startup/direction/period, concurrent POPUP timing and
-  closing `KILL`, the two-tick PLOP backend sequence, cannon-local animation,
-  post-movement acceleration and the five-projectile limit.
-- Corrected Python and browser animation scanners so a `BSR.W` displacement is
-  not decoded as the first animation command.
-- Extracted and verified the native 7-row HUD font and 352x8 fifth-bitplane
-  mask. Runtime HUD content uses four initial lives, the independent `+102`
-  TOKEN counter, weapon display, score x10 and native anchors. Set mask bits
-  now reproduce the measured opaque COLOR16 result instead of the incorrect
-  conventional `16|lower4` composition that made `HELI` and `PRESS FIRE`
-  flash yellow/red.
-- Added the four-voice Paula/CIAB scheduler, strict native priority/stereo
-  allocation, persistent procedural-noise scratch and sound-IRQ PRNG
-  perturbation. TOWN hooks cover player fire and hits, opening/flame effects,
-  cannon, HOMING, standard explosions, player burst, four-layer `SMART.SND`,
-  bound MINE shield activation, TOKEN pickup and GOOSE hit/death; see
-  `SOUND.md` for the address-level contract and exclusions.
-- Added the resident N+1 collision boundary: sweep-only pending masks,
-  current-pulse SMART ordering, deferred player death/hit/pickup callbacks and
-  the priority-`0xfffe` player-bolt cleanup. Exact field-transition fixtures
-  cover the previously misleading cannon sound, TOKEN and GOOSE.
+- All seven chained zones and 1,497 map-object routes / 73 distinct pairs.
+- Native PAM RGB12 colors and the later TOWN collision-position snapshots.
+  Emulator gamma is applied only in `tools/compare.py`, once.
+- Retained detailed local AIRMINE, BLACKJET, TILT, EGGS#2 and EGGS#12
+  implementations, fresh-child FIFO, cannon/PLOP inheritance, explosion
+  lifecycle and DESERT sound regressions. BOS guns use the same updated
+  EGGS projectile call with a world-space origin.
+- Display presets 1×/2×/3×, fit to window and 0.5×–6× slider (0.05× step).
+  Default 2×, clamped to available space. Requested zoom is saved locally;
+  resizing back restores it. Slider keyboard input does not control HELI.
+- Smooth rendering remains optional with 50 Hz logic. Its 4× internal
+  resolution is independent of display zoom. The native-pixel test explicitly
+  sets `state.smoothRenderScale=1`.
+- Direct-start map transitions use a relative `junctionIndex` and absolute
+  `levelPhase`; player state is retained. Direct FINAL supplies the SCIFI
+  installation hold required for its boss, lights, insects and body to start.
 
-## Deliberately still open
+## Verified
 
-- The raw original runtime capture is still the final acceptance oracle for
-  complex BOB crossings, projected shadows and the hardware-sprite layer.
-- Player bullets, cannon shells and PLOP tick 1 use the global hardware-sprite
-  allocator and COLOR17-31 banks; HOMING remains a normal COLOR00-15 BOB.
-  Black fade suppresses hardware-sprite enqueue and white fade leaves their
-  colours unchanged.
-- `AMPROG.OBJ` never writes COLOR20/24/28. Their inherited reset values require
-  one measurement from a running original; `0x000` remains an explicit
-  cold-boot policy for those otherwise undocumented sprite-bank slots. They no
-  longer affect HUD text composition.
-- Audio still lacks the remaining special/player-transition call-site map,
-  including the known extra-life chime at `0x5600`.
-- The browser does not yet interleave every priority-100 task continuation as
-  a general coroutine scheduler; rare within-VBL RNG/audio arbitration cases
-  still need a raw original trace, as documented in `GAPS.md`.
-- Deterministic VAHeadless capture works, but the canonical `SWIVFIX.ADF` does
-  not boot there yet, so a raw original-frame acceptance baseline is still
-  unavailable.
+- `python3 tools/check.py`: disk/data/dispatch contract.
+- `python3 tools/uitest.py`: complete combined TOWN + local DESERT fixtures.
+- `python3 tools/displaytest.py`: zoom presets/slider/fit, saved fractional
+  size, keyboard focus, viewports 390–1920 CSS pixels, DPI 1/1.25/1.5/2,
+  and identical simulation for 600 display frames at simulated 120 Hz.
+- `python3 tools/integrationtest.py`: three sampled windows × 1200 ticks
+  per zone TOWN–SCIFI, both renderers; FINAL active boss window and death;
+  every loaded-chain junction before/at/after its threshold. This is runtime
+  smoke coverage, not native-frame parity of all enemies.
+- `tools/compare.py`: TOWN start 99.9%, wave 99.0%, death 98.3%, respawn
+  99.9%, with original ratchet floors unchanged. The death HUD mask now
+  follows the actual inactive-slot text and measures 100%.
+- `tools/compare.py desert`: preserved static renderer checkpoint 96.1%,
+  floor 95.5%, original tolerance 24/channel. TOWN uses 8/channel.
+- Smooth frame oracle exercised on TOWN, DESERT, ICE, SCIFI and active FINAL.
+  Previous-position comparison uses current VBL palette and allows changed
+  animation/decal appearance; current-position endpoint must match exactly.
+- Windows/physical 120 Hz hardware was not available here. DPI and timing
+  cases were exercised in Chromium on macOS.
 
-## Verification
+## Next substantial work
 
-Run from the repository root:
+1. Align VAHeadless and WASM captures using actual Agnus frame counts,
+   not seconds; locate A6 and inspect native task records. The existing
+   `DENISE_FRAME_SKIPPING` caveat in GAPS still applies.
+2. Establish native gameplay checkpoints for later enemies/bosses. Full
+   dispatch coverage must not be described as pixel-perfect game parity.
+3. Remaining special sound hooks (including factory/laser and extra life),
+   exact inter-task CIAB arbitration, post-game/high-score screens and
+   native two-player/JEEP start branches.
+4. Native A500 load-dependent scroll and allocation-delayed respawn remain
+   documented approximations; no speculative timing model was added.
 
-```sh
-python3 tools/check.py
-python3 tools/uitest.py
-python3 tools/hudscan.py SWIVFIX.ADF
-python3 tools/hudscan.py build/files/001_AMPROG.OBJ
-python3 tools/animscan.py | diff -u docs/ANIMS.md -
-git diff --check
-```
-
-The UI suite also checks the HUD against hostile COLOR17-31 values and covers
-the Paula allocator, CIAB timing, procedural timelines, RNG consumption,
-SMART sample playback and the principal TOWN pickup/combat sound hooks.
+Existing historical audits describe intermediate states and sometimes old
+names. Use README and this handoff for current scope, SOUND for retained
+audio contracts, and dated measurement sections for their evidence.

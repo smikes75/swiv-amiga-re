@@ -1,5 +1,11 @@
 # TOWN parity plan
 
+Aktualizace 2026-09-07: starsi sekce z 2026-08-29 az 09-01 jsou
+historie mereni. Jejich fitted paleta a domnenka o generovanem sumu byly
+nahrazeny primymi PAM registry a jedinym gamma prevodem v comparatoru
+(viz „Druhe vytezky baseline“). Vsech sedm zon je prepsano; detailni
+overovani nativni parity zustava samostatnym ukolem.
+
 Cilem je uzavrit TOWN jako referencni vertikalni rez: stejna grafika,
 animace, chovani a zvuk jako original pri stejnem vstupu. Dalsi level se
 nezacina, dokud neni tento kontrakt splneny. Kazda oprava musi mit bud adresu
@@ -24,7 +30,7 @@ specialni audio call-sites.
 | priorita | oblast | dnesni stav | dukaz / otevrena prace | podminka uzavreni |
 |---|---|---|---|---|
 | P0 | deterministicky baseline | runtime pouziva port PRNG `0x883c`, CIAB-IRQ high-word perturbaci a rucni 50Hz tiky; `tools/baseline.sh` bootuje kanonicky ADF v headless vAmize a umi invulnerable capture | chybi zachyceny VHPOS/input trace a manifest vsech gameplay checkpointu | stejny vstup a HW trace vyrobi opakovane shodne snimky originalu i prepisu |
-| P1 | rasterova paleta | produkcni viewport sklada mapu i dynamicke BOBy v indexech a RGB12 aplikuje az po slozeni pro kazdy scanline; TOWN..ICE sdili fitted COLOR00-09, COLOR10-15 prochazi checkpointem zmerenym capture profilem a COLOR07 ma globalni VBL writer | `.PAM` prikazy meni terrain barvy na presnem rasterovem radku; objektovy fit drzi checkpointy, TOWN a DESERT maji kvuli odlisnym baseline merenim samostatny nejtmavsi terrain fit | fitted slova ani rozdil profilu nejsou tvrzeni o nativnich HW registrech; dalsi levely musi potvrdit vlastni checkpointy/toggly |
+| P1 | rasterova paleta | mapa i BOBy se skladaji v indexech, RGB12 registry z PAM se prevadi linearne; COLOR07 ma globalni VBL writer | TOWN start 99.9 %, staticky DESERT 96.1 % po jedinem gamma prevodu v comparatoru | dalsi nativni checkpointy pro pozdejsi zony |
 | P1 | HUD | runtime sklada embedded 7-row font do 352x8 masky; set bit dela zmereny opaque COLOR16 override nezavisly na lower4 | maska/anchory/Copper radky i nepruhlednost maji fixture; fyzicky OCS Denise trik zustava undocumented | raw checkpoint potvrdi gradient a sprite-over-HUD ve slozite scene |
 | P1 | poradi kresleni | jedna unsigned depth fronta podle `0x481a`, vcetne child ordinalu, equal-z stability a specialnich BOB operaci | regrese sklada prekryvajici se realne `.LIN` snimky a hlida poradi/hash | proti originalu zbyva checkpoint capture slozitych krizeni |
 | P1 | stiny | indexovy subtractive shadow s projekci `(x+z/2,y+z)` a skutecnym per-object z | `0x6364..0x638c`; zadna RGBA alpha aproximace v produkcni ceste | proti originalu zbyva checkpoint capture |
@@ -235,14 +241,20 @@ vstupni sekvence (emulovane sekundy od zapnuti):
 | ~101 | — | **start urovne TOWN** (fade z cerne; fire+17 uz bezi) |
 
 Pro dlouhy vizualni audit pouzij
-`SWIV_BASELINE_INVULNERABLE=1 tools/baseline.sh <prefix> <sekundy...>`.
-Skript pak na traineru pred startem prepne presne pojmenovane volby
-**F1 UNLIMITED LIVES** a **F3 NO COLLISIONS** na YES; meni to herni
-podminky, proto je tento rezim urceny pro prujezd/checkpointy celeho levelu,
-ne jako kanonicky cisty gameplay baseline.
-Pro kontrolu nepratelske palby a kolizi lze misto toho pouzit
-`SWIV_BASELINE_UNLIMITED_LIVES=1`: prepne pouze **F1 UNLIMITED LIVES**,
-zatimco F3 zustane na NO.
+`SWIV_BASELINE_TRAINER=1 tools/baseline.sh <prefix> <sekundy...>`.
+Skript pak na traineru pred startem prepne **F1 UNLIMITED LIVES** a
+**F3 KEEP WEAPONS** na YES (overeno snimkem traineru po klavesach
+80/82; volba „no collisions" v traineru neexistuje — drivejsi popis byl
+chybny a hrac v tomto rezimu normalne umira). Meni to herni podminky
+(zivoty, sila zbrane po smrti), proto je rezim urceny jen pro
+prujezd/checkpointy celeho levelu, ne jako kanonicky cisty baseline.
+`SWIV_BASELINE_UNLIMITED_LIVES=1` prepne pouze **F1 UNLIMITED LIVES**.
+Trainer ma dale **F5/F6 MISSILES** (vychozi 1; F5 snizuje, F6 zvysuje)
+a **F7/F8 AUTOFIRE RATE** (vychozi 1). **MISSILES je startovni sila
+zbrane `+100`**: s vychozim 1 leti jedna strela, s MISSILES=3 tri na
+x 156/160/164 (licha tabulka `0x8d46`) — zmereno snimky s drzenym fire.
+Kod `0x6fde` sam zapisuje 2; trainer ho prepisuje, a protoze kanonicky
+baseline bezi s vychozim trainerem, prepis startuje s 1.
 
 Overene detaily: `mouse1 press` je press+release, `joystick2 press 1`
 tlacitko **drzi** (uvolneni je `unpress 1`); smery jsou `pull
@@ -255,33 +267,119 @@ start ma velkou budovu vlevo nahore a diagonalni silnici; HUD originalu
 po spawnu ukazuje **3 zivoty** (spotreba jednoho pri spawnu, `0x709a`),
 ne 4; bile blikani spawn ochrany 8/8 je na snimcich videt.
 
-### Prvni vytezky baseline (2026-09-01)
+### Prvni vytezky baseline (2026-09-01, opraveno 2026-09-03)
 
-- **objektova paleta COLOR00-09** pro TOWN, zmerena pixel-fitem spritu
-  proti snimkum (JEEPHELI#0 kotva presne (160,192), YELLOW#0 a MEDTANK;
-  neshoda 0.000): `000 333 465 598 765 666 9a9 800 ed6 eee`. Uvodni
-  davka PAM tyto barvy neurcuje (ma 5=888, 9=fff a zbytek 0). Aktualni
-  aplikace pro potvrzene levely TOWN..ICE drzi fitted desitku ve vsech
-  checkpointech;
-  prvni implementace z `abc853e` nechavala pozdejsi PAM zapis stejneho
-  indexu znovu vyhrat, coz je uz opraveno (podrobne vyse). V AMPROG
-  tabulka techto slov neni; zrejme ji sklada kod nebo lezi v loaderu.
+- **gamma profil emulatoru**: vAmiga (v5.0b1, vychozi monitor) neprevadi
+  RGB12 linearne (`nibble*17`); Denise PixelEngine linearizuje CRT gammou
+  2.8 a re-koduje 1/2.2. Zmereno na registrech znamych z kodu a dat (HUD
+  COLOR16 `0x88D/0xAAE/0xCCF`, teren `0x653/0x542` z PAM, bila `0xfff`,
+  sedi `0x555/0x888/0xbcb` z PAM ry=104): nibble 0..15 →
+  `0 0 0 28 43 56 72 89 106 123 141 159 178 197 216 236`
+  (`VAMIGA_LUT` v `tools/compare.py`). Prepis renderuje presne `n*17`;
+  prevod je vec porovnani, ne palety.
+- **objektova paleta COLOR01-09**: zapisuje ji sam PAM checkpointem na
+  ry=104 hned za uvodni davkou (`1=555 2=687 3=7ba 4=987 6=bcb 7=b30`;
+  `5=888 8=fe8 9=fff` ma uz hlavicka). Drivejsi „zmerena" tmavsi sada
+  `333/465/598/765/666/9a9/800/ed6/eee` byla presne tato paleta
+  posunuta gamma krivkou — artefakt mereni, ne engine override; z
+  `game.html` je odstranena. COLOR07 navic kazdy VBL prepisuje CPU
+  cervenym trojuhelnikem 8..15..8 (`0x2b3e`).
+- **„sum" terenu neexistuje**: krapani je soucast kobercovych dlazdic
+  (`_HOUSES#1` ma v datech smes indexu 10/11/12), zadny generator, zadne
+  roviny 0/2 se sumem. Strip je kruhovy 320 radku (`0x341a`), pas se maze
+  jen v rovinach 1 a 3 (`0x34f2`). Render z dlazdic je proti originalu
+  pixelove presny; zdanlivy sum byla gamma krivka plus 1px posun radku.
 - **start okna**: uvodni davka prikazu spotrebuje `parsed.lead` px
   (TOWN 96) a original je nikdy neukaze. Presny start je
   `3345 - 96 = 3249`; korelace snimku t16–t23 dala `3245 ± 8`.
 - **HUD zivoty**: zobrazene cislo je pocet po spotrebe spawnu
-  (`0x709a`) — 4 zivoty se ukazuji jako „3“.
+  (`0x709a`) — 4 zivoty se ukazuji jako „3".
 - **`tools/compare.py`** — treti kontrakt: snimek originalu vs prepis
-  na presne zmerenem radku mapy, tolerance 24/kanal a ratchet, ktery smi
-  jen rust. Prvni verze mela na checkpointu `start` whole shodu 20.1 %;
-  po kalibraci objektove palety/HUD byla 22.5 %. Doplneni cele zmerene
-  DAC/capture rady pro terrain COLOR10-15 ji zvedlo na 81.8 % a ratchet
-  na 81.0 %.
-- **dominantni zbytkovy rozdil**: sumova textura terenu. Roviny 0 a 2
-  nesou predgenerovany sum, ktery se sklada i pres dlazdice (silnice:
-  original index 14 = 10|sum2, prepis 11 = 10|sum1) — nas LCG neni
-  generator hry. Dalsi krok: najit generator (okoli `0x34f2`), nebo
-  sum vytezit ze snimku (je staticky ve strip prostoru).
+  (prevedeny `VAMIGA_LUT`) na presne zmerenem radku mapy (start t17 =
+  radek 3228), tolerance 8/kanal, ratchet jen roste. Stav statickeho
+  checkpointu `start` (do 2026-09-03; od te doby simulace, viz nize):
+  **celek 100.0 %, teren 100.0 %, HUD 100.0 %, HELI 99.7 %**;
+  ratchet 99.0 %. Historie: 20.1 % (zavedeni) → 22.5 % (kalibrace) →
+  76.8 % (LUT misto zapecene palety) → 99.2 % (radek 3228) → 100 %
+  (linearni HUD/COLOR07).
+
+### Druhe vytezky baseline — prvni FODDERA vlna (2026-09-03)
+
+Checkpointy jsou od ted **simulace**: `startGame(0)` a `ticks` kroku
+`step()` bez vstupu (baseline drzi joystick v klidu); `row` je zaroven
+kontrola scrollu. Tape-zavisle vstupy dodava recept checkpointu: faze VBL
+citace (`vblBase`) a RNG prvni vlny (`fodder.x/vx`).
+
+- **kolizni box neni 8/8**: `0x6dce` sice instaluje uzel `+488` s extenty
+  `+12/+14 = 8/8`, ale kazdy `a2c6` objekt jej hned prepise pres `0x6d7c`
+  slovy `+16/+18` zaznamu snimku sveho d0, ktera loader `0x457e` plni
+  **bajty 8/9 hlavicky dilu .LIN** (do ted „neznama" dvojice). FODDERA#2 =
+  10/20, YELLOW#0 9/17, BIRD#0 11/19, MINE#0 12/14, MINE#9 (core) 14/14,
+  POPUP#0 17/15, MEDTANK#0 12/11, ROTOBASE#4 15/16, TRAIN#0 29/25,
+  PROXMINE#0 10/11, FLAME#0 14/11, CAMOGUN#0 10/13, MILL#0 13/14,
+  TOKEN#0 10/10, HOMING#4 11/11, GOOSE#0 9/19 / #8 12/17. Hrac
+  (`0x9430/0x9438` → `0x6dc8`), bolty (`0x8e72/0x90da`) a cannon
+  (`0x960e`) zustavaji u 8/8. Sweep `0x6ec2` testuje **pozici** souseda
+  proti **vlastnimu** boxu (inclusive) a tridy si zapisuji navzajem; uzel
+  s tridou bit15 (PLOP, MEDTANK vez) sam nesweepuje. Dotyk dvou uzlu je
+  tedy sjednoceni obou smeru (`nodesTouch`, tabulka `NODE_GRAPHIC`).
+  Dukaz: t19 ma EXPL1#8 (smrt clena 0 kontaktem s chranenym hracem) na
+  (157,176); s 8/8 vychazel #7 na (155,184), s 10/20 sedi.
+- **uzel se plni pri resume** (`0x6430`, pred bit4 kompenzaci `0x6446`):
+  sweep na konci VBL N porovnava pozice, ktere telo spocitalo v N−1 a
+  ktere `0x642c` prave publikuje jako BOB; callback v N+1 uz cte o jeden
+  pohyb novejsi `+320/+324`. Prepis si proto na konci sweepu uklada
+  snapshot (`snapNode`, platny jen pro tick+1) a pristi sweep cte ten.
+  Bez toho lezela exploze o 4 px (jeden tik pohybu FODDERA) vys.
+- **faze rotoru**: t17 a t18 maji JEEPHELI#0, t19 #2 (index 3 skriptu
+  `0,1,0,2,0,3,0,4`, perioda 1). Pri T19 = 184 (fit vlny, 98.5 % vs
+  97.1 % pro 183) je `index = (T + 3) & 7`; startovni `heliAnimPos = 4`.
+  Radek 3228 dovoluje T17 ∈ 81..84 (word = 3249 − ceil(T/4)), rotor #0
+  vyzaduje liche T → T17 = 83, tj. `wait` vAmigy ma jitter jednoho
+  snimku (odstup t17→t19 je 101).
+- **faze HUD prompt/stav**: `0x740c` prepina po 128 VBL podle citace
+  `fp@(-68)` od bootu; z PRESS FIRE (t17, t18, t19, t23) a JEEP (t20,
+  t21) plyne faze pri startu urovne 172..199 mod 256 → `vblBase = 186`.
+- **scroll word**: `fp@(3542)` je WORD; screen-y = world-y − floor(scroll)
+  (`scrollTop`), bit4 kompenzace i camera delta boltu jsou celociselne
+  (1000.0 → 999.75 uz je delta −1).
+- Stav checkpointu: `start` (T=83) **99.9 % / teren 99.9 / HUD 100 /
+  HELI 99.7** (ratchet 99.0); `wave` (T=184) **99.0 % / 99.0 / 100 /
+  99.9** (ratchet 98.5). Historie `wave`: 97.6 (8/8, plovouci scroll) →
+  97.7 (boxy z hlavicky) → 98.5 (uzel z resume) → 99.0 (HUD faze).
+- **jitter zachytu**: kazdy snimek je samostatny beh emulatoru a jeho
+  absolutni T kolisa o nekolik snimku (radky z korelace s mapou: t20
+  3191, t21 3177, t22 3164, t23 3151, t24 3139, t25 3130, t26 3118, t28
+  3092, t30 3066; dlouhodoby prumer je presne 0.25 px/VBL). T kazdeho
+  checkpointu se proto fituje z obsahu (radek → okno 4 tiku, rotor,
+  blikani, objekty), ne z casu.
+
+### Treti vytezky baseline — smrt a respawn (2026-09-03)
+
+- **smrt hrace** (t20, T = 232, radek 3191): clen 2 prvni vlny se dotkne
+  po vyprseni ochrany (+108 = 200), prepis umira v tiku 211. Spirala
+  `0x88fc`: 16 deti `0x8952` (EXPL1#7..13, perioda 4) po 2 VBL; emitor
+  meni uhel `+358 += 100` a rychlost `+356 += 768`, ale ceka pres
+  `0x5f22`/`0x5f0a`, ktere rychlost NEintegruji — spirala je staticka
+  (`puff_i = O + int(v_i)`), driftovy model dal 71 % proti 81 %. Uhel
+  dedi hracovo `+358`, ktere se pise jen pri pohybu (`0x948e`) — cerstvy
+  objekt ma 0, ne 192; oprava zvedla shodu z 96.3 na 98.3 %.
+- **respawn** (t23, T = 390, radek 3151): callback `0x9306` v D pouze
+  zneplatni generaci; telo smaze `+54` az pri dalsim resume (`0x8f74`,
+  D+1); rodic `0x7090` je starsi task, `+54` cte v D+2 (`0x7130`), ceka
+  100 VBL (`0x714e` → `0x5f22`) a novy `0x9410` vznika v **D+102** s
+  `+108 = 200` klesajicim tymz tikem. Prepis mel D+100. Ochrana blika po
+  8 VBL (`0x92e4`, bit 3 zbytku): bile siluety t23/t24/t25 = JEEPHELI
+  #3/#0/#4 (presna shoda masky), t22 barevny — spolecne reseni R = 313,
+  rotor `index = T − R − 1`, tj. D = 212 v originale (prepis 211; 1 tik
+  je v nejistote fitu vlny). Druha vlna jde v originale doprava (t22:
+  x 264..288, y 111..238) a hraci se vyhne; RNG nezname, checkpoint ji
+  proto zadava jako druhe volani `0x813a` (map reader zaklada prvnich
+  sest formaci uz v tiku 1; `fodder` v receptu je seznam podle poradi
+  volani) x0 = 195, vx = +0.7.
+- Stav: `death` **98.3 %** (ratchet 98.0), `respawn` **99.9 % / HELI
+  100 % / HUD 100 %** (ratchet 99.5). Otevrene: t25/t26 ukazuji treti
+  vlnu v sloupci x ≈ 130..150 (opet RNG), hrac ji prezije.
 
 ### Regionalni vizualni kontrakt (`tools/compare.py`, 2026-09-01)
 
@@ -295,21 +393,22 @@ Jejich rozdily tvori navzajem disjunktni masky:
 - `HUD` = pixely zmenene vynulovanim HUD bitplane po odebrani hrace,
 - `terrain` = zbytek bez HUD/HELI; `whole` obsahuje vsech 320x256 pixelu.
 
-Aktualni checkpoint `start` (`t=17`, `row=3229`, tolerance 24 na kanal)
-dava **whole 81.8 %, terrain 81.5 %, HUD 100.0 %, HELI 99.7 %**. HELI tak
+Aktualni checkpoint `start` (`t=17`, `row=3228`, T=83, tolerance 8 na kanal)
+dava **whole 99.9 %, terrain 99.9 %, HUD 100.0 %, HELI 99.7 %**. HELI tak
 ma v tomto kontrolovanem stavu presny anchor, fitted barvy i stin; nepatrny
 zbytek je dynamicky COLOR07/capture profil. HUD se po kalibraci skutecnych
 COLOR16 slov na zmereny headless-vAmiga vystup shoduje ve vsech 639
 pixelech masky. Opaque COLOR16 reseni zaroven zustava oddelene od
 blikajicich COLOR17-31 a je kryte samostatnou fixture.
-Zbyvajici whole/terrain rozdil dominantne tvori jina sumova textura terenu
-a aktivni nativni objekty, ktere je cisty renderer checkpoint zamerne
-odebira; regionalni vypis zabranuje, aby zakryly regresi hrace nebo HUD.
+Checkpoint skutecne odsimuluje 83 tiku; objekty se v nem neodstranuji.
+Terenní textura je soucast puvodnich dlazdic. Zbyvajici rozdily souvisi
+s casovanim, RNG a capture profilem. Maska HUD ted pouziva skutecny
+levy i pravy text, takze funguje i ve fazi JEEP misto PRESS FIRE.
 
 Volitelny checkpoint `desert` (`t=310`, `row=5426`) je mimo vychozi rychly
 beh, protoze prvni native baseline musi emulovat 310 sekund. Dava
-**whole 96.1 %, terrain 96.2 %, HUD 90.8 %, HELI 94.1 %** a drzi ratchet
-95.5 %. Jeho nativni scena obsahuje dalsi objekty, zatimco remake maskuje
+**whole 96.1 %, terrain 96.1 %, HUD 90.8 %, HELI 94.1 %** a drzi ratchet
+95.5 % pri puvodni toleranci 24/kanal. Jeho nativni scena obsahuje dalsi objekty, zatimco remake maskuje
 objekty pro cistou kontrolu terenu/HUD/HELI.
 
 Plan jednoho checkpointu:

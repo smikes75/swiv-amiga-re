@@ -40,7 +40,7 @@ a smooth fly-over mode, music metadata, and the file catalogue.
 
 **Playable transcription:** open `game.html` and insert the same ADF. The
 native attract loop starts automatically; Space, Enter, Z or a click starts
-TOWN directly, while `L` opens the development level picker. The attract loop
+TOWN directly; the title also offers a picker for all seven zones. The attract loop
 uses the disk's COVER, Sales Curve credits, HELI/JEEP blueprints and score
 tables, FACES, embedded text, palettes, Copper gradients and fades, with
 `AMTITUNE.MOD` playing after the COVER fade.
@@ -57,18 +57,25 @@ principal explosions, including four-layer `SMART.SND`, shield/TOKEN pickup
 effects and the IRQ-seeded custom GOOSE hit/death. The title module stops when
 TOWN starts; the absence of gameplay music is the original level-one policy,
 not a missing module.
-DESERT transcription has now started with its exact map/prefetch contract,
-all 48 AIRMINE instances (`0x75A8` fixed-point drift, depth bob, shadow,
-collision and death) and all seven BLACKJET roots (`0x7A98`, expanding to
-5–10 accelerating jets with their native procedural sound). The three
-compound EGGS#12 batteries now add their baked-underlay overlays, independently
-activated gun pods, 37-shot normal-scroll cadence, class-6 projectiles,
-orphan destruction and both native sound routines. All four EGGS#2 capsules
-now reproduce their five-stage hatch, 64-field rise, fixed-point flight,
-15-HP collision phase and sixteen-shell death ring. It is still an
-incomplete port; the remaining DESERT formations and seamless transition to
-GRASS are under active audit. Native visual ratchets now reach 81.8% for the
-TOWN start and 96.1% at a confirmed DESERT checkpoint.
+All seven maps now chain continuously, with transcribed routes for all
+1,497 map objects across 73 graphics/coroutine pairs, including FINAL.
+The integrated DESERT work retains exact AIRMINE, BLACKJET, TILT and EGGS
+fixed-point motion, EGGS child scheduling and BLACKJET/EGGS sound routines.
+Coverage is not full original-game parity: later bosses, sound call sites,
+hardware timing and the post-game flow still need work.
+
+**Display size:** use **1× / 2× / 3×**, **Do okna** (fit to window), or the
+slider beneath the game. The default is 2× (640×512 CSS pixels), limited to
+the available space. Manual zoom ranges from 0.5× to 6× in 0.05× increments;
+integer sizes give more regular pixel edges. The requested size is saved
+locally and restored after reload or resizing to a larger window.
+**Plynulý pohyb** enables interpolation for high-refresh displays, including
+120 Hz. Display zoom does not change the 50 Hz simulation or interpolation
+precision. Click the game to return keyboard focus after using a control.
+
+Measured original-frame checks: TOWN start 99.9%, first wave 99.0%, death
+98.3%, respawn 99.9%. The separate static DESERT renderer checkpoint remains
+96.1%; its tolerance and scope differ from the simulated TOWN checks.
 
 **Command line:**
 
@@ -81,6 +88,10 @@ python3 tools/gfx.py raw ... cover.png     # decode a full screen to PNG
 python3 tools/gfx.py sheets out/ sheets/   # sprite sheets for every .LIN
 python3 tools/map.py                       # render all 7 levels as tall PNGs
 python3 tools/uitest.py                    # Chromium runtime/behaviour regressions
+python3 tools/displaytest.py               # zoom, DPI, persistence, simulated 120 Hz
+python3 tools/integrationtest.py           # all zones, both renderers, map joins, FINAL death
+python3 tools/compare.py                   # four native TOWN comparisons
+python3 tools/compare.py desert            # optional static DESERT renderer comparison
 ```
 
 Disassembly needs `m68k-elf-binutils` (`brew install m68k-elf-binutils`).
@@ -99,7 +110,7 @@ Disassembly needs `m68k-elf-binutils` (`brew install m68k-elf-binutils`).
 | `.LIN` sprites | ✅ logical frames, chained multi-part composites, signed anchors |
 | `.PAM` level maps | ✅ tiles, object spawns, in-map palette script, layers, display window |
 | verification | ✅ 43-check data contract + sparse map/footage comparisons |
-| `AMPROG.OBJ` (55,668 B game code) | 🟨 partially mapped (73-route dispatch + 155/155 TOWN objects, map interpreter, sound, animations, bob drawer) |
+| `AMPROG.OBJ` (55,668 B game code) | 🟨 73 routes / 1497 objects transcribed; hardware parity, some audio and post-game flow remain open |
 
 Detailed write-ups live in [`docs/`](docs/):
 [FORMAT](docs/FORMAT.md) · [LOADER](docs/LOADER.md) ·
@@ -115,7 +126,7 @@ decrunchers is in [`src-asm/`](src-asm/).
 
 ```
 ├── index.html           browser disk explorer (single file, no dependencies)
-├── game.html            playable coroutine transcription (TOWN focus)
+├── game.html            playable coroutine transcription (all seven zones)
 ├── tools/
 │   ├── check.py         verification contract (measures docs against the image)
 │   ├── dispatch.py      AMPROG gfx → behaviour coroutine registry

@@ -10,14 +10,21 @@ renderer is `tools/map.py`, and the same code in JS powers the
 
 7 entries of 6 B: `word` map file ID (90–96 = TOWN…FINAL in the order
 of the internal name table at `0x0004`), `word` tile-dictionary offset
-(relative to `0x384C`), `word` map-join/rebase offset.
-
-The third word is **not scroll speed**. `0x381C` stores it in `fp+144`;
-when the current PAM ends, `0x35D4` adds it to the map cursor immediately
-before `0x35E4` advances the level index and loads the next PAM. DESERT and
-GRASS both use 96 px, for example. It is therefore part of the continuous
-map join. The actual gameplay scroll is set independently at `0x1DA6` to
-`$4000` in 16.16, i.e. 0.25 px/VBL.
+(relative to `0x384C`), `word` **gap to the next map** — it lands in
+`fp@(144)` (`0x381c`) and `0x35d4` adds it to the reader counter
+`fp@(3586)` exactly once, after the PAM's end record (streaming task
+`0x356e`: `0x3800` load → `0x3596` read to `D == 0` → `0x35d4` advance
+and `fp@(184)++` → next PAM). The next map's records therefore start
+`height − gap` before the end of the previous one (TOWN 0xe1 = 225,
+DESERT/GRASS/ICE 96, RIVER 97, SCIFI 32, FINAL 1000), its own leading
+palette commands consume its lead, palette registers are not reset, and
+its tiles overwrite the overlap. Zones chain without any break; the level
+loop `0x1db4` ends only when no player is in the game (`0x27de`). Verified
+on baseline frames t273..t321 (DESERT terrain from t≈289, DESERT objects
+already visible over TOWN's end). It is **not** the scroll speed:
+that is the constant `0x4000` written to `fp@(3528)` at `0x1da6`
+(0.25 px per VBL = 12.5 px/s nominal; the A500 skips frames under load,
+see `TOWN-SURVEY.md`).
 
 The **tile dictionary** is an array of words; the map addresses tiles
 with an 8-bit local ID and the dictionary translates it to a
@@ -163,6 +170,11 @@ The development level picker in `game.html` is consequently only a direct
 test entry: for levels after TOWN it arms the initial preloaded window so
 that objects which would already have been created by the preceding PAM are
 not silently discarded.
+The chain's `junctionIndex` is relative to the selected starting map;
+`levelPhase` is the absolute zone phase used by difficulty. Keeping these
+separate fixes skipped boundaries when starting after TOWN. A direct FINAL
+preview supplies the installation hold normally inherited from the SCIFI
+core (`0xc074` / `fp@(166)` bit 3); continuous play keeps its existing state.
 
 ## Verification against real gameplay
 

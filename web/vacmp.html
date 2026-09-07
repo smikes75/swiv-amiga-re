@@ -1,0 +1,100 @@
+<!doctype html><meta charset="utf-8"><title>SWIV: original ve WebAssembly</title>
+<!-- Bezobsluzna stranka pro porovnavani prepisu s originalem. Ridi ji
+     tools/survey/vacmp.py pres Playwright; zadne UI zde nema smysl.
+     Jadro vAmiga (web/vamiga.js) je prevzate z projektu Turrican. -->
+<body style="background:#111;color:#ddd;font:12px monospace">
+<div id="log">nacitam jadro...</div>
+<script src="vamiga.js"></script>
+<script>
+const CROP_X = 124, CROP_Y = 26, CROP_W = 716, CROP_H = 285;
+const TEX_STRIDE32 = 1824;                 // Texel = u64, 912 texelu na radek
+const VA = window.VA = { ready: false, frames: 0 };
+
+createVAmiga().then(M => {
+  VA.M = M;
+  const c = (n, r, a) => M.cwrap(n, r, a);
+  VA.fn = {
+    init: c('wasm_init', 'number', []),
+    err: c('wasm_error', 'string', []),
+    shell: c('wasm_retroshell', 'number', ['string']),
+    update: c('wasm_update', 'number', []),
+    loadRom: c('wasm_load_rom', 'number', ['number', 'number']),
+    insert: c('wasm_insert_disk', 'number', ['number', 'number', 'number']),
+    powerOn: c('wasm_power_on', 'number', []),
+    step: c('wasm_step', 'number', []),
+    stepLine: c('wasm_step_line', 'number', ['number']),
+    frames: c('wasm_frames', 'number', []),
+    chipPtr: c('wasm_chip_ptr', 'number', []),
+    chipSize: c('wasm_chip_size', 'number', []),
+    texPtr: c('wasm_texture_ptr', 'number', []),
+    warp: c('wasm_warp', 'number', ['number']),
+    joy: c('wasm_joystick', 'number', ['number', 'number']),
+    mouse: c('wasm_mouse', 'number', ['number', 'number']),
+    key: c('wasm_key', 'number', ['number', 'number']),
+  };
+  VA.ready = true;
+  document.getElementById('log').textContent = 'jadro pripraveno';
+});
+
+/* Nahraje pole bajtu do haldy modulu a vrati ukazatel (volajici uvolni). */
+VA.toHeap = function (b64) {
+  const bin = atob(b64), n = bin.length;
+  const p = VA.M._malloc(n);
+  const H = VA.M.HEAPU8;
+  for (let i = 0; i < n; i++) H[p + i] = bin.charCodeAt(i);
+  return [p, n];
+};
+
+VA.boot = function (romB64, adfB64) {
+  if (VA.fn.init() !== 0) return 'init: ' + VA.fn.err();
+  const [rp, rn] = VA.toHeap(romB64);
+  if (VA.fn.loadRom(rp, rn) !== 0) return 'rom: ' + VA.fn.err();
+  VA.M._free(rp);
+  const [ap, an] = VA.toHeap(adfB64);
+  if (VA.fn.insert(0, ap, an) !== 0) return 'adf: ' + VA.fn.err();
+  VA.M._free(ap);
+  VA.fn.warp(1);
+  if (VA.fn.powerOn() !== 0) return 'power: ' + VA.fn.err();
+  VA.frames = 0;
+  return '';
+};
+
+/* Odsimuluje n snimku; pred prvnim z nich provede pripadny prikaz shellu. */
+VA.run = function (n, script) {
+  if (script) VA.fn.shell(script);
+  for (let i = 0; i < n; i++) {
+    const r = VA.fn.step();
+    if (r < 0) return 'step: ' + VA.fn.err();
+    VA.frames = r;
+  }
+  return '';
+};
+
+/* Vyrez textury jako VAHeadless: RGB24 716x285, vraci base64. */
+VA.frameRGB = function () {
+  const H32 = VA.M.HEAPU32, tp = VA.fn.texPtr() >> 2;
+  const out = new Uint8Array(CROP_W * CROP_H * 3);
+  let d = 0;
+  for (let y = 0; y < CROP_H; y++) {
+    const src = tp + (CROP_Y + y) * TEX_STRIDE32 + CROP_X * 2;
+    for (let x = 0; x < CROP_W; x++) {
+      const v = H32[src + 2 * x];
+      out[d++] = v & 255; out[d++] = (v >> 8) & 255; out[d++] = (v >> 16) & 255;
+    }
+  }
+  let s = '';
+  for (let i = 0; i < out.length; i += 0x8000)
+    s += String.fromCharCode.apply(null, out.subarray(i, i + 0x8000));
+  return btoa(s);
+};
+
+/* Kopie zacatku chip RAM (stav hry) jako base64. */
+VA.chip = function (off, len) {
+  const H = VA.M.HEAPU8, p = VA.fn.chipPtr() + off;
+  const a = H.subarray(p, p + len);
+  let s = '';
+  for (let i = 0; i < a.length; i += 0x8000)
+    s += String.fromCharCode.apply(null, a.subarray(i, i + 0x8000));
+  return btoa(s);
+};
+</script>

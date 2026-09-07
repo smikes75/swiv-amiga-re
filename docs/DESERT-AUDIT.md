@@ -2,6 +2,8 @@
 
 Measured from `DESERT.PAM` and `AMPROG.OBJ` on 2026-09-02. This file tracks
 the second native map (internal level index 1), not SCIFI (index 5).
+Updated after integration on 2026-09-07: all 274 DESERT roots have routes;
+the detailed fixtures below cover the earlier AIRMINE/BLACKJET/EGGS slice.
 
 ## Map and transition contract
 
@@ -13,13 +15,14 @@ the second native map (internal level index 1), not SCIFI (index 5).
 - the native map builder chains DESERT directly into GRASS; there is no
   `LEVEL COMPLETE` pause or reset of player/world state
 
-The browser's direct level picker starts at scroll 5,680. A TOWN cold-start
+The browser's direct level picker starts at local row 5,680 plus the height
+offset of the remaining chained maps. A TOWN cold-start
 rule formerly marked the first eleven DESERT objects as already missed:
 eight MEDTANK, one GOOSE boss and two PROXMINE. Direct starts after TOWN now
 arm this opening preload window, matching the state those objects would have
 after a continuous TOWN → DESERT map join.
 
-## Current behaviour coverage
+## Initial audited slice (2026-09-02)
 
 Before DESERT work, 99/274 roots used ten already transcribed shared routes.
 Adding all 48 `AIRMINE#0 → 0x75A8` roots and all seven
@@ -31,7 +34,10 @@ routes. Each BLACKJET root expands to
 real enemies. Every EGGS root additionally owns three independently active
 gun pods. The remaining 113 roots stay fail-closed: their real
 sprite/known animation may be displayed, but no invented shooting or
-movement is added.
+movement is added. This was the initial slice: the remaining routes were
+subsequently transcribed on 2026-09-03 through 06, see BEHAVIORS. The merged
+engine uses the detailed local `eggs2`/`eggs12`/`blackjet` routines together
+with the later full-game implementation and the measured collision snapshots.
 
 Shared routes already exact in DESERT are FODDERA, MEDTANK, PROXMINE,
 YELLOW, ROTOBASE, MINE, GOOSE#0, POPUP, BIRD and MILL. The four GOOSE#0
@@ -47,9 +53,9 @@ The opening block is:
 | 515 | BLACKJET#0 | `0x7A98` | **transcribed and tested** |
 | 533 | EGGS#12 | `0xA8E4` | **transcribed and tested** |
 | 628 | EGGS#2 | `0x8478` | **transcribed and tested** |
-| 654 | TILT#0 | `0x7DE8` | fallback; steering/fire missing |
+| 654 | TILT#0 | `0x7DE8` | transcribed; fixed-point steering and cannon inheritance |
 | 745 | AIRMINE#0 | `0x75A8` | **transcribed and tested** |
-| 766 | DESTRAIN#3 | `0xA1B0` | fallback; typed entrance/fire missing |
+| 766 | DESTRAIN#3 | `0xA1B0` | transcribed; typed entrance and fire |
 
 AIRMINE, BLACKJET, EGGS#12 and EGGS#2 are documented in
 [BEHAVIORS](BEHAVIORS.md). BLACKJET
@@ -61,9 +67,9 @@ the custom root/part orphan deaths and both sound routines. EGGS#2 keeps its
 pre-arm class20 phase, opens over five ten-field frames, rises through 64
 fixed-point fields and launches as a 15-HP class22 flyer; lethal damage emits
 the native 16-shell ring before its standard explosion. The next
-chronological mismatch is `TILT#0 → 0x7DE8` at map-y 654. After the opening
-block, the highest-amplification missing routes are FISH
-(17 triggers → 102 actors), SKYEYEB (14 → 84) and GOOSE#7 (7 → 42).
+chronological route was `TILT#0 → 0x7DE8` at map-y 654, now integrated.
+FISH (17 triggers → 102 actors), SKYEYEB (14 → 84) and GOOSE#7 (7 → 42)
+are also implemented. Their complete native-frame parity remains to be measured.
 
 ## Major later set pieces
 
@@ -80,18 +86,17 @@ Palette fitting is intentionally separate from behaviour coverage. Raw
 DESERT capture at native fire+310 s was correlated unambiguously to browser
 scroll/top row 5,426 (93.44% terrain match). Its raw checkpoint is
 `000 555 687 7BA 987 888 BCB B30 FE8 FFF A85 974 864 664 443 332`.
-The first ten registers are the same shared object bank used by TOWN..ICE,
-so DESERT now receives the existing measured canvas fit instead of the raw
-lavender/black startup values. Terrain colors 10–15 remain checkpoint-local.
+PAM supplies the register values. The renderer uses linear RGB12; the single
+vAmiga gamma LUT is applied only by the comparator. The earlier fitted
+object-bank and per-level terrain overrides were measurement artifacts.
 
 The CPU-driven COLOR07 red pulse is global, not TOWN-only. Level init enables
 it; all four `_AIRPORT#14 → 0x7970` roots disable it synchronously at
 map-reader prefetch, and the first of 17 `FISH#0 → 0xB1A8` roots enables it
-again. These two prefetch side effects are transcribed even though AIRPORT
-and FISH actors themselves remain fail-closed pending their full routines.
+again. These prefetch side effects and the AIRPORT/FISH actors are transcribed.
 
-After applying the full measured low/high DAC capture curve to terrain
-COLOR10-15, `tools/compare.py desert` reports **96.1% whole / 96.2%
+After applying the measured capture curve once to all colors in the
+comparison, `tools/compare.py desert` reports **96.1% whole / 96.1%
 terrain / 90.8% HUD / 94.1% HELI**, with a one-way whole ratchet of 95.5%.
 Direct EGGS pixels additionally prove capture nibble 2 maps to zero:
 raw `COLOR15=$332` is observed as RGB `(28,28,0)`.

@@ -33,6 +33,17 @@ Generation invalidace neni predcasny navrat: SMART smrt ani lethalni bit0
 nepotlaci ulozeny bit3. Resume zachovava `SMART -> bit0 -> bit3` (pak
 `4,1,2,5`) a fyzicky cleanup/cost release se provede pouze jednou.
 
+## Integration note — 2026-09-07
+
+The detailed AIRMINE, BLACKJET and EGGS contracts immediately below are
+the retained local implementations. They supersede the shorter September 3
+DESERT entries later in this historical document. Runtime identifiers are
+`blackjet`, `eggs2`, `eggs12`, and `eggpart`; later BOS guns also use the
+same queued EGGS projectile/audio routine with a world-space origin.
+TILT retains the local signed 16.16 motion and acceleration inherited by
+cannon/PLOP children. Global collision snapshots, native PAM register
+colors and all other zones come from the later full-game work.
+
 ## AIRMINE — DESERT hovering mine (`0x0012` → `0x75A8`)
 
 Prvni prepsana DESERT-specificka korutina je vsech 48 mapovych AIRMINE:
@@ -267,6 +278,14 @@ therefore `+348 = 0x800` means `1/32 px/t²`, not a constant speed.
   x `160..280` po8, uvnitr y `192..104` po−8 proti terrain control
   plane1; prvni volne misto vyhraje. Je-li vsech 192 mist blokovanych,
   pouzije uz nekontrolovany fallback `(288,192)`
+  **Sonda `0x3dd4` kresli masku v testovacim rezimu (zaznam +21 bit 7 →
+  varianta `0x416a`) do bufferu `fp@(256)`, tj. do OBRAZOVKY** (bit 6 by
+  mirila do stripu `fp@(264)`), a kolizi hlasi pres `fp@(162)` proti vsemu,
+  co v ni je — terenu i BOBum posledniho renderu. GOOSE nad (160,192) proto
+  respawn zablokuje a hrac vznikne o sloupec/radek dal; boss pak ztraci HP
+  jen pri skutecnem doteku. Zmereno baseline t281..t289 (2026-09-03):
+  po smrti pod bossem hrac 4 s neni na (160,192), boss prezije do timeoutu.
+  Prepis: `respawnBobField` sklada aktualni BOBy bez vlastniho hrace.
 - pohybova smycka clampuje starou pozici na x `4..316`, y `4..252`
   **pred** aplikaci vstupu; kardinalni krok muze proto v prave publikovanem
   framu dosahnout x `1..319` nebo y `1..255`
@@ -511,9 +530,13 @@ Countdown bezi i mimo viewport az do bezneho cullu na `sy>=320`.
 - vrtulnik i jeep pouzivaji stejny dart system; vrtulnik ma smer zamceny
   nahoru (dir 6), jeep otaci vezi (`0x93b2`, vychozi uhel 192)
 - **9 px/t** (zmereno: rozestup salv 97 px = 9 px/t × kadence 11 ✓)
-- pocet strel = sila `+100` (`0x8ad0`: `subq #1` + `dbf`); start je
-  **2** (`0x6fde`; drivejsi „1 z videa" byl omyl — sude sily jsou pary
-  4 px od sebe) a po `0x70c8` ma kadenci 11. Tabulka
+- pocet strel = sila `+100` (`0x8ad0`: `subq #1` + `dbf`). Kod na
+  `0x6fde` zapisuje **2**, ale MEGA TRAINER cracku SWIVFIX (volba F5/F6
+  MISSILES, vychozi **1**) startovni hodnotu prepise: baseline snimek
+  s drzenym fire ukazuje jednu strelu (hires sloupce 320–323), s
+  MISSILES=3 tri strely na x 156/160/164 = licha tabulka `0x8d46`.
+  Puvodni „start 1 z videa" bylo tedy spravne pozorovani; prepis
+  startuje s 1 a po `0x70c8` ma kadenci 11. Tabulka
   (2,11)(3,10)(4,10)(5,8) se podle `+102/5` pouzije jen pri (re)spawnu
   jako `power=min(power,cap)`; pri 2P je efektivni kadence
   `max(ulozena,10)` (`0x728a`)
@@ -778,7 +801,10 @@ sebrani jadra s uz aktivnim stitem (`0x98ec`).
 - smrt `0x9306`: `+108` nebo `+106` nenulove → nic; jinak exploze
   `0x88fc` (16 EXPL1 ve spirale po 2 ticich) a konec objektu
 - respawn: hracsky task `0x7090` ceka **100 snimku** (`0x714e`), zatimco
-  svet i enemy scheduler dal bezi. Pak spotrebuje zasobu `+68`
+  svet i enemy scheduler dal bezi. Cekani zacina az kdyz rodic uvidi
+  smazane `+54`: callback `0x9306` (tik D) jen zneplatni generaci, telo
+  `+54` smaze pri dalsim resume (`0x8f74`, D+1) a starsi rodic to cte v
+  D+2 — novy `0x9410` tedy vznika v **D+102** (baseline t22..t25). Pak spotrebuje zasobu `+68`
   (−4/zivot, start −16 = 4), zavola `0x70c8` (tabulka zbrane) a zalozi novy
   `0x9410`. Browserovy kladny ekvivalent zacina `lives=4/HUD 3`, dovoluje
   posledni aktivni `lives=1/HUD 0` a continue otevre az po dalsim pokusu,
@@ -866,3 +892,1253 @@ startuje v jednom JS passu; nativni per-record yield poradi je otevrene.
   po wait16 a stejnym tempem se vraci ke korbe; pak znovu cely gate.
 - **+336 < 3 → +348 se nemaze** (`0x80f4`): sekundarni sestup 0x800
   prezije jen pri pomalem primarnim vy; rychli padaci ho ztraceji.
+
+## DESERT (prepsano 2026-09-03; overeni proti baseline t329..t369 probiha)
+
+### AIRMINE (0x0012 → 0x75a8)
+
+- `a2c6(AIRMINE#0, 34, −48, HP 3, 20 bodu, cost 7)`, z 32 se stinem, anim
+  `0x75c4` AIRMINE#0/#1 perioda 7
+- `vx = (slovo 0x883c >> 2) / 65536` (do ±0.125 px/t), vy 0 a bez bit4:
+  drzi se mapy; `+340 = −0.1875` px/t se pred kazdym `wait(10)` obraci
+  (`0x75e4..0x75ee`), z tedy kmita 32..33.9 a stin se houpe; smrt default
+  `a36a`
+
+### BLACKJET (0x0020 → 0x7a98)
+
+- `a2a2(0, −4, D/2 + 5, 0)` klonu, kazdy `a2c6(BLACKJET#0, 34, −48, HP 1,
+  25 bodu, cost 15)` s guardem `0x8822`, z 32
+- po aktivaci vlastni `x = 32 + (0x883c & 255)`, zvuk `0x52d8`,
+  `+350 = 0x1800` (ay = 3/32 px/t²), zadny dalsi pohyb (`0x62cc` ceka na
+  smrt): strely padaji volnym padem
+
+### TILT (0x0026 → 0x7de8)
+
+- `a2c6(TILT#3, 34, −48, HP 2, 40 bodu, cost 12)`, bit4, z 32, rotor
+  `0x93e2` (JEEPHELI#5..8 kazdy druhy snimek)
+- vy 1 do `sy ≥ 64` (`0x9afa(64)`), pak vy 0, `ay = 0x800/65536`,
+  `vx = ±4` (x ≥ 160 → −4, `+276` = smer), anim TILT#2,#1,#0 resp.
+  #4,#5,#6 (perioda 6, `end(0)` drzi posledni) a mireny kanon `0x95d2`
+- smycka `0x7e64`: `x < 64` → ax +0x3000/65536, pri zmene smeru anim
+  #5..#0 a kanon; `x > 256` → ax −0x3000/65536, anim #1..#6 a kanon;
+  rychlost neni omezena (po obratce ~4.06 px/t); s ay klesa a odejde
+  cull −64 asi po 240 tikach
+
+### DESTRAIN (0x0619 → 0xa1b0)
+
+- `a2c6(DESTRAIN#3, 36, 0, HP 12, 65 bodu, cost 7)`, `+367` bit 0 (bez
+  stinu); TYP z `+276`: 1 → x −32, vx +0.5, vy −0.5/32; 2 → x 352, vx
+  −0.5; 3 → x −32, vx +0.5 (`0xa1c8..0xa20e`)
+- smycka `0xa20e`: wait 50, anim DESTRAIN#4,#5,#6,#5,#4,#3 perioda 1
+  (drzi #3), wait 10, homing `0x8530(+6,0,0)`, yield `0x629a`, homing
+  `0x8530(−6,0,128)`; smrt default
+
+### TINYTRUK (0x000b → 0xaedc)
+
+- `a2c6(TINYTRUK#0, 36, 272, HP 8, 45 bodu, cost 10)`: aktivuje se az
+  pod spodnim okrajem a jede nahoru `vy = −0.75` (na obrazovce −0.5 px/t);
+  `+374 = 5` = dekal EXPL1#0; trida 32, po 100 ticich 36
+- anim `0xaf04` #0,#1,#2 perioda 1 loop; po wait 100 sest salv po 20
+  ticich (`0xaf48`, `d = min(3, D)`: bit 0 → homing (0,−2,192) + wait 8,
+  bit 1 → homing (−4,2,160), wait 8, (4,2,224), wait 8); pak vy 0 a ceka
+  na smrt (`0x62cc`). Pri D = 0 nestrili vubec
+
+### EGGS — vejce (0x041d → 0x8478) a hnizdo (0x181d → 0xa8e4)
+
+Velke ovalne „skorapky" na zemi jsou EGGS#0 (staticka grafika mapy);
+objekt s chovanim je maly tvor EGGS#2 (24×38, hitbox z hlavicky 11/19),
+ktery v nich sedi. Snimky overeny archem `build/sheets/080_eggs.png` a
+zabery originalu t437..t447 (`build/survey/shoot/`).
+
+- **Vejce `0x8478`:** `a2c6(EGGS#2, 32, −16, HP 0, 200 bodu, cost 13)`,
+  `+328 z = 0`. Ceka na radek 128 (`0x9afa`), pak anim `0x0849e`
+  (perioda 10: EGGS#3..#7, drzi #7 = tvor 19×19; docs/ANIMS.md) soubezne
+  s wait 50 (`0x629c`); potom `+340 vz = 0x8000` (0.5 px/t) a smycka
+  `0x62d2`, dokud `z < 32` (64 tiku). Pak `vz 0`, `HP 15`, handler
+  `0x8510` pro bit 0 i bit 3 (`0x653e`/`0x6566`), trida 34 (smrtici
+  kontakt), rychlost `+356 = 128` (0.5 px/t) smerem na
+  `(96 + (0x883c & 127), fp@(3530))` = nahodny sloupec horniho okraje
+  (`0x65be`/`0x65f2`), `0x62cc` do zabiti. Stin kruhovy (z 32) — v
+  originale t437 vedle skorapky.
+- **Smrt `0x8510`:** HP−1; pri > 0 jen `0xa35a` (flash + zvuk); pri 0 se
+  `+358` vynuluje a 16× `0x95ca` (rovna kanonova strela) s krokem 16 v
+  `+359` = uhly 0,16,…,240, pak `0xa36a` (200 bodu, oblacek `0x894a` v
+  z 33). To je „hodne strel jako z tanku" po rozstreleni.
+- **Hnizdo `0xa8e4`:** nejprve tri deti `0x614a` (kopie zaznamu rodice):
+  `0xa92a` (−51,−13) EGGS#9, `0xa93c` (0,+65) EGGS#10, `0xa948`
+  (+51,−13) EGGS#11; kazde `a2c6(…, 36, −20, HP 8, 75 bodu, cost 10)`,
+  `+367 |= 4`, `+542 = 0xa36a` (sirotek po smrti hnizda umira s kreditem
+  a oblackem). Dite ceka na radek 8 (`0x9afa`) a pak 16× { strela
+  `0xa9a0` pres `0x6178`, wait 100 } a `0x62cc`. Rodic: zamek
+  `0x5eda(6)` (nemodelovano), `a2c6(EGGS#12, 36, −32, HP 18, 75 bodu,
+  cost 20)`, `+376 = 0x8876`, `0x62cc`.
+- **Strela vejce `0xa9a0`:** dite zdedi polohu, `+324 += 16`, zvuk
+  `0x5436(x)` (zatim bez prepisu), `a2c6(BULLET#56, 6, 0, HP 0, 0 bodu,
+  cost 5)`, `+367 |= 1` (bez stinu), `z += 1`, PLOP `0x85f0`, `+336 vy =
+  6` v mapovych souradnicich (na obrazovce 6.25 px/t), `0x62cc`; cull
+  `0x6480` s marginem 0. Trida 6 = smrtici kontakt, HP 0 = bolt ji
+  neznici.
+- **Velky vybuch `0x8876`** (`+376` velkych objektu): zvuk `0x4c3c`, anim
+  `0x888c` EXPL2#0..#6 perioda 6 + kill (42 tiku), `+367 |= 1`; kazdych
+  15 tiku (`0x629c`) oblacek `0x8952` (EXPL1#7..#13 bez zvuku) na ofsetu
+  `((0x883c & 63) − 31, (horni slovo & 63) − 31)` — jedno `0x883c` na
+  oblacek, tedy t 0, 15, 30. Prepis: `queueTownExplosionTask(..., "big")`
+  + `boom.puffs`.
+- Prepis: `IMPLEMENTED_BEHAVIORS` egg/eggnest, hazard `eggchild`
+  (nodeKey `eggchild9..11`), strela `eggshot`, `spawnEggChildren`,
+  `fireEggShot`; simulace DESERT (`build/survey/egg/`): hnizdo zrozeno v
+  tiku 592 se tremi detmi, prvni strela hned (spodni dite je uz na radku
+  33), vejce zrozeno 1036, anim od radku 128 (tik 1612), stoupani
+  1662..1726, 15 zasahu → 16 strel.
+
+### DIAGUN — diagonalni delo (0x041a → 0xa76e, 0x081a → 0xa788)
+
+- Typ podle grafiky z PAM (`+276`): `0xa76e` DIAGUN#2 klid / `+278` =
+  DIAGUN#3 palba, uhel `+358 = 32` (vpravo dolu); `0xa788` DIAGUN#4 / #5,
+  uhel 96 (vlevo dolu). Spolecne `0xa7a0`: zamek `0x5eda(6)`,
+  `a2c6(+276, 36, −48, HP 7, 80 bodu, cost 18)`, `+376 = 0x8876`, wait
+  100, `+280 = 15`× `0xa7e0` { `0x6d7c(+278)` = palebny snimek i hitbox z
+  jeho hlavicky, laser `0xa804` pres `0x6178`, wait 5, `0x6d7c(+276)`
+  zpet, wait 30 }, pak `0x62cc`.
+- **Laser `0xa804`:** `a2c6(DIAGUN#6, 38, −48, HP 1, 6 bodu, cost 5)`,
+  `+328 z = 33`, `+367 |= 1` (bez stinu), rychlost `+356 = 640` (2.5 px/t)
+  ve zdedenem uhlu (`0x65f2`), potom `+320/+324 += 16×` rychlost
+  (`0xa82c..0xa848`, tj. start 28 px diagonalne od dela), anim `0xa850`
+  DIAGUN#6..#9 perioda 1 loop, `0x62cc`. Mapove souradnice, trida 38 =
+  smrtici kontakt i zasazitelny (jeden bolt, 6 bodu, oblacek v z 33).
+- Prepis: `IMPLEMENTED_BEHAVIORS` diagun (oba gfx), hazard `laser`
+  (`spawnDiagunLaser`), `nodeKey` diagun2..5 podle aktualniho snimku.
+  Simulace (`build/survey/dpy/`): zrozeni tik 4420 (x 84, sy −48), prvni
+  laser 4519 na (114, 6) s v = (1.77, 1.77), druhy 4554, 7 zasahu → BIGEXPL.
+
+### PYRAMID (0x0221 → 0xa866)
+
+- Cihlova podstava je PYRAMID#0 (mapova grafika); objekt je poklop
+  PYRAMID#1. Zamek `0x5eda(6)`, `a2c6(PYRAMID#1, 36, −32, HP 10, 75 bodu,
+  cost 15)`, `0x9ae8(64)` = wait na radek 64 s vynulovanou tridou `+508`
+  (do te doby bez kolizi; prepis drzi HP 0), `+376 = 0x8876`, anim
+  `0xa890` PYRAMID#2..#8 perioda 8 a drzi (poklop se otevre za 48 tiku),
+  wait 100, `(2 + fp@(182))`× { `notw +276` → x-ofset −6/+6 stridave
+  (prvni −6, protoze `+276 = 0x0221` je kladne), homing `0x8530` na
+  (x ± 6, y + 20, uhel 64), wait 20 }, `0x62cc`.
+- Simulace: zrozeni tik 2484 (x 253), aktivace na radku 64 (tik 2868),
+  poklop #8 v 2916, homing 2968 a 2988 (D = 0), 10 zasahu → BIGEXPL.
+
+### Spolecne pomocne rutiny formaci a smeru
+
+- **`0xa2a2(d0 dx, d1 dy, d2 pocet, d3 dtyp)`** = formace: DBF smycka
+  `pocet−1`× { `0x6178` kopie aktualniho zaznamu rodice (vcetne `+276`
+  typ), pak rodic `+320 += dx`, `+324 += dy`, `+276 += dtyp` }. Kopie
+  pokracuji za volanim (uz neklonuji). Prepis `spawnFormationCopies` ve
+  `startMapObjectTask` (ctecka mapy, 256 px nad oknem).
+- **`0xa290(base)`** = `0x6d7c(base + dir16(+358))` (16 smeru, i hitbox z
+  hlavicky snimku); **`0xa27c(base)`** = 8 smeru; `0xa268`/`0xa252` totez
+  pres tabulku slov.
+- **`0x72ee`** vraci polohu ziveho hrace (pri smrti posledni ulozenou);
+  **`0x72a6`** polohu hrace 1, bez ziveho hrace `x = 96 + |dolni bajt
+  fp@(-66)|` (`playerAimX72a6`).
+- **`0x62fe`** housekeeping: rychlost += zrychleni, poloha += rychlost
+  (× ubehle VBL), zaporne `z` se orizne na 0 a vynuluje vz i az.
+
+### FISH (0x001e → 0xb1a8)
+
+- Formace `0xa2a2(0, −5, 6, 0)` = sest ryb po 5 px nad sebou; `ST
+  fp@(3615)` zapina COLOR07 (voda; prepis `g.townColor07Enabled`).
+  Kazda: `a2c6(FISH#0, 34, −48, HP 1, 40 bodu, cost 10)` + guard `0x8822`;
+  `z = 0x883c & 31`, `az = −4096/65536`, `vy = 2` (mapove), vx 0.
+- Smycka `0xb1ec`: je-li cele slovo `z == 0`, novy skok `vz = 2`,
+  `az = −0.0625` (parabola 63 tiku, vrchol 32) a cakanec `0x9358`
+  (JEEPHELI#33..#37 perioda 4, 20 tiku, bez stinu, cull margin 0); typ 2
+  navic `vx = (slovo 0x883c)/65536` a mireny kanon `0x95d2`. DESERT ma
+  jen typ 1. Trida 34 = smrtici kontakt, jeden zasah.
+- Simulace (`build/survey/d3/`): prvni ryba tik 16876 (x 57), dalsi po
+  20 ticich; guard `0x8822` pri plnem rozpoctu nektere odmitne.
+
+### GOOSE#7 (0x0e17 → 0x8794) — stremhlave stihacky
+
+- Formace `0xa2a2(0, −8, 6, 0)`; kazda `a2c6(GOOSE#7, 34, −48, HP 2, 35
+  bodu, cost 10)` + guard `0x8822`, `+367 |= 0x10` (obrazovka), z 32.
+  Podle x hrace (`0x72ee`): `< 160` → start `x = 256 + (0x883c & 63)`,
+  `vx = −0.5`; jinak `x = 0x883c & 63`, `vx = +0.5`. `vy = 1`, wait 50,
+  `vy = 0.5`, wait 70, pak smycka `0x880e` { `+336 += 4` (slovo, tj.
+  vy 4.5, 8.5, …), mireny kanon `0x95d2`, wait 20 }.
+- Simulace: zrozeni 17060, prvni zaznam odmitnut guardem, dalsi
+  startuji vlevo (x 27..61) a od tiku +130 pikuji.
+
+### FLATTANK (0x0027 → 0x9e04)
+
+- Nejprve dite `0x6144(0x9faa)` = stejny turret child jako MEDTANK
+  (`+336 = 4` se v childu necte), pak `a2c6(FLATTANK#0, 36, −16, HP D+5,
+  50 bodu, cost 12)`, `+374 = 5` (dekal EXPL1#0), `+397 |= 1`, anim
+  `0x9e38` #0..#3 perioda 2 loop (pasy), uhel 64 a rychlost 32/256 =
+  0.125 px/t dolu (`0x65f2`), `0x62cc`. Vez: gate `(12−D)<<4` bezi od
+  startu tasku (256 px nad oknem), pri aktivaci je otevrena; prepis
+  `spawnTankTurret`/`stepTankTurret` s `turretStartTick` posunutym zpet.
+- Simulace: zrozeni 13168 (x 94), vez miri hned, prvni strela ~ +250.
+
+### SKYEYEB (0x100a → 0x76ec) — letajici oci
+
+- `x = −16`, `+276 = 7`, formace `0xa2a2(−40, 0, 6, −1)` = sest kusu po
+  40 px vlevo za okrajem s poctem otacek 7, 6, 5, 4, 3, 2. Kazdy:
+  `a2c6(SKYEYEB#0, 34, 24, HP 1, 30 bodu, cost 10)` (aktivace az na radku
+  24), `+538 = −1` (zadny cull), `+367 |= 0x10`, z 32. Podle x hrace
+  (`0x72a6`): `< 160` → zrcadlo `x = 320 − x`, krok `+278 = −16`, uhel
+  128; jinak +16 a uhel 0. Rychlost 896/256 = 3.5 px/t, snimek
+  `0xa290(SKYEYEB#0)` = dir16 (soubor ma #0..#8 = uhly 0..128).
+- Nalet `0x7760`: pred kazdym yieldem, je-li `x <= 320` bez znamenka,
+  jedno `0x883c` a mireny kanon jen pri `(slovo & 127) < D` (D = 0 nikdy);
+  konec, jakmile `144 < x < 176`. Pak `+538 = 0`, wait 10 a `+276`×
+  { wait 4, uhel += krok, `0x65f2`, `0xa290` } — spirala; nakonec `0x62cc`
+  rovne ven.
+- Simulace: zrozeni 12372 (x −212..−12, sy 24), stred po ~50 tiku,
+  otacky po 4 ticich, konecne uhly 112..32.
+
+### JETS (0x001f → 0x9ca0, 0x021f → 0x9d1e)
+
+- **JETS#0 `0x9ca0`:** `a2c6(JETS#0, 36, −32, HP 18, 90 bodu, cost 15)`;
+  wait na radek 100 (`0x9afa`), `vx −0.5`, `vy +0.5` (mapove), wait na
+  radek 288; pak dite `0x9cde` a konec tasku (`0xa34c`, bez vybuchu).
+  Dite = vzlet: `a2c6(JETS#2, 34, 288, HP 2, 90 bodu, cost 15)`, raw wait
+  100 (`0x5f22`: bez pohybu i cullu), `y = fp@(3542) + 288`, z 32,
+  `vy −4`, `vx 0`, `0x62cc` — stroj proleti zdola nahoru 3.75 px/t na
+  obrazovce. Prepis `spawnJetFly` (zaznam `jetfly`, `noCull` behem raw
+  waitu).
+- **JETS#1 `0x9d1e`:** `a2c6(JETS#1, 36, −32, HP 18, 90 bodu, cost 15)`,
+  `+538 = −1`, `vx −0.25`, `vy +0.25`, wait 200, `0x6d96` (vynuluje
+  rychlosti i zrychleni), `+538 = 0`, `0x62cc`. (`x += 100; x −= 100` je
+  bez ucinku.)
+- Simulace (`build/survey/d4/`): JETS#0 zrozen 13032 (x 267), sjizdi od
+  radku 100, vzlet JETS#2 z x 141 v tiku ~13910.
+
+### TRUCK (0x0024 → 0x9d64)
+
+- `a2c6(TRUCK#0, 36, −48, HP 30, 50 bodu, cost 15)`, `+367 |= 1` (bez
+  stinu), **`x = −48`** (bez ohledu na PAM), z 1, `vx 0.5`. Smycka
+  `0x9d88`: wait 70, uhel `112 + (0x883c & 31)`, dite `0x9dc0`, `vx 0`,
+  wait 20. Dite: `a2c6(TRUCK#1, 36, −16, HP 3, 10 bodu, cost 5)`, anim
+  `0x9dd6` TRUCK#1..#3 perioda 4 loop, rychlost 512/256 = 2 px/t ve
+  zdedenem uhlu, wait 20, pak `vx = vy = 0` (lezi) a `0x62cc`. Prepis:
+  hazard `truckdrop` (`spawnTruckDrop`).
+
+### _AIRPORT#14 (0x1c3c → 0x7970) — startujici letadla
+
+- Nejprve `0x6178` kopie s aktivaci 127 (`0x797e`), rodic 176. Oba:
+  `a2c6(_AIRPORT#14, 34, 176|127, HP 2, 25 bodu, cost 3)`, **`SF
+  fp@(3615)`** (COLOR07 vypnout), `+397 |= 1`, z 12, `x −= 40`, `vx 0.5`,
+  wait 80, anim `0x79ba` = _AIRPORT#15 (loop jednoho snimku), `+346 =
+  0x1000` → ax = 0.0625 px/t², `0x62cc`.
+- Simulace: dite zrozeno 12584 (x 8, sy 127), rodic pozdeji na 176;
+  vx 1.19 po 90 tikach, 4.94 po 150.
+
+### _RIGS#4 (0x083e → 0xb22a)
+
+- `a2c6(_RIGS#4, 36, −16, HP 20, 40 bodu, cost 10)`, wait na radek 24,
+  `+276 = 5`× { wait 20, uhel 64, `0x95c2(0, 8)` = rovna kanonova strela
+  z (x, y + 8) dolu }, `0x62cc`. (`0x95c2` = `0x95ca` s ofsetem d0/d1.)
+
+### _ONERIG (0x003d → 0x8166) — vrtulnikova plosina
+
+- `a2c6(_ONERIG#0, 34, −16, HP 6, 45 bodu, cost 15)`, z 0, sekundarni
+  rotor `0x6c82` (slot +422) JEEPHELI#5..#8 perioda 10 loop (pomaly,
+  stale videt); wait na radek 64, `0x93e2` = standardni rotor (perioda 1,
+  #5..#8 po dvou tikach, blika bitem 0x80), `vz 0.5` do `z ≥ 32`, `vz 0`,
+  rychlost 0, uhel 192 (nahoru), krok `+276 = x < 160 ? 12 : −12`,
+  `+278 = 20`× { wait 14, uhel += krok, `+356 < 768` ? `+356 += 288`
+  (1.125 px/t) : mireny kanon `0x95d2`, `0x65f2` }, `0x62cc`.
+- Simulace: zrozeni 13020 (x 51), zdvih od radku 64 (tik +330), spirala
+  vpravo, rychlost 3.3 px/t v +480.
+
+### INST1#9 (0x121c → 0xb954) a JEEPHELI#31 (0x3e00 → 0xacb6)
+
+- INST1#9: `a2c6(INST1#9, 0, −24, HP 0, 0, cost 2)`, anim `0xb96a`
+  INST1#9/#10 perioda 4 loop (blikajici svetlo), `0x62cc`.
+- JEEPHELI#31 → `0xacb6`: `a2c6(SWAP#1, 0, −16, HP 0, 0, cost 10)`, `+534`
+  vypnuto, `+397 |= 1`; po radku 32 zapise svou polohu do
+  `fp@(3554)/(3556)`, vynuluje `fp@(3548..3551)` a ceka, dokud
+  `fp@(3548)` nekdo nenastavi (logika jeepu; heli bez ucinku). Prepis
+  kresli SWAP#1 staticky.
+
+### Vazane deti (`0x6144`, `+367` bit 3) — zmereno na FLATTANK/MAMA
+
+- `0x6144` zaklada dite s `+542 = 0x6db4` (sirotek umira bez vybuchu),
+  `0x614a` totez s vlastnim zaznamem, `0x6178`/`0x617a` kopie s
+  `+542 = −1` (nezavisle). V `0x62d2` (0x62da..0x62f8): ma-li objekt
+  `+367` bit 3 a rodice `+308`, **zkopiruje x/y/z rodice a integruje
+  presne jeden krok vlastni rychlosti** — `+332/+336` jsou tedy pevny
+  ofset vuci rodici (vez MEDTANKu 0, vez FLATTANKu (0, +4), bar MAMA
+  (0, −30)). Bit 2 (`0x63ac`): dite blika spolu s rodicem (`hitFlash`).
+  Prepis: `turretDy`, hazard `mamabar` polohovany z kroku rodice.
+
+### MAMA (0x0025 → 0x7baa) — miniboss s rojem
+
+- `a2c6(MAMA#0, 34, −48, HP 70, 300 bodu, cost 35)`, `+367 |= 0x10`, z 32,
+  rotor `0x93e2`, dite `0x6144(0x7be6)`, `vy = 0x6000/65536 = 0.375 px/t`
+  (obrazovka), `0x62cc`. Smrt = bezny oblacek `0x894a` (z 33).
+- **Bar `0x7be6`:** `a2c6(MAMA#1, 34, −48, HP 0, 0, 0)`, `+538 = −1`, rotor
+  `0x93e2`, `+367 |= 12` (vazany, ofset (0, −30)); wait na radek 48,
+  snimek MAMA#2 (`0x6d76`), wait 4, smycka { dron `0x6144(0x7c44)`, je-li
+  `sy < 208` wait 4 a znovu }, MAMA#1, konec tasku (drony osiri).
+- **Dron `0x7c44`:** `a2c6(MAMA#3, 34, −48, HP 1, 13 bodu, cost 9)` + guard
+  `0x8822`, bit4, z 24, varianta `0x883c & 3`: anim `0x7d2e` #3,#4,#5,#4
+  perioda 3 / `0x7d44` #6,#7,#8,#7 perioda 4 / `0x7d5a` #9,#10,#11,#10
+  perioda 1 / `0x7d70` #12,#13,#14 perioda 3 (loop). `+276 = 0`, `+542 =
+  0x7d84` (sirotek: `+276 = −1`), uhel 192, rychlost 640/256 = 2.5,
+  `+282 = ~vx`. Smycka `0x7cac`: je-li `(slovo vx) ^ +282 < 0`: wait
+  `+280 = (0x883c & 7) + 2`, krok 0; `d1 = 127 − sy`; je-li `d1 ^ (slovo
+  vy) < 0`: `+282 = slovo vx`, krok +10, a je-li `(x − 160) ^ d1 >= 0`
+  krok −10. Uhel += krok, `0x65f2`, wait `+280`; po sireni (`+276`)
+  `0x6d96`, `vy = −2` (slovo), `+350 = 0x4000` (ay 0.25) a pad
+  (`0x62cc`). Prepis `spawnMamaDrone`/`stepMamaDroneBody` (16bitova
+  slova pres `signedWord`).
+- Simulace (`build/survey/d5/`): zrozeni 13928 (x 88), bar od radku 48
+  (tik +400) plni rozpocet (6 dronu pri cost 169), bar konci na radku
+  208 (tik ~+760), drony padaji.
+
+### INST1#14 (0x1c1c → 0xb6ce) — plosina s pistem a odpalovacem
+
+- Rodic: dite `0x6144(0xb71c)` pred `a2c6(INST1#14, 0x8000, −60, HP 0, 0,
+  cost 10)` (trida bit 15 = bez sweepu), `+367 |= 1`, z 2; smycka:
+  snimek INST1#14/#15 podle bitu 1 celeho y pistu (`+312 → a0@(325)`).
+- **Pist `0xb71c`** (nevazany, `+542 = 0x6db4`): `y += 57`,
+  `a2c6(INST1#16 | #17 podle typ ≠ 1, 36, −48, HP 0, 0, cost 15)`, bez
+  stinu, z 1; smycka: wait `150 + (0x883c & 60)`; je-li `fp@(140)` (pocet
+  aktivnich tovaren INST1#11) 0 → znovu; jinak dite `0x6178(0xb7a6)`,
+  27× { yield, y −= 1 }, wait 30, 27× { yield, y += 1 }.
+- **Odpalovac `0xb7a6`:** `a2c6(INST1#3, 4, −32, HP 7, 70 bodu, cost 8)`,
+  z 0, wait 70; smycka `0xb7c2`: `vy 0.5`, wait `50 + (0x883c & 63)`;
+  bez tovarny wait 30; jinak `vy 0`, wait 10, uhel na hrace
+  (`0x72ee`/`0x65be`), homing `0x8530(0, −4, uhel)`, wait 30.
+- `fp@(140)` zvysuje `0xb6ae` (tovarna po radku 84); `0xb6ba` (snizeni)
+  nema v `AMPROG.OBJ` zadneho volajiciho — pisty pracuji i po zniceni
+  tovarny. Prepis `g.inst1Factories`.
+
+### INST1#11 (0x161c → 0xb810) — tovarna na tanky
+
+- Zamek `0x5eda(6)`, `a2c6(INST1#11, 38, −63, HP 90, 2500 bodu, cost 20)`,
+  `+376 = 0xb97c`, handler `0xb8ca` pro bit 0 (`0x653e`) a bity 3+4
+  (`0x6564`), z 16, `0x9ae8(84)` (do radku 84 bez kolizi), `0xb6ae`;
+  smycka: wait 100, `+276−−`, je-li `(+276 & 3) == 0` dite
+  `0x6178(0x9eca)` = MEDTANK typ 3 na `y = fp@(3542) − 16`, `x = 236 +
+  (0x883c & 63)`; 3× `0xb8a6` { anim `0xb8aa` INST1#13, #12, #11 perioda
+  5 (drzi), zvuk `0x541e(x)`, paprsek `0x617a(0xb906)`, wait 40 }.
+- **Paprsek `0xb906`:** `a2c6(INST1#4, 6, −63, HP 0, 0, cost 20)`, z 0,
+  `y += 118`, `x += 1`, anim `0xb92a` perioda 1 #4,#5,#6,#6,#7,#7,#8,#8 +
+  kill (8 tiku), wait 5 (`0x62b8`), trida 0, `0x9b70` do konce animace —
+  smrtici jen prvnich 5 tiku.
+- **Zasah `0xb8ca`:** HP−1; > 0 → zvuk `0x4e2e` + `0xa35a`; jinak skore
+  `+362` obema zivym hracum, je-li `fp@(140) <= 1` `0x8852` (bily
+  zablesk = SMART pulz), `0xa36a`. **Smrt `0xb97c`:** `x += 2`, `+276 =
+  INST1#2`, dite `0x8992` (zapis znicene tovarny do mapy), 4× { `0x8876`
+  na (0,0), (48,−48), (−48,−48), (24,−32), raw wait 20 } = 16 velkych
+  vybuchu, `0x6288`. Prepis `factoryDeath` (booms se zpozdenym startem
+  `t = −1 − 20·kolo`), `addDecal(INST1#2)`, `startWhiteFlash`.
+- Simulace: zrozeni 10540 (x 110), aktivace radek 84 (tik +590), tank
+  z (289, −16) v +690, 3 paprsky po 40 ticich, 90 zasahu → 16 vybuchu.
+
+## GRASS (prepsano 2026-09-03; overeno simulaci `build/survey/grass/`)
+
+### Animator uzel nemeni (zmereno)
+
+`0x6c88` uklada snimek do bloku animatoru (`%a0@(18)`), nikoli do `+368`;
+kolizni rozmery (`+500/+502`) prepisuje jen `0x6d7c`. **Uzel objektu tedy
+po celou dobu drzi snimek z `a2c6`** (nebo z posledniho explicitniho
+`0x6d7c`), i kdyz animace kresli jine snimky. `NODE_GRAPHIC` proto vzdy
+nese `a2c6` snimek.
+
+### VTOL (0x0023 → 0x8344)
+
+- `a2c6(VTOL#0, 36, −16, HP 8, 35 bodu, cost 10)` (bez `0x8822`), anim
+  `0x0835a` VTOL#0/#1 perioda 4 loop, `+328 z = 0` (`clrl`), pak
+  `0x9afa(16 + (0x883c & 31))` = ceka na nahodny radek 16..47.
+- Vzlet: `+397 &= ~1` (neprepisuje se), `0x65ae` = maska udalosti
+  `+508 &= ~16` (rusi kontakt tridy 36), `0x6566` zapne bit 3 s vychozim
+  `0xa362`, `+504 = 34` (smrtici kontakt); `+340 vz = 0.5` a smycka
+  `0x839e` do `z >= 32` (cele slovo), pak `vz 0`.
+- Let: anim `0x083b4` VTOL#2, #3, #4 perioda 8 a `end(0)` = drzi #4;
+  `+348 ay = 4096/65536 = 0.0625 px/t²` (bez bitu 4, tedy mapove
+  souradnice) — stroj se rozjizdi dolu; po `0x9afa(192)` jeden mireny
+  kanon `0x95d2` a `0x62cc`.
+- Simulace: tri kusy zrozeny v tiku 5972 (x 163/198/233, sy −16),
+  kazdy vzletne na svem nahodnem radku (v tiku +220 byl jeden ve
+  fazi 2, druhy ve fazi 1 se z 14, treti jeste na zemi), 8 zasahu = smrt.
+
+### XEVIOUS#5 (0x0a2e → 0x791a) — rotujici disk
+
+- PAM kresli XEVIOUS#5, ale korutina vola `a2c6(XEVIOUS#3, 34, −16,
+  HP 0, 0 bodu, cost 13)`; `+367 |= 1` (bez stinu), `+328 z = 32`,
+  handler bitu 0 = `0x7968` (jen zvuk `0x55b0` podle x — **neprepsan**),
+  `+336 vy = 0.5` (mapove, na obrazovce 0.75 px/t), anim `0x0794c`
+  XEVIOUS#3..#8 perioda 7 loop, `0x62cc`.
+- HP 0 znamena, ze `a2c6` **neinstaluje zadny vychozi handler**
+  (`0xa2fc beqs`), takze objekt nelze znicit; vlastni handler bitu 0 ale
+  uzel drzi, takze bolt hrace na nem zanikne. Prepis: `s.boltPing`
+  (rozsirena podminka `collectBulletEvent` pro spawny) a v dispatchi
+  navrat bez poskozeni. Trida 34 = smrtici kontakt.
+
+### XEVIOUS#9 (0x122e → 0x7ed8) — roj s bombami
+
+- `0x7ed8`: devet kopii `0x6178`, mezi nimi rodic `y -= 3` (rucne
+  napsana `0xa2a2`), tedy deset kusu po 3 px nad sebou; rodic pak
+  propadne do stejneho kodu.
+- Kazdy: `a2c6(XEVIOUS#9, 34, −48, HP 1, 20 bodu, cost 10)` + guard
+  `0x8822`, `+367 |= 16` (obrazovka), `x += (0x883c & 127) − 64` s
+  odrazem (`<= 32` → +64, `> 288` → −64), `z = 32`, `vy = 2`.
+- Po `0x9afa(40)`: `vy = 1`; `x >= 160` → `vx = 3` a anim `0x07f5e`
+  (#12, #11, #10, #9 perioda 4 loop), jinak `vx = −2` a anim `0x07f7a`
+  (#10, #11, #12, #9); pak jedna bomba `0x6178(0x7f9a)` a `0x62cc`.
+- **Bomba `0x7f9a`:** zvuk `0x4cf8` (neprepsan), `a2c6(BULLET#3, 6, −16,
+  HP 0, 0 bodu, cost 3)`, `0x6d96` (nuluje zdedene rychlosti),
+  `+367 |= 17` (bez stinu + obrazovka), `+364 = 0` (cull margin 0), anim
+  `0x07fc6` BULLET#3/#4 perioda 4 loop, rychlost `+356 = 512` = 2 px/t
+  na hrace (`0x72ee` + `0x65be` bez omezeni) s rozptylem
+  `(0x883c & 31) − 16`, a v kazdem tiku `z = (slovo y) >> 1` (logicky
+  posuv). Trida 6 s HP 0 = smrtici kontakt bez handleru, tedy stejny
+  model jako kanonovy granat (bolt hrace ji neznici).
+- Simulace: prvni kus zrozen v tiku 128 (x 201), deset kusu po ~24
+  ticich, kazdy odhodi jednu bombu na radku 40.
+
+### BOB se skryva pres +397 bit 7 (zmereno)
+
+`+397` je bajt priznaku animacniho bloku (`+380 + 17`). `0x481a` (vlozeni
+do BOB fronty) zacina `btst #7,%a0@(21)` a pri nastavenem bitu zaznam
+**nevlozi**. Animacni skripty proto pouzivaji `andflag(128)` /
+`orflag(128)` jako „zobraz" / „skryj" (napr. hlaven XEVIOUS#0). Prepis:
+`h.hidden` v kompozitoru hazardu.
+
+### TRILO (0x0822 → 0x826a)
+
+- PAM kresli TRILO#4, korutina vola `a2c6(TRILO#0, 36, −16, HP 4,
+  35 bodu, cost 10)`, `+397 |= 1`, `z = 0`.
+- `0x9afa(8)` → `+336 vy = 0.5` (mapove) → `0x9afa(64)` → anim `0x082a6`
+  TRILO#1..#4 perioda 8 s `end(0)` (drzi #4) → wait 20 → `+397 &= ~1`,
+  `0x65ae` (maska `+508 &= ~16`), `0x6566` s `0xa362`, `+504 = 34`
+  (smrtici kontakt) → `vz 0.5` do `z >= 32` → `vz 0`, `+356 = 0`.
+- Lovecka smycka (`0x82f4`, kazdych 10 tiku): uhel na hrace
+  (`0x7312` + `0x65be` s d2 = 0 = absolutne); **je-li vysledek 160..224
+  (bajt `+359`, bez znamenka), prepise se na 64** — tvor nikdy nemiri
+  primo vzhuru; pak `+358 += ±16` podle znamenka slova `0x883c`; je-li
+  `+356 < 768`, `+356 += 48`; `0x65f2`. Rychlost tedy roste po 0.1875
+  px/t az na 3 px/t.
+- Simulace: zrozeni 3284 (x 308), vzlet od radku 64, v tiku +320 uhel
+  151 pri rychlosti 1.12 px/t.
+
+### XEVIOUS#0 (0x002e → 0xadf2) — letoun se skriptem drahy
+
+- `a2c6(XEVIOUS#0, 36, −16, HP 30, 95 bodu, cost 13)` (trida 36 = **neni**
+  smrtici kontakt), po `0x9afa(64)` vazana hlaven `0x6144(0xae88)` a
+  skript drahy podle `+276` z PAM: typ 1 → `0xae68`, typ 2 → `0xae72`,
+  jinak `0xae7e`. Rychlost `+356 = 128` = 0.5 px/t.
+- Skript je pole dvojic **[uhel, delka/2]** (`0xae36`): `+359 = bajt`,
+  `0x65f2`, dalsi bajt × 2 = `0x629c`; bajt 255 = konec (`0x6d96` +
+  `0x62cc`). Typ 1: 127(314), 112(20), 96(20), 81(20), 65(508) a dale
+  pokracuje daty typu 2: 128(78), 144(20), 159(20), 175(20), 190(200),
+  konec. Typ 2 zacina az u 128. Typ 3: 192(96), 208(20), 224(20),
+  240(20), 0(508) — jeho tabulka konci bez 0xff, ale objekt do te doby
+  odleti z obrazu (prepis po poslednim zaznamu jen leti dal).
+- **Hlaven `0xae88`:** `a2c6(XEVIOUS#1, 0x8000 = bez sweepu, 0, HP 0,
+  0 bodu, cost 3)`, `0x6d96`, `+367 |= 13` (bez stinu, blika s rodicem,
+  vazane dite), `+340 vz = 1` = ofset nad rodicem. Smycka: anim
+  `0x0aeb0` `andflag(128)` #1, #2, #2, #1 perioda 4 `orflag(128)`
+  (viditelna 16 tiku), wait 8, bomba `0x6178(0x7f9a)` (stejna jako u
+  XEVIOUS#9), wait 100.
+- Simulace: zrozeni 116 (x 253), aktivace na radku 64, typ 1 leti vlevo
+  0.5 px/t s hlavni na hrbete.
+
+### _PLAT#9/#10 (0x1242/0x1442 → 0xa3b2/0xa3b8) — plosina se ctyrmi urovnemi
+
+- Vstupni bod urcuje typ: `0xa3b2` (z #9) dela `st +276` (bajt 0xff),
+  `0xa3b8` (z #10) `sf +276` (0) — **hodnota typu z PAM se prepise**.
+  Podle nej i grafika: `+276 != 0` → _PLAT#9, jinak #10.
+- Plosina: `a2c6(_PLAT#9|#10, 36, −16, HP 0, 0 bodu, cost 5)` (HP 0 =
+  `a2c6` neinstaluje handlery, tedy nezasazitelna), `+397 |= 1`,
+  `0x9afa(16)`, `+364 = −16`; smycka: wait 100, vozidlo
+  `0x6144(0xa462)` (typ se kopiruje do ditete), zvuk `0x5138` (stejny
+  jako otevirani FLAME), 18× { yield, `x += typ ? +1 : −1` }, wait 100,
+  18× { yield, `x -= …` }, pak ceka (`0x62d2`), dokud `+312` (dite)
+  neni nula, a opakuje.
+- **Vozidlo `0xa462`:** `a2c6(_PLAT#18|#17, 36, −16, HP 10, 60 bodu,
+  cost 10)`, `+397 |= 1`, vez `0x6144(0xa4d6)`, `x = 284 | 36`
+  (absolutne), `y -= 2`, wait 50, `vx = −0.5 | +0.5`, wait 190, `vx = 0`,
+  `0x62cc`.
+- **Vez `0xa4d6`:** `a2c6(_PLAT#19, 0x8000, −16, HP 0, 0 bodu, cost 4)`,
+  `+397 |= 1`, `+367 |= 12` (blika s rodicem + vazane dite),
+  `+332 vx = ±11` = pevny ofset; wait 300, pak smycka { anim `0x0a512`
+  #20, #21, #22, #22, #21, #20, #19 perioda 8 (drzi #19), wait 24, zvuk
+  `0x4d6a` (**neprepsan**), strela `0x617a(0xa548)`, wait 120 }.
+- **Strela `0xa548`:** `a2c6(_PLAT#23, 6, −16, HP 0, 0 bodu, cost 3)`,
+  `+367 |= 1`, `+364 = 0`, anim `0x0a568` #23, #24, #25, #24 perioda 1
+  loop, rychlost `+356 = 256` = 1 px/t na hrace (`0x7312` + `0x65be`),
+  `0x62cc`.
+- Simulace: obe varianty zrozeny 5976 (x 53 typ 0, x 267 typ 1); vozidlo
+  vyjizdi z x 36 (resp. 284) a za 190 tiku ujede 95 px, vez ho sleduje
+  s ofsetem ∓11 a po 300 ticich strili kazdych ~150 tiku.
+
+### DADA (0x0059 → 0x7a2c)
+
+- `a2c6(DADA#0, 34, −48, HP 12, 70 bodu, cost 15)`, `+376 = 0x88ec`,
+  `+328 z = 32`, `+336 vy = 1` (slovo). Po `0x9afa(0)`: `+344 ax =
+  ±2048/65536 = ±0.03125` (kladne, kdyz `x <= 160`, jinak zaporne, tedy
+  ke stredu — nastavi se **jednou**, takze stroj stred prejede) a
+  `+367 |= 16` (obrazovka).
+- Smycka: wait `(14 − fp@(182)) × 2` tiku, pak **dve** navadene strely
+  `0x8530(−22, 20, 64)` a `0x8530(+22, 20, 64)` (d0/d1 jsou ofsety od
+  objektu, d2 absolutni uhel — zmereno na `0x8530`).
+- **Smrt `0x88ec`:** zvuk `0x4c3c`, `0x6d96`, pak 8× { dite `0x8952`
+  posunute o aktualni rychlost, `+358 += 100`, `+356 += 1536`, `0x65f2`,
+  raw wait 2 } — tentyz kod jako smrt hrace `0x88fc`, jen 8 chvostu a
+  krok rychlosti 6 px/t. Prepis: `spawnPlayerBurst(..., 8, 0x600, z+1)`.
+- Simulace: zrozeni 5448 (x 34), po radku 0 zrychluje vpravo, v tiku +80
+  vx 1.28 px/t.
+
+### _CORN#7 (0x0e41 → 0x820c)
+
+- `+364 = −90` **jeste pred** `a2c6(_CORN#7, 36, −80, HP 0, 0 bodu,
+  cost 25)`; `z = 0`, `0x65a4` (maska `+508 &= ~24`). Po `0x9afa(80)`:
+  `+504 = 34` (smrtici kontakt), `+340 vz = 0.25`, zvuk `0x54ac`
+  (**neprepsan**), smycka do `z >= 32`, pak `vz = 0`, `+348 ay =
+  2048/65536` a `0x62cc` — vez se zvedne a odleti dolu.
+- HP 0 = `a2c6` neinstaluje handlery, takze je nezasazitelna.
+- Simulace: zrozeni 3404 (x 99, sy −80), zvedani od radku 80 (tik +640),
+  z 32 v tiku +800, pak zrychluje dolu a v +1000 je za okrajem.
+
+### JEEPHELI#23 (0x2e00 → 0xac6a) — druha SWAP plosina
+
+- `a2c6(SWAP#0, 0, −16, HP 0, 0 bodu, cost 10)`, `+534 = −1`,
+  `+397 |= 1`; po `0x9afa(32)` zapise `fp@(3550) = x`, `fp@(3552) = y`,
+  vynuluje `fp@(3554)` a ceka na `fp@(3548)` (logika jeepu). Druha
+  varianta teze plosiny je `0xacb6` (JEEPHELI#31, SWAP#1, globaly
+  `fp@(3554)/(3556)`).
+
+### JEEPHELI#43 (0x5600 → 0xad30) — pasmo stop pasu
+
+- **Nema `a2c6`**: jen `0x5ee0` (rezervace grafiky JEEPHELI#40) a
+  `0x9ac8(0)`, takze se nic nekresli. Po aktivaci nastavi
+  `fp@(150) = y`, `fp@(152) = y − 600`, `fp@(154) = −1` a drzi je,
+  dokud `fp@(3530) + 256 >= fp@(152)`; pak `fp@(154) = 0` a konci.
+- Uvnitr pasma nechavaji stopy: **vez tanku** (`0xa000` v `0x9faa`,
+  tedy MEDTANK i FLATTANK) kazdych 20 tiku a **jeep** (`0x9172`)
+  kazde 3 tiky. Dite `0xad98` ma `+397 |= 65` (bit 6 = dekal do mapy),
+  `+367 |= 1`, smerovou grafiku `0xa252` z tabulky `0xade2`
+  (JEEPHELI#40..#43 po osmi sektorech uhlu, s uhlem **rodice**), a
+  vykresli se do obou mapovych stran (`y -= 320` mezi dvema fieldy).
+- Prepis: `g.trackZone`, dekal v `stepTankTurret` (jeep se nemodeluje).
+  Simulace: pasmo 16959..16359, tank typ 3 (uhel 64) klade JEEPHELI#42
+  kazdych 10 px.
+
+### Revize GRASS (2026-09-03, Fable po Opusovi)
+
+Vsechny konstanty sekce porovnany s `work/prog.txt`, sondy prehrany.
+Opraveno: DADA pricitala skore dvakrat (vlastni vetev smrti opakovala
+`releaseSpawnTask` + `awardScore`); animator VTOL (`0x0835a`) se
+zastavil behem zdvihu a animator veze _PLAT (`0x0a512`) behem wait 120 —
+animator bezi nezavisle na cekani korutiny; `+364` u _PLAT (−16 po
+radku 16, `0xa3e4`) a u strely `0xa548` (0) nebylo modelovano; stopa
+pasu u FLATTANK vznika z polohy veze (+4). Navic opraven DESERT: strela
+vejce `0xa9a0` ma masku `+508 = 0`, takze na kontaktu s hracem nezanika
+(kanonovy granat `0x9632` naopak zapina bity 3+4 s `0x6db4`).
+
+Vychozi hodnoty zaznamu tasku (`0x61ee..0x6238`): `+364 = −64`,
+`+538 = 0x6db4`, `+542 = +534 = −1`, `+376 = 0x894a`, vsechny handlery
+`+510..+530 = 0x6288`, `+508 = 0` (zadna povolena udalost), `+367 = 0`.
+Objekt s HP 0 proto nereaguje na nic, dokud korutina sama nepovoli bity
+(`0x653e`, `0x654a`, `0x6564`, `0x6566`).
+
+Zname a prijate odchylky: vazane deti (hlaven XEVIOUS#0, vez _PLAT) se
+polohuji v kroku hazardu, tedy o tik za rodicem (0.5 px pri 0.5 px/t).
+
+## RIVER (prepsano 2026-09-03; overeno simulaci `build/survey/river/`)
+
+### SKYEYEA (0x0009 → 0x75f8)
+
+- Stejna formace jako SKYEYEB: `x = −16`, `+276 = 7`,
+  `0xa2a2(−40, 0, 6, −1)` = sest kusu s poctem otacek 7..2.
+- `a2c6(SKYEYEA#0, 34, **192**, HP 1, 30 bodu, cost 10)` — aktivace az na
+  radku 192, tedy u spodniho okraje; `+538 = −1` (bez cullu),
+  `+367 |= 16` (obrazovka), `z = 32`.
+- `0x72a6` (poloha hrace 1): je-li **y hrace >= vlastniho** (bez
+  znamenka), objekt prevezme jeho radek (`0x7638`) — nalet je tedy vzdy
+  po rade hrace. Je-li **x hrace >= 160**, krok `+278 = −16` a uhel 0;
+  jinak zrcadlo `x = 320 − x`, krok `+16` a uhel 128. Oproti SKYEYEB
+  (`0x76ec`) jsou kroky prohozene, takze se toci na opacnou stranu.
+- Rychlost `+356 = 768` = 3 px/t (SKYEYEB ma 896). Snimek se bere
+  tabulkou `0x76cc` pres `0xa268` (16 polozek, index
+  `((uhel + 8) & 240) >> 4`): polozka 0 = #8, polozky 8..15 = #0..#7;
+  polozky 1..7 (`0x2200`) jsou pro pouzite uhly nedosazitelne.
+  **`0x6d7c` meni i kolizni uzel**, proto `nodeKey` skyeyea0..8.
+- Nalet konci, jakmile `144 < x < 176`; pak `+538 = 0`, wait 10 a
+  `+276`× { wait 4, uhel += krok, `0x65f2`, novy snimek }. Na konci
+  **jen pri obtiznosti >= 4** mireny kanon `0x95d2` (`0x76b0`), pak
+  `0x62cc`.
+- Simulace: sest kusu zrozeno v tiku 968 na radku hrace (192), nalet
+  zprava 3 px/t, spirala po 4 ticich s uhly 144..240 a snimky #1..#7.
+
+### HOVER (0x082a → 0xb466)
+
+- `a2c6(HOVER#0, 36, −48, HP 10, 90 bodu, cost 15)`, `+376 = 0x88ec`
+  (osm chvostu jako DADA), `+328 z = 2`, `+367 |= 1` (bez stinu), vazana
+  sukne `0x6144(0xb512)`.
+- Typ 1 (jediny v mape): `+336 vy = 1`, `+332 vx = +0.5`, a je-li
+  `x >= 160`, `negl` → −0.5, tedy vzdy ke stredu.
+- Po `0x9afa(100)`: anim `0x0b4c4` HOVER#1..#5 perioda 5 s `end(0)`
+  (drzi #5), `+348 ay = −2048/65536` (brzdi klesani), wait 23, raketa
+  `0x6178(0xb532)`, wait 25, `ay = +4096/65536`, wait 50, `vx = 0`,
+  `ay = 0`, `0x62cc`.
+- **Sukne `0xb512`:** `a2c6(HOVER#6, 36, −48, HP 0, 0 bodu, cost 0)`,
+  `+367 |= 12` (blika s rodicem, vazane dite s nulovym ofsetem, protoze
+  vznika jeste pred nastavenim rychlosti).
+- **Raketa `0xb532`:** `a2c6(HOVER#7, 34, −48, HP 10, 50 bodu, cost 10)`,
+  `+364 = −8`, `0x6d96`, `+340 vz = 1` do `z >= 32`, pak `vz = 0` a
+  `+336 vy = 0.25`; po `0x9afa(224)` smycka `0xb57c`: uhel z bajtu
+  `+276` (kladny bajt se neguje, zaporny se pouzije primo → 0, 240, 224,
+  … 144, 128, 144, …), jeden rovny granat `0x95ca` a `0x629a` = wait 1.
+  Strili tedy **kazdy tik** dokola, dokud ji nekdo nezastreli.
+- Simulace: zrozeni 4048 (x 79.5), raketa v tiku +150, palba od radku
+  224 s krokem uhlu 16 za tik.
+
+### LAKESUB (0x0029 → 0xb34a) — ponorka
+
+- `a2c6(LAKESUB#0, 36, 64, HP 6, 80 bodu, cost 17)`, anim `0x0b360`
+  (perioda 6: #1, #2, #3, #4; pak perioda 12 smycka #5, #4) = vynoreni.
+- Wait 40, vez `0x614a(0xb3a8)`, wait 70, anim `0x0b392` (perioda 6:
+  #4, #3, #2, #1, **kill(0)**) = ponor. `0x8800` v animaci vola
+  `fp@(-1414)`, tedy tiche zabiti bez skore a bez vybuchu.
+- **Vez `0xb3a8`:** `a2c6(LAKESUB#0, 0, 0, HP 0, 0 bodu, cost 5)`,
+  `0x6d96`, `+367 |= 13` (bez stinu, blika s rodicem, vazane dite),
+  `+340 vz = 1` = ofset nad rodicem; anim `0x0b3ce` (perioda 6: #7, #8,
+  #9, #10, #10, #9, #8, #7, #6, kill) — vez zije 54 tiku. Po wait 26
+  zamiri na hrace (`0x7312` + `0x65be`) a v **jednom tiku** vypali pet
+  strel `0x6178(0xb41a)` s krokem uhlu 51.
+- **Strela `0xb41a`:** `a2c6(LAKESUB#11, 6, −16, HP 0, 0 bodu, cost 1)`,
+  `+364 = 0`, `+356 = 384` = 1.5 px/t ve zdedenem uhlu, `z = 0`; v
+  kazdem tiku, kdy je cele slovo `z` nulove: `+340 vz = 2`,
+  `+352 az = −6144/65536` a cakanec `0x6178(0x9358)` — strela se odrazi
+  po hladine (parabola ~43 tiku, vrchol z 21).
+- Simulace: zrozeni 3980 na radku 64, vez v tiku +40, pet strel v tiku
+  +66, ponor a tichy zanik v +180; odrazy s cakanci po ~43 ticich.
+
+### JUNTANK#1 (0x022b → 0xa0d2) — tank s vazanou vezi
+
+- `a2c6(JUNTANK#1, 36, −48, HP 15, 90 bodu, cost 18)`, `+397 |= 1`,
+  `+376 = 0x88ec` (osm chvostu), vez `0x6144(0xa12e)`, `+336 vy = 0.25`
+  a `+276 = 384`. Smycka `0xa108`: **je-li `+312` (dite) nula, `vy = 0`**
+  — zniceni veze tank zastavi; jinak jede, dokud `+276` neklesne pod
+  nulu, pak `vy = 0` a `0x62cc`.
+- **Vez `0xa12e`:** `a2c6(JUNTANK#20, 36, −48, HP 12, 90 bodu, cost 10)`,
+  `+538 = −1` (bez cullu), `+367 |= 13` (bez stinu, blika s rodicem,
+  vazane dite s ofsetem `+332/+336/+340 = (−2, −18, +1)`), rychlost 0,
+  uhel 64, `+276 = 100`. Kazdy tik `−−+276`; pri nule rovny granat
+  `0x95ca` a `+276 = 50`; je-li `+276 <= 10`, mireni na hrace
+  (`0x7312` + `0x65be` s limitem 16) a novy smerovy snimek `0xa27c`
+  (zaklad JUNTANK#20, osm smeru → #20..#27, meni i uzel).
+- Simulace: zrozeni 10260, jizda 0.25 px/t, prvni granat v tiku +100,
+  dalsi po 50 ticich; po 384 ticich stoji.
+
+### JUNTANK#2 (0x042b → 0xa592) — poklop s dronem
+
+- `a2c6(JUNTANK#2, **0**, −32, HP 0, 0 bodu, cost 5)` — trida 0, tedy
+  bez kolizi a nezasazitelny; `+397 |= 1`. Po `0x9afa(48)` smycka:
+  anim `0x0a5b4` (perioda 4, #3..#8, drzi #8) = otevreni, wait 30, dron
+  `0x6178(0xa60e)`, wait 50, anim `0x0a5e0` (#7..#2) = zavreni, wait 100;
+  dalsi kolo jen dokud je `sy <= 192` (`0xa5f8`), jinak `0x62cc`.
+- **Dron `0xa60e`:** `a2c6(JUNTANK#12, 34, −32, HP 4, 70 bodu, cost 10)`,
+  `+364 = −10`, anim `0x0a630` (perioda 8: #9, #10, #11, #14, drzi #14),
+  `+340 vz = 1` do `z >= 32`, pak `+397 &= ~1`, `vz = 0`, uhel 64 a
+  rychlost `+356 = 768` = 3 px/t. Smycka `0xa672`: mireni na hrace s
+  limitem **33** (`0x65be`), pak **zaokrouhleni uhlu na osminy**
+  (`(uhel + 16) & 224`), `0x65f2`, smerovy snimek `0xa27c` (zaklad
+  JUNTANK#12 → #12..#19) a `0x629c(+276)`, kde `+276` po kazdem kole
+  roste o 1 (10, 11, 12, …) — korekce kurzu se postupne zpomaluji.
+- Simulace: zrozeni 8744, otevreni na radku 48 (tik +330), dron v +360,
+  zavreni v +400, dalsi kolo po 100 ticich.
+
+### LAKEGUN#0 / #7 (0x0028 → 0xb26c, 0x0e28 → 0xb2dc) — pobrezni dela
+
+- Obe varianty: `a2c6(LAKEGUN#0 | #7, 36, **100**, HP 4, 75 bodu,
+  cost 10)` — aktivace az na radku 100; `+374 = 5` (dekal EXPL1#0).
+- `#0` (`0xb26c`): anim `0x0b288` (perioda 6, #1..#6, drzi #6) = otevreni,
+  wait 50, pak `+276 = 6`× { wait 30, navadena strela
+  `0x8530(−8, 0, **128**)` = doleva }, pak anim `0x0b2c4` (#5..#1,
+  **kill(0)**) — delo se zavre a tise zanikne bez skore.
+- `#7` (`0xb2dc`): zrcadlo — snimky #8..#13, strela `0x8530(+8, 0, 0)`
+  doprava, zaviraci anim `0x0b332` (#12..#8, kill).
+- Simulace: zrozeni 4600 na radku 100, prvni strela v tiku +80, dalsi po
+  30 ticich, po sesti se delo zavira (tik +260).
+
+### INST2#2 (0x042c → 0xb9da) — instalace s paprskem a vlnami
+
+- Zamek `0x5eda(6)` (nemodeluje se), `a2c6(INST2#2, 36, −32, HP 50,
+  **2000 bodu**, cost 40), pak **`0x658a` = `+508 &= ~1`** — dokud je
+  instalace zavrena, **bit 0 udalosti je vypnuty a bolt hrace ji
+  nezasahne**; `+376 = 0x8876` (velky vybuch).
+- `0x9afa(83)` pro typ 1, jinak `0x9afa(57)`; pak `0xb6ae`
+  (`fp@(140)++`, tentyz citac jako tovarna INST1#11) a wait 100.
+- Smycka `0xba1a`: dite `0x6178(0x8008)` = **spoustec vln**, anim
+  `0x0ba26` (perioda 5, INST2#3..#6, drzi #6) = otevreni, wait 20,
+  `0x653e(0xb8ca)` = **zapne bit 0 se stejnym handlerem jako tovarna**
+  (2000 bodu, bily zablesk pri `fp@(140) <= 1`), wait 50; pak vnitrni
+  smycka: zvuk `0x541e` (**neprepsan**), paprsek `0x617a(0xba9e)`,
+  wait 20 a `0x883c` — **kladne slovo znamena dalsi paprsek**, jinak
+  anim `0x0ba6e` (#5..#2) = zavreni, `0x658a` (opet nezranitelna) a
+  wait `(4 − fp@(140)) × 32 + 20`.
+- **Paprsek `0xba9e`:** `a2c6(INST2#8, 6, −63, HP 0, 0 bodu, cost 20)`,
+  `+367 |= 1`, `z = 1`, `y += 105`, anim `0x0bac6` (perioda 1: #8..#12,
+  kill), po `0x62b8(5)` trida 0 a `0x9b70` — smrtici jen prvnich pet
+  tiku (stejny model jako paprsek tovarny `0xb906`).
+- **Spoustec vln `0x8008`:** nema `a2c6`, tedy se nekresli;
+  `clrw fp@(146)`, `0x6d96`, `y = fp@(3542) − 32`, `+276 = 1` a
+  `(4 − fp@(140)) × 4`× { dite `0x8066`, **raw** wait 10 }. Protoze
+  `fp@(146) = 0`, vola kazdy potomek vlastni `0x813a`, takze ma vlastni
+  nahodne x i vx; `+276 = 1` mu da anim `0x080b0`
+  (#2, #3, #2, #4, #2, #5, #2, #6) — je to tedy bezny FODDERA letec,
+  jen po jednom kazdych 10 tiku.
+- Simulace: tri instalace zrozeny 13980, aktivace na radcich 83/57,
+  prvni otevreni v tiku +560, paprsek v +630 (x 157, sy 230), zavreni a
+  dalsi kolo; 50 zasahu = smrt, bily zablesk jen pri posledni.
+
+### INST2#0 (0x002c → 0xbae8) — bombardujici vez
+
+- `a2c6(INST2#0, **32**, −16, HP 80, 100 bodu, cost 10)` — trida 32
+  nema bit 1 ani 2, takze neni smrtici na dotek a kontakt ji nepoškodi;
+  bolt ano (HP != 0 → `a2c6` nainstaluje `0xa362`).
+- Smycka `0xbafa`: dokud `fp@(140) != 0` (tedy dokud zije aspon jedna
+  instalace INST2#2), pet bomb `0x6178(0x7f9a)` — **tataz bomba jako u
+  XEVIOUS#9** — po sedmi ticich; pak wait `fp@(140) × 128 + 1` a znovu.
+- Simulace: dve veze zrozeny 13956; palba zacne, jakmile se instalace
+  zaregistruji (tik ~14500), bomby miri na hrace s rozptylem ±16.
+
+### Revize RIVER (2026-09-04, Fable po Opusovi)
+
+Vsechny konstanty sekce porovnany s `work/prog.txt`, sondy prehrany.
+Opraveno: vez INST2#0 vynechavala dlouhe cekani `fp@(140) × 128 + 1`
+(`0xbb1c`) mezi seriemi bomb, takze bombardovala desetkrat casteji;
+spoustec vln `0x8008` po smycce propada do `0x8066` a sam se stane
+posledni letcem (`0x8046`) a nuluje `fp@(146)` (`g.waveSeq`); dron
+JUNTANK#2 miri poprve hned po zdvihu (`0xa672` bez cekani); stiny
+raketa HOVER, dron a odrazova strela LAKESUB (bez `+367` bitu 0 a s
+nenulovym z maji stin, hazardy jej kresli jen s `castShadow: true`);
+`a2c6` d2 u paprsku INST2 je aktivace, ne cull margin. Zmereno po
+oprave: bomby v serii po 7 ticich, mezi seriemi 392 tiku pri trech
+instalacich; vlna 4 + 1 letcu.
+
+## ICE (prepsano 2026-09-04; overeno simulaci `build/survey/ice/`)
+
+### Dva globaly, ktere ICE pouziva (zmereno)
+
+- **`fp@(11172)` je stav RNG** (`0x883c` jej cte i zapisuje jako long).
+  EDGE jej `tstw` jen **cte**, negeneruje nove cislo: znamenko horniho
+  slova urcuje stranu naletu. Stejne jej pouzivaji PROXMINE (`0xaac6`)
+  a dalsi.
+- **`fp@(3616)` prepina barvu HW spritu** (`0x2b16`): nastavena = 0xFFF
+  (bila), nulova = 0x999 (seda). Nastavuje ji SKI (`st`), nuluje BUNNY
+  (`sf`) a start urovne (`0x1d4c`). Prepis to uz umel jako
+  `g.spriteColorFlash`, jen to nikdo nenastavoval.
+
+### EDGE (0x0008 → 0x77c6)
+
+- `x = (horni slovo RNG < 0) ? 256 : 64`, formace `0xa2a2(0, −4, 6, 0)`
+  = sest kusu po 4 px nad sebou na jedne strane obrazovky.
+- `a2c6(EDGE#0, 34, −48, HP 1, 50 bodu, cost 10)`, `+367 |= 16`
+  (obrazovka), `z = 32`, rychlost `+356 = 768` = 3 px/t, uhel 64 (dolu),
+  smerovy snimek `0xa27c` (zaklad EDGE#0 → #0..#7, **meni i uzel**).
+- Po `0x9afa(32)`: pri obtiznosti >= 4 mireny kanon `0x95d2`. Po
+  `0x9afa(156)`: 7× { uhel += `x <= 160 ? +32 : −32` (tedy vzdy pryc od
+  stredu), `0x65f2`, novy snimek, wait 5 }, pak mireny kanon a `0x62cc`.
+- Simulace: zrozeni 132 (x 64), spirala od radku 156, konecny uhel 32.
+
+### SKI (0x0030 → 0x9e60)
+
+- `ST fp@(3616)` (bila barva spritu), `a2c6(SKI#0, 36, **190**, HP 4,
+  15 bodu, cost 10)` — aktivace az u spodniho okraje; `+374 = 5` (dekal
+  EXPL1#0), uhel 32, `x −= 32`, `vx = 2`, `vy = −2` (slova),
+  `ax = −1536/65536`, `ay = +1536/65536`.
+- Smycka `0x9ea6` bezi, dokud **cele slovo `vx`** neni nula (~43 tiku),
+  pak `0x6d96` (stop) a { `0x95ca` v uhlu 32, wait 10 } do zabiti.
+- Simulace: zrozeni 14068 (x −14, sy 188), zastavi v tiku +43 na
+  (47.8, 141), pak strili kazdych 10 tiku.
+
+### BOS (0x0050 → 0x7aea) — v ICE 1×, v SCIFI 27×
+
+- `a2c6(BOS#0, 34, −48, HP 4, 100 bodu, cost 35)` + guard `0x8822`
+  (cost 35 je vysoky, pri plnem rozpoctu se objekt vubec nezalozi),
+  `+367 |= 16`, `z = 32`, vazane delo `0x6144(0x7b54)`, anim `0x07b1c`
+  BOS#0..#3 perioda 1 loop, `vy = 2`; po `0x9afa(200)` `vy = −3` a
+  `ax = 4096/65536` — stroj se otoci a odleti vzhuru s driftem.
+- **Delo `0x7b54`:** `a2c6(BOS#4, 34, −48, HP 0, 0 bodu, cost 0)`,
+  `+538 = −1`, `+367 |= 12` (blika s rodicem, vazane dite s nulovym
+  ofsetem); po `0x9afa(192)` anim `0x07b7c` BOS#5, #6, #7 perioda 8
+  (drzi #7) a smycka { wait 20, je-li `sy > 32` strela
+  `0x6178(0xa9a0)` = **tataz strela jako u hnizda EGGS** }.
+- Simulace (SCIFI): zrozeni 8640, otoceni na radku 200 (tik +160),
+  prvni strela hned po nem.
+
+### SEAPLANE (0x002f → 0xb59c)
+
+- `a2c6(SEAPLANE#0, 36, −16, HP 8, 45 bodu, cost 20)`. `subqw #1,+276`:
+  **typ 1 nejdriv pojizdi po hladine** (`0xb608`), typ 2 rovnou vzleta.
+- Pojizdeni: jedno `0x883c` → `vx = (horni slovo se znamenkem) >> 1`,
+  `vy = (dolni slovo bez znamenka) >> 1` jako 16.16 longy (tedy do
+  ±0.25 a 0..0.5 px/t); pak smycka: `0x883c & 7 == 0` → cakanec
+  `0x6178(0x9358)`, dokud `sy < 48`.
+- Vzlet: `+397 &= ~1`, `0x65ae`, handler bitu 3, `+504 = 34` (smrtici
+  kontakt), `vz = 0.5` do `z >= 32`, pak `vz = 0`, `ay = 2048/65536` a
+  smycka { bomba `0x6178(0xb64a)`, wait 10 (`0x62b8`) }.
+- **Bomba `0xb64a`:** `a2c6(SEAPLANE#1, 34, −16, HP 1, 10 bodu, cost 5)`,
+  `z = 32` (long), `0x6d96`, `vy = 0.5`, anim `0x0b674` #1/#2 perioda 2
+  loop; po wait 20 `az = −2048/65536` a jakmile je cele slovo `z` nulove,
+  oblacek `0x6178(0x894a)` a **tiche zabiti** (`fp@(-1414)`, bez skore).
+- Simulace: zrozeni 9840, pojizdeni s cakanci do radku 48, vzlet do
+  z 32 (tik +200), pak bomba kazdych 10 tiku.
+
+## SCIFI - bezni nepratele (prepsano 2026-09-04; `build/survey/scifi/`)
+
+### BUNNY (0x044f → 0x786e)
+
+- `SF fp@(3616)` (seda barva HW spritu), `+276 = 0` a formace
+  `0xa2a2(−48, 6, 3, 1)` = tri kusy s typem 0, 1, 2 (kazdy o 48 px vlevo
+  a 6 px nize).
+- `a2c6(BUNNY#0, 34, −48, HP 1, 90 bodu, cost 10)` + guard `0x8822`
+  (v SCIFI se z 222 kusu prosadi ~165, zbytek padne na rozpoctu),
+  `+367 |= 16`, `z = 32`, rychlost `+356 = 640` = 2.5 px/t, **uhel
+  `64 − (typ << 4)`** = 64, 48, 32 - trojice se rozviri.
+- Snimek z tabulky `0x78fa` pres `0xa268` (index `((uhel + 8) & 240) >> 4`;
+  pouzitelne jsou jen indexy 2..6 = BUNNY#0..#4, zbytek je `0x2200`
+  mimo dosah). `0x6d7c` meni i uzel.
+- Po wait 70 dvakrat `0x78d6`: uhel += 16, rychlost += 128/256, novy
+  snimek, **mireny kanon `0x95d2`**, wait 8; pak `0x62cc`.
+
+### FROG (0x0053 → 0x83dc)
+
+- `a2c6(FROG#0, 36, −8, HP 1, 55 bodu, cost 10)`, anim `0x083f2`
+  FROG#0..#3 perioda 4 loop, `z = 0`.
+- Po `0x9afa(8)`: `+364 = −16`, uhel 64, rychlost `+356 = 384` = 1.5 px/t,
+  `+397 &= ~1`, `0x65ae`, handler bitu 3, `+504 = 34` (smrtici kontakt),
+  `vz = 0.5` do `z >= 32`, pak `vz = 0`.
+- Lovecka smycka `0x8458` kazdych 5 tiku: uhel na hrace s limitem **7**
+  (`0x7312` + `0x65be`), `+356 += 32` (**bez stropu** - zaba se stale
+  zrychluje) a `0x65f2`.
+- Simulace: zrozeni 14524, zdvih od radku 8, v tiku +140 uhel 85 a
+  rychlost 1.87 px/t.
+
+### TAP (0x004e → 0x99e0) — rotujici vez
+
+- `a2c6(TAP#0, 36, −16, HP 8, 60 bodu, cost 10)`; kolo `0x99f2`: jedno
+  `0x883c` da **krok uhlu `(dolni slovo & 31) − 16`** (tedy −16..+15) a
+  **pocet `((horni slovo) & 31) + 8`** (8..39). Tolikrat { uhel += krok,
+  snimek `0xa268` z tabulky `0x9a5e` (TAP#0..#3 opakovane pres 16
+  sektoru), yield }.
+- Pak `uhel = (uhel + 8) & 240` (zaokrouhleni na sestnactiny), **ctyri
+  strely `0x6178(0x9a7e)` v jednom tiku** s krokem uhlu 64, wait 10 a
+  nove kolo.
+- **Strela `0x9a7e`:** `a2c6(TAP#4, 6, −16, HP 0, 0 bodu, cost 1)`,
+  `+367 |= 1`, `+364 = 0`, anim `0x09a9e` TAP#4/#5 perioda 3 loop,
+  rychlost `+356 = 896` = 3.5 px/t; **kazde 4 tiky rychlost −= 64/256**
+  a pri nule task konci (`0xa34c`, bez vybuchu) - strela se zastavi a
+  zmizi po 56 ticich.
+- Simulace: zrozeni 2748, kola s nahodnym krokem (napr. −15, pak +11),
+  ctyri strely na svetove strany po kazdem kole.
+
+### Revize ICE a SCIFI (Fable, 2026-09-04)
+
+Kazde cislo obou davek proti `work/prog.txt`, prehrani sond se
+sestrely (skore 50/15/45/100/90/55/60 sedi, pocty zasahu = HP).
+Tri opravy:
+
+- **EDGE:** smycka `0x783a` ma wait 5 (`0x7858`) i po sedme otocce,
+  teprve pak `0x95d2`; prepis strilel hned pri sedme otocce. Zaroven
+  `0x9afa(156)` testuje pred yieldem, prvni otocka je tedy v tiku, kdy
+  podminka nastane.
+- **Bomba SEAPLANE `0xb64a`:** `a2c6` d2 = −16 je aktivace, `+364`
+  zustava vychozich −64; prepis mel cull −16 (past 4 ze zadani RIVER).
+- **FROG:** `0x8410` po `0x9afa(8)` nastavi `+364 = −16`; bylo
+  zdokumentovano, ale ne prepsano.
+
+Overeno bez nalezu: delo BOS (HP 0, trida 34) je nezranitelne, protoze
+`a2c6` pri HP 0 neinstaluje handler zasahu (`0xa2fc`); formace BUNNY
+`0xa2a2` dava typ 0, 1, 2; tabulky `0x78fa` a `0x9a5e`; RNG
+`0x883c` = posun longu `fp@(11172)` s XOR `0x1d872b41`; SEAPLANE typ 2
+(2 kusy) vzleta bez pojizdeni.
+
+## SCIFI - bossovy komplex (prepsano 2026-09-04; `build/survey/scifiboss/`)
+
+### Geyzir `_LAVA#20` (0x0284c → 0xaf9c) - **neviditelny emitor**
+
+- `SF fp@(155)`, `a2c6(_LAVA#20, 0x8000, 32, HP 0, 0 bodu, cost 0)`,
+  `+364 = 0`.
+- **Korutina nikdy nevola `0x62d2`**, jen surove `0x5f22`. Nedela tedy
+  zadny field: neenqueueuje BOB (je neviditelna), nehybe se a cull
+  `0x6480` s marginem 0 si dela sama na konci kazdeho cyklu. Trida
+  0x8000 navic vyrazuje uzel z kolizi.
+- Cyklus `0xafb8`: oblacek `0x6178(0x894a)` (z + 1), zvuk `0x5350(x)`
+  (**bez prepisu**), pocet kamenu `+276 = (horni slovo fp@(11172) & 7)
+  + 3` = 3..10 (**RNG jen cten, neposouva se**). Pak tolikrat:
+  `0x883c` → `uhel += (dolni slovo & 31) + 128` (kumulovane, kameny
+  se stridave klopi na obe strany), kamen `0x6178(0xb014)`, surovy wait
+  `10 − zbyvajici pocet`. Nakonec surovy wait `horni slovo & 127` a
+  novy cyklus.
+- Rozestupy kamenu tedy **rostou** a jsou dane poctem: pri N = 5 vysla
+  sonda 5, 6, 7, 8 tiku (zrozeni 3656, kameny 4009, 4014, 4020, 4027,
+  4035; dalsi cyklus 4059).
+- **Kamen `0xb014`:** `a2c6(_LAVA#20, 38, −16, HP 1, 30 bodu, cost 10)`
+  + guard `0x8822` (pri odmitnuti se nespotrebuje zadne RNG), anim
+  `0x0b032` _LAVA#20/#21 perioda 8 loop, rychlost `(0x883c & 127) + 320`
+  = 1.25..1.75 px/t ve zdedenem uhlu, `z = 1`,
+  `vz = ((0x883c & 0x1ffff) jako 16.16) + 2` = 2..4 px/t,
+  `az = −6144/65536`. Pada, dokud je cele slovo `z` nenulove; `0x6328`
+  klampne zaporne `z` (a nuluje `vz` i `az`), takze dopad je vzdy presne
+  na nule. Pak `0xa36a` **bez zasahu hrace = oblacek bez skore**.
+
+### Lusk `ORB#0` (0x0052 → 0xb084)
+
+- `a2c6(**ORB#1**, 0x8000, −16, HP 0, 0 bodu, cost 0)` - mapa kresli
+  ORB#0, korutina zaklada ORB#1; rodic hned zalozi sest listu
+  `0x6178(0xb0b4)` s `+276 = 5, 4, ..., 0` a **konci (`0xa34c`) drive,
+  nez by udelal prvni field**, takze sam se nikdy nevykresli. Take
+  `ST fp@(155)`.
+- **List `0xb0b4`:** gfx z tabulky `0xb108` = ORB#1..#6 podle `+276`,
+  `a2c6(gfx, 0x8000, −16, HP 0, 0 bodu, cost 7)`, `+367 |= 1`. Do
+  `0x9afa(typ + 64)` stoji na miste lusku - **sest prekrytych listu je
+  zavreny ORB**. Pak `uhel = horni slovo fp@(11172)` (bez posunu RNG,
+  takze vsechny listy leti temer stejnym smerem), koule
+  `0x6178(0xb114)`, `z = 32`, rychlost `1536` = 6 px/t, wait 15 a konec
+  bez vybuchu. Listy odpadavaji po radcich 64..69, tedy po ~4 ticich.
+- **Koule `0xb114`:** `x −= 4`, `y += 2`,
+  `a2c6(ORB#7, 34, −32, HP 1, 70 bodu, cost 10)` **bez guardu**; surovy
+  wait `(typ + 1) × 64` (0x5f22 nedela field - koule je do te doby
+  neviditelna a nekolidujici), pak `+364 = −10`, anim `0x0b144`
+  ORB#15, #16, #17, #18, #13 perioda 8 (drzi #13) a wait 50. Teprve pak
+  `z = 32`, rychlost 128 = 0.5 px/t, uhel 192 a lovecka smycka `0xb16a`
+  kazdych 15 tiku: uhel na hrace s limitem **33**, zaokrouhleni
+  `(uhel + 16) & 224` na osminy, smerovy snimek `0xa27c` od ORB#7
+  (**meni i uzel**) a `+356 += 64` (**bez stropu**).
+- Simulace: lusk zrozen 11244, listy odpadly 11564..11584, koule se
+  objevily 11628 + 64 × typ; prvni se rozjela v tiku 11680 (uhel 224)
+  a za 80 tiku zrychlila z 0.5 na 2.0 px/t.
+
+### Kraci boss `INST3#3` (0x0631 → 0xbb2e)
+
+- Zamek `0x5eda(6)` (**nemodelovan**, stejne jako u INST2 - v prepisu se
+  proto scroll nezastavi a boss nakonec odjede a je cullnut),
+  `a2c6(INST3#3, 38, −32, HP 300, 7500 bodu, cost 40)`, `z = 4`,
+  handler `0xb8ca` pro bit 0 (`0x653e`) **i bity 3 a 4** (`0x6564`
+  instaluje tentyz handler na obe), `+376 = 0x8876` (velky vybuch).
+  `0x9ae8(80)` ceka na radek 80 s vynulovanou tridou (do te doby je
+  nezasazitelny), pak `0xb6ae` = `fp@(140)++` a bit 3 v `fp@(166)`.
+- **Cyklus** `0xbb6e`: pochod `0xbc60` → dojezd `0xbc9c` → wait 4 →
+  zvuk `0x5436(x)` (**bez prepisu**) → dva pody na `(+19, +20)` a
+  `(−19, +20)` → skok `y −= 16` a 16× { `y += 1`, wait 1 } → wait 10.
+- **Pochod `0xbc60`:** `notw +284` prepina strany, takze se stridaji:
+  `vx = 3` dokud `x < 296`, pak `vx = −3` dokud `x > 24`. Test je vzdy
+  az za polem.
+- **Dojezd `0xbc9c`:** ukazatel na hrace z `0x72ee` v `+276` (long),
+  kazdy tik `vx = ±2` k aktualnimu `x` hrace, dokud `|dx| >= 24`.
+  Prvni pole probehne jeste s `vx = 0`.
+- **Krok `0xbbfa`** (misto `0x62d2` u kazdeho cekani bosse): `+282 = 0`;
+  je-li **HP <= 50**, `0x883c` da zatres `+282 = (r & 3) − 2` (−2..+1)
+  a pri `(r & 15) == 0` bombu XEVIOUS `0x6178(0x7f9a)` + oblacek
+  `0x6178(0x894a)` posunuty o `((r' & 31) − 15, (r'>>16 & 31) − 15)`.
+  Zatres se pricte k `y` **jen na dobu pole** (kresleni + kolize) a hned
+  za nim se odecte - neni to pohyb.
+- **Pod `0xbcce`:** `a2c6(INST3#7, 6, −63, HP 0, 0 bodu, cost 10)`,
+  `z = 0`, zablesk `0x6178(0xbd00)` jeste na puvodnim miste, pak
+  `y += 20` a `vy = 6` px/t; `0x9b70` = jen pole az do zabiti. Trida 6 =
+  smrtici kontakt, HP 0 = **bolt ji neznici** (`a2c6` pri HP 0
+  neinstaluje zadny handler ani nezapina bity tridy).
+- **Zablesk `0xbd00`:** `a2c6(INST3#8, 0x8000, −16, HP 0, 0, cost 4)`,
+  `z = 33`, `+367 |= 1`, anim `0x0bd24` INST3#8..#11 perioda 1 a
+  `0x8800` (kill) - zije ctyri tiky.
+- Smrt (`0xbbac`): zabity task jeste jednou pokracuje za `bnes` a dobehne
+  epilog `0x5efc(6)` + **`0xb6ba` = `fp@(140)−−`** (pri nule jeste
+  `bclr #3,fp@(166)`). Cull tuto cestu neprovadi.
+- Simulace: pochod 101 → 288 (x >= 296 az po poli), dojezd na 24 px od
+  hrace, skok o 16 px nahoru a 16 tiku zpet dolu, dva pody na cyklus;
+  po srazeni na 40 HP 21 bomb za ~400 tiku (~1 z 16 tiku) a zatres
+  v kazdem tiku; sestrel dal 7500 bodu a `fp@(140)` kleslo 1 → 0.
+
+### Emitor dronu `INST3#12` (0x1831 → 0xbd3a) - **neviditelny**
+
+- `a2c6(INST3#12, 0x8000, 32, HP 0, 0 bodu, cost 0)`. Jako geyzir
+  **nikdy nevola `0x62d2`**: nekresli se, nema kolizi a cull `0x6480`
+  (margin zustava −64) si dela sam. Smycka: je-li `fp@(140) != 0` dron
+  `0x6178(0xbd7a)`, surovy wait `50 + (0x883c & 127)`, cull, znovu.
+- **Dron `0xbd7a`:** `a2c6(INST3#12, 38, **16**, HP 1, 50 bodu,
+  cost 10)` - d2 = 16 znamena, ze dron vznikne az 16 px pod hornim
+  okrajem; `z = 3`, `+367 |= 1`, anim `0x0bd9c` INST3#12/#13 perioda 1
+  loop. Wait 50 na miste, pak rychlost `512` = 2 px/t a **jedno**
+  absolutni zamireni (`0x72ee` + `0x65be` s limitem 0); dal leti rovne,
+  dokud je `fp@(140)` nenulove. Jakmile klesne na nulu, `0xa36a` bez
+  zasahu hrace = **oblacek bez skore**.
+- Simulace: peti emitory vyrobily za 900 tiku 42 dronu; po sestreleni
+  kraciho bosse (`fp@(140)` = 0) vsech deset zivych dronu zmizelo
+  v temze tiku a emitory prestaly rodit.
+
+**Pozor na mapu:** INST3#3 i pet emitoru lezi na `ry` 137..179, tedy
+v uvodnim okne mapy SCIFI. Pri primem startu urovne z vyberu je
+map-reader nezaradi (stejne jako v originale); objevi se az pri
+prubeznem prujezdu z ICE - dlouhy beh zonou 5 je proto vypisuje.
+
+### Scroll a `fp@(166)` - **zjisteno pri davce C, plati pro cely engine**
+
+`0x3cbe` (scroll task): `tstb fp@(166)` a je-li **nenulove, scroll se
+v tomto tiku vubec neposune**. Maska ma tyto bity:
+
+- start urovne nastavi `fp@(166) = 7` (`0x1d92`) a ceka, az ji init
+  tasky vynuluji (`0x35b2` bit 0, `0x345c` bit 1, `0x4468` bit 2);
+- **bit 3 nastavuje `0xb6ae`** spolu s `fp@(140)++` a uvolnuje jej
+  `0xb6ba` az pri poslednim `fp@(140)−−`. Tedy: **dokud zije aspon jedna
+  instalace, mapa stoji** - to je duvod, proc tovarna, INST2#2, kraci
+  boss i pevnost zustanou na obrazovce;
+- bit 1 nastavi INST4#0 na konci urovne (`0xbed0`).
+
+`fp@(140)` zvysuji ctyri objekty (`0xb84a` tovarna INST1#11, `0xba10`
+INST2#2, `0xbb6a` INST3#3, `0xbe96` INST4#0) a snizuji tri
+(`0xb89e`, `0xba96`, `0xbbb2`) - **jadro pevnosti nikoli**, drzi mapu az
+do konce urovne. Zamek `0x5eda(n)` je neco jineho: semafor citace
+(`0x48b2`), ktery s scrollem nesouvisi a zustava nemodelovan.
+
+**Overeno na originalu (2026-09-06).** `tools/survey/origshot.py` pusti
+hru s trainerem F1 (unlimited lives) a **bez jedineho vstupu**, takze
+hrac nic nezniti; snimky se berou v rostoucich casech od stisku FIRE.
+Porovnani sousednich snimku (pas bez HUD, prah 24):
+
+| usek [s] | ruznych pixelu |
+|---|---|
+| 480 → 500 → 520 → 540 → 560 → 580 | 41 az 55 % (mapa jede) |
+| **580 → 600** | **6,5 %** |
+| 600 → 660 → 720 → 840 → 960 | 6,3 az 9,3 % |
+
+Od ~590 s je teren **pixelove totozny** a lisi se jen pohybujici se
+nepratele; na obrazovce stoji cely ten cas tovarni instalace DESERTu
+(vez "1", vez "2", stredovy emitor, na snimku t=720 s cervenym
+paprskem). Mapa tak stoji nejmene 380 emulovanych sekund.
+
+Konec mapy to neni: tovarna lezi na `ry` 3051 z 5826 radku DESERTu,
+tedy pred polovinou urovne. Zamek instalace je tim doloreny primo na
+originalu, ne jen ctenim `0x3cbe`.
+
+Prepis to ted modeluje: `g.scrollHeld` zastavi scroll i interpolaci
+a `killSpawnCredited` snizuje `g.inst1Factories` u `factory`, `inst2`
+i `inst3`. **Meni to chovani DESERTu a RIVERu** (mapa u tovarny a
+u instalaci stoji, dokud je hrac nezniciju) - v sondach bez strelby se
+proto beh zastavi v tiku 11129 (DESERT, 1 instalace) resp. 14441
+(RIVER, 3 instalace).
+
+### Letajici boss `INST4#6` (0x0c32 → 0xbdd6)
+
+- Jeste pred `a2c6`: `y −= 512` (**objekt se posune o 512 radku dal do
+  urovne**, z ry 4580 na ~5092), zamek `0x5eda(6)`, `SF fp@(3617)`.
+- `a2c6(INST4#6, 32, −48, HP 0, 10000 bodu, cost 0)`, `z = 24`,
+  `+376 = 0x8876`, `+367 |= 16` (obrazovkovy), `vy = 0.5`. Trida 32 =
+  zasazitelny bez smrticiho kontaktu; HP 0 znamena, ze `a2c6`
+  **neinstaluje zadny handler** - do 0xbe4a je nezranitelny.
+- `0x9ae8(208)` sjede na radek 208 s vynulovanou tridou, pak
+  `vy = −0.25` zpet nahoru, dokud `sy > 68`, `vy = 0` a ceka, az
+  `fp@(140) != 0` (tedy az dojede jadro). Teprve pak `+360 = 250`,
+  handler `0xb8ca` na bity 0, 3 i 4 a `0x62cc`. Po smrti
+  `ST fp@(3617)`.
+- Simulace: zrozeni 19148, jadro 21080, boss zranitelny hned po nem;
+  sestrel dal **10000 bodu**.
+
+### Jadro pevnosti `INST4#0` (0x0032 → 0xbe6e)
+
+- `a2c6(INST4#0, 38, −48, HP 0, 0 bodu, cost 60)` **bez guardu**,
+  `z = 25`, `+534 = −1` (imunni vuci SMART), `+367 |= 1`.
+  `0x9afa(58)`, pak `0xb6ae` - od teto chvile **stoji mapa**.
+- Smycka: 5× { bomba XEVIOUS `0x6178(0x7f9a)`, wait 7 }, wait 50,
+  dokud je `fp@(3617)` nulove. Rozestup bomb je tedy 7 tiku, mezi
+  seriemi 57 tiku.
+- Po smrti letajiciho bosse **finale `0xbee0`** a konec urovne.
+
+### Finale a konec urovne (0xbee0, 0xbec6)
+
+- 100 kol; v kazdem `r = 0x883c` a porovnani **bajtu** `(r & 127)`
+  s citacem. Je-li mensi, kolo trva jediny tik. Jinak zablesk
+  `fp@(11166) = (r & 127) & 71` na jeden tik a v nasledujicim tiku
+  (pri `fp@(-76) < 5`) velky vybuch `0x6178(0x8876)` na
+  `(32 + (r'>>16 & 255), scroll + 16 + (r' & 63))`. **Cim nizsi citac,
+  tim pravdepodobnejsi vybuchy** - finale se zrychluje.
+- Konec: `fp@(3530) −= 319` (skok mapy o 319 radku), `SF fp@(3615)`
+  (COLOR07), `bset #1,fp@(166)` (scroll stoji) a `fp@(11166) = 256`
+  (fade do bila). Task konci.
+- Simulace: boss zabit 22001, finale od 22014 (citac 99), konec 22166 -
+  tedy 152 tiku, uvnitr rozsahu 100 az 200.
+
+### Veze pevnosti `INST4#3` (0x0632 → 0xbf42), 2×
+
+- Zamek `0x5eda(6)`, `a2c6(INST4#3, 38, −48, HP 0, 0 bodu, cost 60)`,
+  `+534 = −1`, wait 250. Jadro a obe veze stoji dohromady 180 z rozpoctu
+  160, takze u pevnosti propada kazdy guardovany objekt - verne.
+- Cyklus: 15× { `y −= 2` } (vysunuti o 30 px), `SF fp@(148)`; zije-li
+  boss, { wait 200; `bset #0,fp@(148)`; kdo najde bit uz nastaveny,
+  ceka dalsich 200 } - **handshake, ktery veze strida**; pak 15×
+  { `y += 2` }, salva a wait 10.
+- **Salva `0xbfcc`:** je-li boss mrtvy, nic. Jinak zaporne `0x883c`
+  zacina sekvenci A = (1, 0, 1, 2), kladne rovnou B = (3, 4, 3, 2);
+  po A pokracuje do B jen pri `(0x883c & 3) == 0`, po B se vraci do A
+  take jen pri `(0x883c & 3) == 0`.
+- **Polozka `0xc00e`:** tabulka `0xc040` po osmi bajtech (gfx
+  INST4#1..#5 pres `0x6d7c`, tedy **i uzel**, uhel a dva pary (dx, dy)).
+  Trik `bsr 0xc024` na nasledujici instrukci provede telo **dvakrat**:
+  dve navadene strely `0x8530(dx, dy, uhel)` s wait 5 mezi nimi.
+  Polozky: 0 = #1, 106, (−15, 16), (−22, 4); 1 = #2, 85, (−6, 21),
+  (−18, 14); 2 = #3, 64, (8, 20), (−8, 20); 3 = #4, 43, (6, 21),
+  (18, 14); 4 = #5, 22, (15, 16), (22, 4).
+- `0xbfaa` losuje `0x883c & 1` do d0, ale `0xbfcc` d0 ani d1 necte -
+  **mrtvy kod**, prepis losovani zachovava kvuli poradi RNG.
+- Simulace: sekvence B, snimky #4, #5, #4, #3, strely po 5 ticich.
+
+## FINAL - zaverecny boss INST5#0 (2026-09-06)
+
+Mapa FINAL ma **jediny objekt** (`ry` 278, x 153), ale je to cely komplex:
+neviditelny rodic, ctyri samostatne tasky a tri druhy hmyzu.
+
+### Rodic `INST5#0` (0x0056 → 0xc068)
+
+- Nejdriv **ceka na bit 3 `fp@(166)`** (`0xc074`), tedy na aktivni
+  instalaci. Nikdo v FINALu ji nezaklada - **bit se dedi po SCIFI**,
+  protoze jadro pevnosti `0xbe96` zvysi `fp@(140)` a jako jedine ze
+  ctyr mist ho nikdy nesnizi. Proto se FINAL nedostane ke slovu drive,
+  nez hrac dojede SCIFI, a proto v nem mapa stoji.
+- Zamek `0x5eda` (inline slovo 0x0057), **`a2c6(gfx 0`, 38, 0, HP 200,
+  20000 bodu, cost 0)** - graficke slovo je nula, telo kresli deti;
+  `+534 = -1` (imunni vuci SMART), uzel **32x32** (`+500/+502`),
+  `+397 |= 128` = BOB se vubec neenqueueuje.
+- Dokud je nastaveny **bit 1** `fp@(166)` (konec predchozi urovne),
+  strida po tiku `fp@(11166) = 0`, `fp@(11170) = 256` a naopak. Posledni
+  zapis je bila 256; ta pak klesa krokem `fp@(11168) = -4` (`0x1028`).
+- Pak instaluje handler `0xc124` na bit 0, zalozi ctyri tasky `0x6160`
+  (`0xc1ca`, `0xc228`, `0xc280`, `0xc5f8`) a jen ceka po 100 ticich.
+
+### Zasah a konec hry (0xc124)
+
+- Zvuk `0xb6aa` → `0x4e2e` (**bez prepisu**), `HP--`. Pri HP > 0 bila
+  `fp@(11166) = 64` na jeden tik.
+- Pri HP <= 0: `fp@(12534)++` (uvolni ctyri deti), `0x8852` (bily pulz),
+  zamek, **12× { velky vybuch `0x6178(0x8876)`, 4× cukani `0xc1ba` }**,
+  pak `fp@(142) = -1` (fade do cerne) a cukani, dokud fade nedobehne;
+  nakonec `-1` do obou hracu (`fp@(11260)`, `fp@(11440)`),
+  `bset #3,fp@(12353)` a `0xa36a` (20000 bodu).
+- **Chyba originalu prepsana verne:** `0xc166` i `0xc174` pricitaji
+  nahodny posun do `+320`, takze **obe slozky jdou do x** a `y` vybuchu
+  se nikdy neposune.
+- `0xc1ba` = `fp@(3530) -= 3`, yield, `+= 3`, yield. Scroll drzi bit 3,
+  takze se nic neposune - je to cukani obrazu, dva tiky na volani.
+- Simulace: smrt spustena v tiku 620, task konci 732 (12×8 tiku cukani
+  + 16 tiku fade), skore **20000**, `fadeBlack` 256.
+
+### Svetla `0xc1ca` (INST5#1..#6) a `0xc228` (INST5#7..#11)
+
+- Obe `a2c6(gfx, **trida 0**, 0, HP 0, 0 bodu, cost 0)`, `+534 = -1`.
+  Trida 0 = zadna kolize.
+- Kolo: `0x883c & 7`; je-li >= 6 (resp. >= 5), nova pauza **surovym**
+  cekanim `0x5f22` - task pri nem nedela pole, takze **svetlo zhasne**
+  (A: `100 + (r & 127)` tiku, B: `3 + (r & 7)`). Jinak snimek z tabulky
+  `0xc21c` / `0xc276` a cekani 5 tiku (A) resp. 1 tik (B, `0x629a`).
+
+### Vypoustec hmyzu `0xc280` (davka 2)
+
+- Task **bez `a2c6`**: zadna grafika ani kolize. `x += 4`, `y += 4`,
+  pak kolo: guard `0x8822` (pri celkove cene nad 160 jen surove cekani
+  200), `0x883c` da `+286` (dolni slovo) a index do tabulky `0xc332`
+  (horni slovo & 7). Tabulka ma osm polozek ukazujicich na tri rutiny:
+  3x `0xc42c`, 3x `0xc3d6`, 2x `0xc49e`.
+- Uhel `+358 = 16`, rychlost `+356 = 128`, pak **5x** { surove cekani 10,
+  dvakrat `0xc318`, `uhel = ((16 + +286 + uhel) & 31) - 16`,
+  `+356 += 72` }, nakonec surove cekani 200.
+- `0xc318` zalozi nosic `0x6160(0xc342)`, preda mu vybranou rutinu v
+  `+276` a **prevrati uhel** (`uhel ^= 127; uhel += 1`), takze dvojice
+  leti zrcadlove.
+
+### Nosic `0xc342` (INSECTS#23)
+
+- `a2c6(INSECTS#23, 38, 0, HP 3, 70 bodu, cost 10)`. Nejdriv
+  **jednorazovy skok o 40 px** ve zdedenem uhlu (rychlost 10240 jen na
+  jeden krok, pak se vrati puvodni), anim `0x0c37c` #23..#27 perioda 6
+  (drzi). Pak dva skoky vzhuru: `vz = 2.0`, `az = -4096/65536`, dokud
+  neni cele slovo `z` nulove; `0x6d96` (stop); `vz = 1.0` a totez znovu.
+- Teprve pak vysadi utocnika `0x6178(+276)` a prehraje `0x0c3ae`
+  #28/#29 perioda 4 s `0x8800` - animator ho zabije.
+
+### Tri utocnici
+
+- **`0xc3d6` (INSECTS#0, trida 36):** `a2c6(..., HP 5, 70 bodu,
+  cost 15)`, `0x6d96`, `z = 0`, `vy = 0.5`, anim `0x0c3fc`
+  #0,#1,#2,#3,#2,#1 perioda 1 loop; smycka { bomba XEVIOUS
+  `0x6178(0x7f9a)`, wait `150 + (0x883c & 127)` }.
+- **`0xc42c` (INSECTS#4, trida 34 = smrtici):** `z = 32`, rychlost 512
+  = 2 px/t, anim `0x0c44e` #4,#5,#6,#5 perioda 2 loop; kazdych 8 tiku
+  absolutni zamireni na hrace, `uhel += (0x883c & 31) - 15` a
+  **`bclr #7,+359`**, takze uhel nikdy nemiri vzhuru (0..127).
+- **`0xc49e` (INSECTS#7, trida 36):** `z = 32`, rychlost 256,
+  `+276 = (0x883c & 64) - 32` = krok otaceni ±32. `0xc4fa` otaci po
+  dvou ticich, dokud neni odchylka od hrace do 16 **a** spodni bajt
+  uhlu nejvyse 0x80. Pak losuje `0x883c & 7`: 0 = stoupani `0xc584`
+  (vz 1, rychlost 512, do `z = 32`, pak trida **34**), 1-2 = klesani
+  `0xc5c0` (vz -1, rychlost 128, do `z = 0`, trida **36**), jinak nic;
+  wait 20 a znovu. Snimek `0xc560` je dir8 od INSECTS#7, ktery se pri
+  `(fp@(11172) & 31) == 0` prehodi na zaklad INSECTS#15.
+
+### Telo bosse `0xc5f8` (davka 3)
+
+- **13 prstencu po 24 kusech INST5#17**, jeden prstenec za tik.
+  `0xc752` da uhel `(index * 2730 + 128) >> 8` (24 kusu = plnych 256
+  jednotek) a polohu o `(prstenec + 6)` krocich po 12 px. Kus
+  (`0xc700`) se vykresli, posune o `y -= 320` a vykresli **jeste
+  jednou** - tedy do obou bufferu - a task konci. V originale proto
+  zustane v obraze "vypaleny"; prepis pouziva dekal (`0x898c`).
+- Pak nekonecna show: surove cekani `8 + (0x883c & 127)`, 13x
+  { `0xc6b2` = 12 trosek INST5#13 na lichych indexech, wait 5 };
+  pri `(0x883c & 3) == 0` jeste 12 paprsku `0xc6ce` (nahodny index
+  0..23 odmitacim losovanim, 13 kusu pres vsechny prstence, wait 5);
+  a pri dalsim `(0x883c & 3) == 0` ctyrikrat { liche, wait 5, sude,
+  wait 5 } na prstenci `(0x883c & 7) + 1`.
+- `0xc67c` pushne citac 12, ktery uz nikdo nesnizuje - **mrtvy kod**.
+
+Graficky slot **0x57 = INSECTS.LIN** (jmenna tabulka AMPROG.OBJ,
+`tools/dispatch.py game_order`).
+
+### Imunita vuci SMART (`+534 = -1`) - doplneno v enginu
+
+`0x6468` vola pri aktivnim SMART pulzu handler `+534`; `st +534` jej
+vypina. Prepis to dosud nemodeloval a pulz zabijel i objekty, ktere maji
+byt imunni. Doplnen priznak `smartImmune` a nastaven u INST4#0,
+INST4#3, INST5#0 a obou svetel. (Dalsi objekty s `st +534` - MAMA bar,
+`0x936a`, `0x96f0`, `0x9916`, `0xac7c`, `0xacc8` - zustavaji jak byly;
+ty se do fronty vetsinou nedostanou z jinych duvodu.)
+
+### Revize SCIFI boss a FINAL (Fable, 2026-09-06)
+
+Vsechny tri davky bossoveho komplexu, tri davky FINAL a prurezove zmeny
+enginu proti `work/prog.txt`; prehrany sondy A/B/C, prechod SCIFI → FINAL
+v souvisle hre a oba kontrakty. Sedm oprav:
+
+- **Kamen geyziru `0xb014`:** `cullMargin: -16` byla aktivace `a2c6` d2,
+  `+364` zustava −64 (tataz past jako paprsek INST2 a bomba SEAPLANE -
+  potreti).
+- **Smrtici kontakt tridy 38 chybel** u kraciho bosse INST3#3 (az po
+  `0x9ae8(80)`, kdy se trida vraci), jadra INST4#0, obou vezi INST4#3 a
+  rodice INST5#0 (uzel 32x32 - dotyk neviditelneho stredu zabiji hrace
+  a pres handler bitu 3 bosse zranuje). Trida je v uzlu `+504` bez
+  ohledu na HP; HP 0 jen znamena, ze objekt sam nic nedostane.
+- **Jadro INST4#0** melo `+367 |= 1` (bez stinu) jen v komentari.
+- **Bit 1 `fp@(166)` se nikdy nemazal**, takze FINAL po prechodu zustal
+  navzdy v bilem blikani. Dekodovano `0x3422`: je to task stavby
+  terennich pruhu - dokud je scroll min nez 32 radku pred pripravenym
+  pruhem `fp@(3538)`, stavi po 32 radcich; jakmile je pruh napred,
+  `0x345c` bit maze. Skok o 319 radku = 10 pruhu, modelovano jako 10
+  tiku (`g.levelEndTicks`). Zmereno: konec SCIFI 22170, bit smazan
+  22180, boss ve stavu 1 v 22181, prvni nosic 22191, telo 22193.
+- **Snimek klicujiciho hmyzu `0xc560`:** cte se **horni** slovo
+  `fp@(11172)`, a v letu (`z != 0`) se zaklad #7/#15 stridá kazdy field
+  (`notw +278`); prepis mel dolni slovo a bez stridani.
+
+Bez nalezu: tuple `a2c6` vsech 20 novych objektu, animacni skripty,
+poradi RNG (guard pred losovanim u kamene i vypoustece), rozestupy
+(jadro 7/57, veze 5, geyzir 10 − zbytek), dva skoky nosice (druhy trva
+jediny field, protoze `vz = 1.0` da po prvnim poli `z < 1` - verne),
+chyba originalu u posunu vybuchu INST5 (`0xc166`/`0xc174` obe do x).
+
+**Nemodelovano a zapsano:** zamky `0x5eda` (semafor `0x48b2`, s scrollem
+nesouvisi), zapis −1 do `+84` obou hracu pri smrti INST5
+(`fp@(11260)`, `fp@(11440)`), `bset #3,fp@(12353)` (jen `g.gameEnded`),
+`fp@(-1422)` s citacem `fp@(12534)` (deti INST5 v prepisu umiraji s
+rodicem primo).

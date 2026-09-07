@@ -5,7 +5,8 @@ adresu, na ktere se to da v `AMPROG.OBJ` docist — stejne pravidlo jako
 ve zbytku `docs/`: zadny odhad, jen misto v kodu.
 
 Zdroj hlaseni: hrani prepisu proti originalu, prubezne aktualizovano
-2026-09-02.
+2026-09-07. Starsi datovane sekce zaznamenavaji tehdejsi stav;
+aktualni integraci a overeni shrnuje `CODEX-HANDOFF.md`.
 
 ## 1. Zvuky — TOWN ENGINE, GOOSE HIT A TOKEN FIFO PREPSANY; CALL-SITES ZBYVAJI
 
@@ -148,7 +149,8 @@ Hloubkovy audit je v [TOWN-AUDIT](TOWN-AUDIT.md). Prepsano tehoz dne:
   granaty); pozemni objekty ho uz nezabiji
 - jadro miny = stit (`0x98c4`, `0x92a0`, orb `0x98f2`) a smart bomba
 - hrac `0x9410`: 3 px/t, snimky 0..4, clamp, ochrana 200 s blikanim 8/8,
-  respawn 100 snimku, start 2 strely, stin `(+16,+32)`
+  respawn 100 snimku, start 1 strela (MEGA TRAINER MISSILES=1 prepise
+  `0x6fde`; zmereno baseline), stin `(+16,+32)`
 - HOMING sestrelitelna (1 HP, 7 bodu); hit flash u nepratel
 
 GOOSE (dokovani `0xcb78`, pod `0xcaac`, odhozeni casti, HP od zastaveni,
@@ -165,6 +167,18 @@ HW projektilu na `0xfffe` a resident collision sweep `0x6ec2` na `0xffff`.
 Sweep na konci VBL N pouze ORne event word; objekt jej zpracuje po svem
 dalsim resume ve VBL N+1 (`0x62d2`/`0x64b6`) v poradi bitu
 `0,3,4,1,2,5`.
+
+Doplneno 2026-09-03 (baseline t19): kolizni boxy nejsou 8/8, ale bajty
+8/9 hlavicky .LIN snimku z `a2c6` d0 (`0x6d7c`), a sweep cte pozice uzlu
+z RESUME (`0x6430`), tedy o jeden pohyb starsi nez callback v N+1. Viz
+`ENGINE.md` „Collision scheduling" a `TOWN-PARITY.md` „Druhe vytezky".
+Otevrene: zda animator hrace startuje 4 VBL pred scrollem nebo scroll
+4 VBL po nem (zmerena jen faze `index = (T+3)&7`; kandidat je tyz retez
+`0x7090 -> 0x70c8 -> 0x7156` jako u respawnu), presna hodnota `vblBase`
+(okno 172..199) a tik smrti v baseline (blikani po respawnu dava D = 212,
+prepis umira v 211 — jeden tik v nejistote fitu prvni vlny). Vsechno chce
+vzorkovani po snimcich, ktere RetroShell `wait` v sekundach nedava; navic
+kazdy zachyt je samostatny beh s jitterem nekolika snimku.
 
 Browser sweep ted stejne pouze ORuje pending masku do kazdeho zasazeneho
 nodu a oznaci player bolty ke spotrebovani. Na zacatku N+1 existujici tasky
@@ -336,7 +350,185 @@ Otevrene zustava:
   tasky; spolu s `CONGRAT1`, high-score vstupem a navratem na titul patri do
   dosud otevreneho post-game toku.
 
+## 9. Zony a tempo — RETEZENI MAP A ZPOMALENI SCROLLU OTEVRENE (2026-09-03)
+
+Pruchod celym levelem (`TOWN-SURVEY.md`) ukazal dva systemove rozdily:
+
+- ~~Original po konci `TOWN.PAM` streamuje `DESERT.PAM` bez preruseni~~ —
+  **uzavreno 2026-09-03**: `parseMapChain` retezi vsech sedm PAM podle
+  tabulky `0x384c` (mezera = treti slovo, paleta se nenuluje, dalsi mapa
+  prekresli prekryv), `g.rowOffset` drzi radky TOWN pro checkpointy a
+  testy, `g.levelPhase` roste jako `fp@(184)` (ctecka 256 px nad oknem).
+  Dvojice t273..t321 sedi na teren DESERTu. LEVEL COMPLETE zbyva jen na
+  konci FINAL. Chovani DESERTu se prepisuje podle cetnosti: hotovo AIRMINE
+  (48), BLACKJET (7), TILT (11), DESTRAIN (3), TINYTRUK (7), EGGS vejce +
+  hnizdo + strela + velky vybuch `0x8876` (7), DIAGUN + laser (6),
+  PYRAMID (4), FISH (17), SKYEYEB (14), FLATTANK (9), GOOSE#7 (7),
+  _ONERIG (11), JETS (6), _AIRPORT (4), _RIGS (4), TRUCK (1), INST1#9
+  (2), JEEPHELI#31 = SWAP pad (1), MAMA + roj (3), INST1#14 pist +
+  odpalovac (2), INST1#11 tovarna + paprsek (1) — **vsechna chovani
+  DESERTu prepsana** (viz BEHAVIORS „DESERT"). GRASS podle
+  `docs/ZADANI-GRASS.md`: hotovo VTOL (42), XEVIOUS#5 (20), XEVIOUS#9 +
+  bomba (16), TRILO (5), _PLAT#9/#10 s vozidlem, vezi a strelou (7),
+  XEVIOUS#0 s hlavni (3), DADA (1), _CORN#7 (1), druha SWAP plosina (1)
+  a pasmo stop pasu JEEPHELI#43 (1) — **vsechna chovani GRASS prepsana a zrevidovana** (BEHAVIORS „Revize GRASS"); RIVER podle
+  `docs/ZADANI-RIVER.md`: hotovo SKYEYEA (10), HOVER se sukni a raketou
+  (8), LAKESUB s vezi a odrazivou strelou (7), JUNTANK#1 s vezi (3), JUNTANK#2 s dronem (3), LAKEGUN#0/#7 (3);
+  INST2#2 s paprskem a vlnami (3) a INST2#0 (2) — **vsechna chovani
+  RIVER prepsana**; ICE podle `docs/ZADANI-ICE.md`: hotovo EDGE (18),
+  SEAPLANE s bombou (13), SKI (4), BOS s delem (1 + 27 v SCIFI) —
+  **vsechna chovani ICE prepsana** a ze SCIFI bezni nepratele BUNNY
+  (74), FROG (12), TAP se strelou (11), revize Fable 2026-09-04 (tri
+  opravy: EDGE wait 5 i po sedme otocce, bomba SEAPLANE bez cull −16,
+  FROG +364 = −16); zbyva ze SCIFI bossovy komplex (24 objektu v 7
+  druzich, zadani `docs/ZADANI-SCIFI-BOSS.md`: hotova davka A =
+  geyzir _LAVA#20 s kameny (8) a lusk ORB#0 s listy a koulemi (6),
+  davka B = kraci boss INST3#3 s pody a zablesky (1) a emitory dronu
+  INST3#12 (5), davka C = pevnost INST4#6 (1), INST4#0 s finale a
+  koncem urovne (1) a dve veze INST4#3 - **vsechna chovani SCIFI
+  prepsana**; pri davce C se navic domodeloval scroll lock z
+  `fp@(166)` bitu 3 (mapa stoji, dokud zije instalace) a snizovani
+  `fp@(140)` u tovarny, INST2#2 i INST3#3); zbyva jen zaverecny boss
+  FINAL a zaverecny boss FINAL
+  (INST5#0) - **prepsan cely** (rodic, handler s koncem hry, dve svetla,
+  vypoustec hmyzu s nosicem a tremi utocniky, telo z 13 prstencu po 24
+  kusech). Tim je **prepsano vsech 1497 objektu ve 73 druzich**.
+  Overeno zatim jen
+  simulaci a archy snimku; porovnani s baseline vAmigy po objektech
+  (jako u TOWN) zbyva. Pri integraci 2026-09-07 byly zachovany zvuky
+  BLACKJET, EGGS strely `0x5436` (sdilene take s BOS delem) a vlastni
+  EGGS root exploze. `0x541e` paprsek a `0x4e2e` zasah tovarny zbyvaji.
+- Scroll originalu se pricita jednou za iteraci hlavni smycky (`0x291e`),
+  objekty integruji rychlost × ubehle VBL (`0x62fe`); pri zatezi A500 scroll
+  zpomali (64–98 px za 8 s misto 100). Prepis bezi konstantne 50 Hz.
+  Rozhodnuti o modelovani zatim otevrene; porovnavani snimku se zarovnava
+  podle radku mapy, ne casu.
+
+Dilci: TRAIN v t145 (neprukazne); MEDTANK sedi (1s zabery). GOOSE
+kontaktni HP drain je vyresen sondou respawnu proti BOBum (`0x3dd4` kresli
+do obrazovky `fp@(256)`, viz BEHAVIORS); zustava nemodelovane zpozdeni
+respawnu pri plne pameti (`0x6162` ceka na 546 B z loaderoveho alokatoru
+`fp@(-1502)`, jehoz heap neni v AMPROG).
+
 ## Co uz je vedomo jinde
 
 Starsi seznam odchylek je v `MAPS.md` („Deliberately not rendered")
 a tyka se statickych renderu, ne behu hry.
+
+## Baseline snimky a DENISE_FRAME_SKIPPING (zmereno 2026-09-06)
+
+`tools/baseline.sh` nenastavuje `denise set FRAME_SKIPPING 0`. Ve warp
+rezimu Denise prehazuje buffery jen kazdy 17. snimek, takze ulozena
+textura muze byt az o 16 snimku (0,32 s) starsi nez zadany cas. Zmereno
+na checkpointu t=17: snimek s `FRAME_SKIPPING 0` se od dnesni cache
+`build/baseline/orig_t17.raw` lisi ve **181 428 z 612 180 bajtu**
+(cache se shoduje s variantou bez nastaveni).
+
+Neni to samo o sobe chyba: radky mapy pro checkpointy `tools/compare.py`
+byly zmereny z tychz snimku, takze system je vnitrne konzistentni.
+Zapnuti volby by ale znamenalo **premerit vsechny checkpointy a znovu
+usadit zarazku prahu**, proto se to nedela mimochodem. Az se bude stavet
+porovnani po objektech (vAmiga ve WebAssembly), zacne se rovnou
+s `FRAME_SKIPPING 0`. Postup a pasti prevzaty z projektu Turrican
+(`tools/shot.py`): `screenshot save` emulator ukonci (jeden beh = jeden
+cas) a "std::exception" u `wait` je kosmeticke.
+
+## Harness s vAmigou ve WebAssembly (2026-09-06)
+
+Jadro vAmiga prelozene do WebAssembly bezi v prohlizeci i pro SWIV:
+`tools/build-wasm.sh` (prevzato z projektu Turrican) prelozi
+`web/vamiga.js` + `.wasm`, stranka `web/vacmp.html` je bezobsluzna a
+`tools/survey/vacmp.py` ji ridi pres Playwright - nabootuje SWIVFIX.ADF
+s Kickstartem, projede vstupni sekvenci a ulozi snimek (716x285 RGB24,
+stejny vyrez jako VAHeadless) nebo kus chip RAM. Jeden snimek v case
+t=17 s trva 14 s.
+
+**Otevrene: zarovnani casu.** Prevod "1 sekunda = 50 snimku" nesouhlasi
+s `wait N` z RetroShellu. Na kontrolnim case t=17 vysel rozdil 1268 z
+612180 bajtu (0,21 %), ale je to **falesna shoda** - v tom okamziku
+obrazovka stmiva a je skoro staticka, takze sedi i posun o celou
+sekundu. Na t=30 je nejlepsi shoda v okne +-6 s teprve 3,3 % a lezi 59
+snimku od mista, kam ji prevod klade.
+
+Nez se harness pouzije k porovnavani po objektech, musi se cas merit
+primo: dat obema stranam vypsat pocet snimku Agnusu v okamziku snimku
+(`wasm_agnus_frame` uz existuje, na strane VAHeadless je potreba
+prikaz RetroShellu) a sekvenci ridit podle nej, ne podle sekund.
+Take je potreba najit bazi A6, aby se daly cist zaznamy uloh z chip RAM.
+
+## Junkce map a `levelPhase` (nalezeno pri revizi 2026-09-06)
+
+`g.levelPhase` se inicializuje cislem urovne (`lv`), ale `g.junctionRows`
+se stavi jen pro nactenou retezovou mapu (pri startu ze zony 6 ma jedinou
+polozku `[768]`). Smycka `levelPhase < junctionRows.length` se proto pri
+primem startu z vyberu nikdy nespusti a prechod map se nedetekuje;
+jediny, kdo to dnes cte, je obtiznost (`0x35d4`, `fp@(184)`). Pri startu
+z TOWN indexy sedi. **Opraveno 2026-09-07:** `junctionIndex` pocita
+hranice relativne k nactene mape, `levelPhase` zustava absolutni pro
+obtiznost. Test projde kazdou hranici kazdeho primeho startu pred/pres/po
+prahu a hlida zachovani stavu hrace. Hodnoty zmerenych hranic se nemeni.
+Primy FINAL navic doplni installation hold, ktery normalne dedi ze SCIFI,
+takze se spusti boss i jeho ctyri tasky; test dohraje i jeho smrt.
+
+## Plynuly rezim ("vylepseno") - tri opravy po hlaseni z hrani (2026-09-06)
+
+Hlaseno: zadne podstatne zlepseni, obcas problikne artefakt, chybi
+kratery po tancich. Zmereno sondou (DESERT po sestreleni tanku, TOWN
+900 snimku pri 60 Hz vcetne simulovaneho skrtnuti displeje):
+
+- **Kratery a vsechny dekaly chybely.** `renderSmoothField` barvil holy
+  `g.mapIndex`; klasicka cesta dela v `composeTownBobs` prepass dekalu
+  (`0x898c` zapisuje do mapy). Ted se barvi okno mapy s tymz prepassem
+  pres `colorizeIndexedField` s absolutni Copper paletou. Chybely tak i
+  stopy min a cele telo bosse FINAL (312 dekalu).
+- **Probliknuti = spatne sparovani mezi tiky.** `bob()` ukladal creation
+  ordinal jen do fronty `pending`, ne do `spec`, takze kazdy kresleny
+  zaznam (i hrac) dostal pozicni serial fronty. Pri kazdem prichodu nebo
+  odchodu objektu se klice posunuly a sprite se na jeden snimek
+  interpoloval z cizi polohy - zmereno 21 z 900 snimku, skoky az 70 px.
+  Ordinal je ted ve spec; zaznam bez nej se neparuje a kresli se na
+  aktualni poloze (zadna interpolace je lepsi nez spatna). Po oprave
+  0 skoku z 900 snimku.
+- **Skrtnuti displeje.** Pri dvou a vice ticich v jednom snimku byl
+  `bobPrev` o tik starsi, nez alfa predpoklada; ted se v takovem snimku
+  neinterpoluje.
+
+Stav pred naslednym sjednocenim: teren se v originale posouva 1 px za 4 tiky (12,5 px/s),
+takze jeho vyhlazeni je na 60 Hz nenapadne - videt je hlavne na rychlych
+objektech a na vlastnim stroji. HW sprity (hrac, strely) jdou stejnou
+frontou jako BOBy, interpoluji se tedy take. Kontrakt `tools/compare.py`
+se tyka jen klasicke cesty; pro plynulou zatim zadny neni.
+
+Sjednoceno (tez 2026-09-06): teren se drive extrapoloval o tik dopredu,
+objekty interpolovaly o tik dozadu. Ted jde **oboji dozadu**: interpoluje
+se mezi dvema klasickymi snimky - scroll (`g.scrollPrev` ze zacatku
+`step()`) i rohy spritu jsou v obou tikach cela cisla (68k high-word,
+klasicky blit `Math.floor`) a mezipoloha se zaokrouhli na nejblizsi 1/S
+px; objekty odcitaji tentyz kvantovany scroll jako teren (drive odcitaly
+zlomkovy a byly vuci terenu trvale o pixel jinde). Skok scrollu o vic nez
+4 radky (konec SCIFI, −319) se neinterpoluje, bez `bobPrev` se kresli
+aktualni tik. Vzhled spritu (snimek animace, zablesk zasahu) je vzdy
+z aktualniho tiku.
+
+**Kontrakt `tools/smoothtest.py`** (S = 1, bez HUD): pri alfa → 1 se
+plynuly snimek rovna klasickemu snimku aktualniho tiku presne; pri
+alfa = 0 se od klasickeho snimku predchoziho tiku lisi jen uvnitr
+obdelniku spritu, kterym se mezi tiky zmenil snimek animace (TOWN tik
+3000: 1388 px, vsech 16 v letcich YELLOW), mimo ne nejvyse 150 px
+(zarazka; SCIFI tik 9000 dava 95 px na hranach prekryvu letících kamenu
+se stinem a BOSu orezaneho hornim okrajem). Kontrakt zaroven odhalil, ze
+kopie formaci (0x6178 pres `Object.assign`) dedily `bobOrdinal` rodice a
+v plynulem rezimu se parovaly navzajem - ted dostavaji vlastni poradi
+vzniku. Cena
+sjednoceni: obraz je za logikou o jeden tik (20 ms); klasicky rezim
+ukazuje aktualni tik hned. Na 120 Hz plynuly rezim odstrani
+nepravidelny rytmus 2-3-2-3 opakovanych snimku.
+
+2026-09-07: velikost obrazu ma samostatne predvolby a posuvnik, vychozi
+2x s omezenim podle okna a lokalnim ulozenim. Pevne `fit*1.5` je pryc.
+Plynuly renderer ma presnost 1/4 herniho pixelu nezavisle na zoomu;
+test muze nastavit `smoothRenderScale=1` pro nativni pixelove srovnani.
+`displaytest.py` overuje DPI 1/1.25/1.5/2 a 120Hz casovou osu.
+`smoothtest.py` zahrnuje zmenene dekaly a pri srovnani predchozi polohy
+pouziva aktualni VBL paletu: FINAL t900 meni 1590 stacionarnich cervenych
+pixelu z 0x800 na 0x900, coz je spravna animace COLOR07, ne pohyb.
