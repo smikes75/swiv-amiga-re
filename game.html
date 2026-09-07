@@ -65,6 +65,7 @@ a { color:#cfe0ff }
       value="100" style="width:130px;vertical-align:middle"><span id="scrollval">100%</span>
     &nbsp;&middot;&nbsp; zoom <input type="range" id="zoombox" min="0" max="12" step="1"
       value="0" style="width:110px;vertical-align:middle"><span id="zoomval">auto</span>
+    &nbsp;&middot;&nbsp; <label title="Svisle prolnuti pozadi: plynuly posun i pod 4x, teren je za to pri pohybu mekci"><input type="checkbox" id="blendchk"> hladk&#233; pozad&#237;</label>
   </div>
 </div>
 
@@ -6694,7 +6695,9 @@ function updateZoomLabel() {
   // Pod 4x ujede pozadi za tik min nez jeden bod displeje a cast tiku stoji.
   document.getElementById("zoomval").textContent =
     ((state.zoom | 0) > 0 ? "" : "auto ") + z.dev + "\u00d7" +
-    (state.smooth ? (z.dev < 4 ? " (pozadi skace)" : " (1/" + z.S + " px)") : "");
+    (!state.smooth ? ""
+     : state.blendBg ? " (prolnute)"
+     : z.dev < 4 ? " (pozadi skace)" : " (1/" + z.S + " px)");
 }
 try {                                   // volba prezije reload (per-viewer)
   const saved = parseInt(localStorage.getItem("swivZoom") || "", 10);
@@ -6717,6 +6720,11 @@ document.getElementById("crtchk").onchange = e =>
 // tiky (viz renderSmoothField). Vychozi je original (kontrakty).
 document.getElementById("smoothchk").onchange = e => {
   state.smooth = e.target.checked; updateZoomLabel();
+};
+// Prolnuti ma smysl jen v plynulem rezimu; vypnute je vychozi, protoze
+// michani dvou radku je odchylka od pixeloveho originalu.
+document.getElementById("blendchk").onchange = e => {
+  state.blendBg = e.target.checked; updateZoomLabel();
 };
 document.getElementById("livesbox").onchange = e => {
   const g = state.g; if (!g) return;
@@ -9148,7 +9156,28 @@ function smoothSpriteCanvas(spr, palWords, op, c07) {
   cache.set(key, cv);
   return cv;
 }
-function renderSmoothField(ctx, g, S, composed) {
+/* HUD pruh do pruhledneho platna - stejna smycka jako compositeHudPlane,
+   jen misto do hotoveho snimku zapisuje do vrstvy s alfa 0 na pozadi. */
+function hudOverlayCanvas(g, plane, tick, firstPass) {
+  const st = state.smoothState || (state.smoothState = {});
+  if (!st.hudCv) {
+    st.hudCv = document.createElement("canvas");
+    st.hudCv.width = 320; st.hudCv.height = HUD_ROWS;
+    st.hudImg = st.hudCv.getContext("2d").createImageData(320, HUD_ROWS);
+  }
+  const d = st.hudImg.data;
+  d.fill(0);
+  for (let row = 0; row < HUD_ROWS; row++)
+    for (let x = 0; x < Math.min(320, HUD_WIDTH); x++) {
+      if (!(plane[row * HUD_STRIDE + (x >> 3)] & (0x80 >> (x & 7)))) continue;
+      const c = capturedRgb12(hudHighColorWord(16, row, tick, false, firstPass));
+      const o = (row * 320 + x) * 4;
+      d[o] = c[0]; d[o + 1] = c[1]; d[o + 2] = c[2]; d[o + 3] = 255;
+    }
+  st.hudCv.getContext("2d").putImageData(st.hudImg, 0, 0);
+  return st.hudCv;
+}
+function renderSmoothField(ctx, g, S, composed, hudCv) {
   const alpha = Math.max(0, Math.min(1, g.frac / TICK));
   // Teren i objekty se interpoluji stejne: od predchoziho tiku k aktualnimu.
   // Bez bobPrev (prvni snimek, skrtnuti displeje) se kresli aktualni tik.
@@ -9165,8 +9194,11 @@ function renderSmoothField(ctx, g, S, composed) {
   const curScroll = clamp(g.scroll);
   const lerpOK = !!g.bobPrev && Math.abs(curScroll - prevScroll) <= 4;
   const rq = v => Math.round(v * S) / S;
-  const scrollF = lerpOK ? rq(prevScroll + (curScroll - prevScroll) * alpha)
-                         : rq(curScroll);
+  // Pri zapnutem prolnuti se scroll nekvantuje vubec: teren se pak kresli
+  // dvakrat pres sebe (viz nize) a pohyb je plynuly i pod 4x, kde jeden
+  // tik ujede min nez jeden bod displeje.
+  const raw = lerpOK ? prevScroll + (curScroll - prevScroll) * alpha : curScroll;
+  const scrollF = state.blendBg ? raw : rq(raw);
   g.smoothScrollF = scrollF;              // diagnostika (tools/survey/bgsmooth)
   // Polohy se kvantuji na 1/S px smerem dolu jako 68k high-word (klasicka
   // cesta: Math.floor v blitIndexedOperation), aby pri alfa = 1 vysel presne
@@ -9200,7 +9232,17 @@ function renderSmoothField(ctx, g, S, composed) {
   ctx.save();
   ctx.imageSmoothingEnabled = false;
   ctx.scale(S, S);
-  ctx.drawImage(st.cv, 0, -fy);
+  if (state.blendBg) {
+    // Svisle prolnuti mezi dvema sousednimi polohami v bodech displeje:
+    // vodorovne zustava obraz ostry, svisle se michaji nejvyse dva body.
+    const p = fy * S, lo = Math.floor(p), t = p - lo;
+    ctx.drawImage(st.cv, 0, -lo / S);
+    if (t > 0) {
+      ctx.globalAlpha = t;
+      ctx.drawImage(st.cv, 0, -(lo + 1) / S);
+      ctx.globalAlpha = 1;
+    }
+  } else ctx.drawImage(st.cv, 0, -fy);
   const cur = g.bobCur, prev = g.bobPrev;
   for (const r of composed.ordered) {
     if (!r.spr) continue;
@@ -9218,10 +9260,12 @@ function renderSmoothField(ctx, g, S, composed) {
                                   r.op, c07);
     ctx.drawImage(cv, dx, dy);
   }
-  // HUD prouzek (5. bitplane) z klasickeho snimku
-  if (!st.hud) { st.hud = document.createElement("canvas"); st.hud.width = 320; st.hud.height = 16; }
-  st.hud.getContext("2d").putImageData(g.mapFrame, 0, 0, 0, 0, 320, 16);
-  ctx.drawImage(st.hud, 0, 0);
+  // HUD (5. bitplane) jako **pruhledna** vrstva: drive se sem kopirovalo
+  // prvnich 16 radku klasickeho snimku, jenze ten ma teren na celem
+  // `top`, ne na interpolovanem scrollF - pod HUDem tedy stal a na radku
+  // 16 vznikal nehybny vodorovny sev (zmereno: radky 0-15 se neposouvaly,
+  // od 16 dolu ano). Textura HUDu je ridka, teren pod ni prosvita.
+  if (hudCv) ctx.drawImage(hudCv, 0, HUD_SCREEN_Y);
   ctx.restore();
 }
 
@@ -9263,11 +9307,14 @@ function frame(now) {
                          ? townObjectColor07Word(g.tick) : undefined);
   const hudPlane = hudPlaneForGame(g);
   const highColors = updateRetainedHighColors(g);
+  const hudFirstPass = !g.hudCopperPrimed;
   compositeHudPlane(composed.index, 320, g.mapFrame.data, hudPlane.bytes,
-                    g.tick, highColors, !g.hudCopperPrimed);
+                    g.tick, highColors, hudFirstPass);
   g.hudCopperPrimed = true;
+  const hudOverlay = smooth
+    ? hudOverlayCanvas(g, hudPlane.bytes, g.tick, hudFirstPass) : null;
   if (smooth) {
-    renderSmoothField(ctx, g, S, composed);
+    renderSmoothField(ctx, g, S, composed, hudOverlay);
     ctx.save(); ctx.scale(S, S);
   } else {
     ctx.putImageData(g.mapFrame, 0, 0);

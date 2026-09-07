@@ -587,3 +587,45 @@ prepisu; label to hlasi jako "pozadi skace". Cena zvednuti stropu je
 pamet platna (pri 8x 2560x2048); teren se barvi v rozliseni mapy, takze
 na S nezavisi, roste jen rasterizace spritu na GPU.
 
+## Vodorovny sev na radku 16 (nahlaseno 2026-09-07, opraveno)
+
+Zadavatel upresnil, ze "sev" je **prostorovy** - vodorovna cara v horni
+casti obrazu. Zmereno (zoom 4x, porovnani snimku pri alfa 0 a 1, po
+obrazovkovych radcich): **radky 0-15 se neposouvaly vubec, od radku 16
+dolu ano**.
+
+Pricina: `renderSmoothField` kopirovalo prvnich 16 radku z klasickeho
+snimku (`g.mapFrame`), aby melo HUD. Klasicky snimek ma ale teren na
+celociselnem `top`, ne na interpolovanem `scrollF`, takze pod HUDem teren
+stal, zatimco zbytek obrazu se posouval subpixelove - na radku 16 vznikla
+nehybna hrana. Textura HUDu je ridka (jen tahy pisma), takze teren pod ni
+prosvita a hrana byla videt.
+
+Oprava: `hudOverlayCanvas()` sklada HUD do **pruhledneho** platna
+(stejna smycka jako `compositeHudPlane`, pozadi s alfa 0) a plynula cesta
+ho kresli pres interpolovany teren na `HUD_SCREEN_Y`. Po oprave nema
+zadny radek detail bez pohybu.
+
+## Volitelne prolnuti pozadi ("hladke pozadi")
+
+Zaskrtavatko v testovaci liste (`state.blendBg`, vychozi vypnuto).
+Pri zapnutem se scroll **nekvantuje** na bod displeje a teren se kresli
+dvakrat pres sebe - na dolni bod plne a na dalsi s alfou podle zlomkove
+casti. Vodorovne zustava obraz ostry, svisle se michaji nejvyse dva
+sousedni body.
+
+Zmereno (kroky pozadi za tik, 16 tiku):
+
+| zoom | bez prolnuti | s prolnutim |
+|---:|---|---|
+| 2x | 0 / 0,5 (stoji kazdy druhy) | 0,25 rovnomerne |
+| 3x | 0 / 0,333 (stoji jeden ze ctyr) | 0,25 rovnomerne |
+| 4x | 0,25 rovnomerne | 0,25 rovnomerne |
+| 5x az 7x | strida dva kroky | 0,25 rovnomerne |
+| 8x | 0,25 rovnomerne | 0,25 rovnomerne |
+
+Je to **vedoma odchylka od originalu** (Amiga michat radky neumi), proto
+opt-in: hodi se, kdyz se do okna vejde jen 2x nebo 3x, kde jinak cast
+tiku stoji. Kontrakt `tools/smoothtest.py` meri vychozi cestu (bez
+prolnuti); pro prolnutou zatim kontrakt neni.
+
