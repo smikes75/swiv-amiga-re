@@ -791,7 +791,7 @@ zabery originalu t437..t447 (`build/survey/shoot/`).
   `0x5eda(6)` (nemodelovano), `a2c6(EGGS#12, 36, −32, HP 18, 75 bodu,
   cost 20)`, `+376 = 0x8876`, `0x62cc`.
 - **Strela vejce `0xa9a0`:** dite zdedi polohu, `+324 += 16`, zvuk
-  `0x5436(x)` (zatim bez prepisu), `a2c6(BULLET#56, 6, 0, HP 0, 0 bodu,
+  `0x5436(x)` (prepsano, viz docs/SOUND.md), `a2c6(BULLET#56, 6, 0, HP 0, 0 bodu,
   cost 5)`, `+367 |= 1` (bez stinu), `z += 1`, PLOP `0x85f0`, `+336 vy =
   6` v mapovych souradnicich (na obrazovce 6.25 px/t), `0x62cc`; cull
   `0x6480` s marginem 0. Trida 6 = smrtici kontakt, HP 0 = bolt ji
@@ -1084,7 +1084,7 @@ nese `a2c6` snimek.
 
 - PAM kresli XEVIOUS#5, ale korutina vola `a2c6(XEVIOUS#3, 34, −16,
   HP 0, 0 bodu, cost 13)`; `+367 |= 1` (bez stinu), `+328 z = 32`,
-  handler bitu 0 = `0x7968` (jen zvuk `0x55b0` podle x — **neprepsan**),
+  handler bitu 0 = `0x7968` (jen zvuk `0x55b0` podle x — prepsano),
   `+336 vy = 0.5` (mapove, na obrazovce 0.75 px/t), anim `0x0794c`
   XEVIOUS#3..#8 perioda 7 loop, `0x62cc`.
 - HP 0 znamena, ze `a2c6` **neinstaluje zadny vychozi handler**
@@ -1104,7 +1104,7 @@ nese `a2c6` snimek.
 - Po `0x9afa(40)`: `vy = 1`; `x >= 160` → `vx = 3` a anim `0x07f5e`
   (#12, #11, #10, #9 perioda 4 loop), jinak `vx = −2` a anim `0x07f7a`
   (#10, #11, #12, #9); pak jedna bomba `0x6178(0x7f9a)` a `0x62cc`.
-- **Bomba `0x7f9a`:** zvuk `0x4cf8` (neprepsan), `a2c6(BULLET#3, 6, −16,
+- **Bomba `0x7f9a`:** zvuk `0x4cf8` (prepsano), `a2c6(BULLET#3, 6, −16,
   HP 0, 0 bodu, cost 3)`, `0x6d96` (nuluje zdedene rychlosti),
   `+367 |= 17` (bez stinu + obrazovka), `+364 = 0` (cull margin 0), anim
   `0x07fc6` BULLET#3/#4 perioda 4 loop, rychlost `+356 = 512` = 2 px/t
@@ -1182,7 +1182,7 @@ do BOB fronty) zacina `btst #7,%a0@(21)` a pri nastavenem bitu zaznam
   `+397 |= 1`, `+367 |= 12` (blika s rodicem + vazane dite),
   `+332 vx = ±11` = pevny ofset; wait 300, pak smycka { anim `0x0a512`
   #20, #21, #22, #22, #21, #20, #19 perioda 8 (drzi #19), wait 24, zvuk
-  `0x4d6a` (**neprepsan**), strela `0x617a(0xa548)`, wait 120 }.
+  `0x4d6a` (prepsano), strela `0x617a(0xa548)`, wait 120 }.
 - **Strela `0xa548`:** `a2c6(_PLAT#23, 6, −16, HP 0, 0 bodu, cost 3)`,
   `+367 |= 1`, `+364 = 0`, anim `0x0a568` #23, #24, #25, #24 perioda 1
   loop, rychlost `+356 = 256` = 1 px/t na hrace (`0x7312` + `0x65be`),
@@ -1213,7 +1213,7 @@ do BOB fronty) zacina `btst #7,%a0@(21)` a pri nastavenem bitu zaznam
 - `+364 = −90` **jeste pred** `a2c6(_CORN#7, 36, −80, HP 0, 0 bodu,
   cost 25)`; `z = 0`, `0x65a4` (maska `+508 &= ~24`). Po `0x9afa(80)`:
   `+504 = 34` (smrtici kontakt), `+340 vz = 0.25`, zvuk `0x54ac`
-  (**neprepsan**), smycka do `z >= 32`, pak `vz = 0`, `+348 ay =
+  (prepsano), smycka do `z >= 32`, pak `vz = 0`, `+348 ay =
   2048/65536` a `0x62cc` — vez se zvedne a odleti dolu.
 - HP 0 = `a2c6` neinstaluje handlery, takze je nezasazitelna.
 - Simulace: zrozeni 3404 (x 99, sy −80), zvedani od radku 80 (tik +640),
@@ -1394,7 +1394,7 @@ polohuji v kroku hazardu, tedy o tik za rodicem (0.5 px pri 0.5 px/t).
   `0x0ba26` (perioda 5, INST2#3..#6, drzi #6) = otevreni, wait 20,
   `0x653e(0xb8ca)` = **zapne bit 0 se stejnym handlerem jako tovarna**
   (2000 bodu, bily zablesk pri `fp@(140) <= 1`), wait 50; pak vnitrni
-  smycka: zvuk `0x541e` (**neprepsan**), paprsek `0x617a(0xba9e)`,
+  smycka: zvuk `0x541e` (prepsano), paprsek `0x617a(0xba9e)`,
   wait 20 a `0x883c` — **kladne slovo znamena dalsi paprsek**, jinak
   anim `0x0ba6e` (#5..#2) = zavreni, `0x658a` (opet nezranitelna) a
   wait `(4 − fp@(140)) × 32 + 20`.
@@ -1587,7 +1587,7 @@ Overeno bez nalezu: delo BOS (HP 0, trida 34) je nezranitelne, protoze
   `0x6480` s marginem 0 si dela sama na konci kazdeho cyklu. Trida
   0x8000 navic vyrazuje uzel z kolizi.
 - Cyklus `0xafb8`: oblacek `0x6178(0x894a)` (z + 1), zvuk `0x5350(x)`
-  (**bez prepisu**), pocet kamenu `+276 = (horni slovo fp@(11172) & 7)
+  (prepsano), pocet kamenu `+276 = (horni slovo fp@(11172) & 7)
   + 3` = 3..10 (**RNG jen cten, neposouva se**). Pak tolikrat:
   `0x883c` → `uhel += (dolni slovo & 31) + 128` (kumulovane, kameny
   se stridave klopi na obe strany), kamen `0x6178(0xb014)`, surovy wait
@@ -1642,7 +1642,7 @@ Overeno bez nalezu: delo BOS (HP 0, trida 34) je nezranitelne, protoze
   `0x9ae8(80)` ceka na radek 80 s vynulovanou tridou (do te doby je
   nezasazitelny), pak `0xb6ae` = `fp@(140)++` a bit 3 v `fp@(166)`.
 - **Cyklus** `0xbb6e`: pochod `0xbc60` → dojezd `0xbc9c` → wait 4 →
-  zvuk `0x5436(x)` (**bez prepisu**) → dva pody na `(+19, +20)` a
+  zvuk `0x5436(x)` (prepsano) → dva pody na `(+19, +20)` a
   `(−19, +20)` → skok `y −= 16` a 16× { `y += 1`, wait 1 } → wait 10.
 - **Pochod `0xbc60`:** `notw +284` prepina strany, takze se stridaji:
   `vx = 3` dokud `x < 296`, pak `vx = −3` dokud `x > 24`. Test je vzdy
@@ -1828,7 +1828,7 @@ neviditelny rodic, ctyri samostatne tasky a tri druhy hmyzu.
 
 ### Zasah a konec hry (0xc124)
 
-- Zvuk `0xb6aa` → `0x4e2e` (**bez prepisu**), `HP--`. Pri HP > 0 bila
+- Zvuk `0xb8ca` → `0x4e2e` (prepsano), `HP--`. Pri HP > 0 bila
   `fp@(11166) = 64` na jeden tik.
 - Pri HP <= 0: `fp@(12534)++` (uvolni ctyri deti), `0x8852` (bily pulz),
   zamek, **12× { velky vybuch `0x6178(0x8876)`, 4× cukani `0xc1ba` }**,

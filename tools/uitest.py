@@ -20,6 +20,11 @@ def expect(condition, message):
         raise AssertionError(message)
 
 
+def signed_word(v):
+    v &= 0xffff
+    return v - 0x10000 if v & 0x8000 else v
+
+
 def main():
     with sync_playwright() as pw:
         browser = pw.chromium.launch()
@@ -5949,12 +5954,144 @@ def main():
             expect(cam["hit2"] == {"hp": 0, "alive": False, "score": 40},
                    "CAMOGUN po druhem zasahu nepridal 40 bodu")
 
+            zvuky = page.evaluate("""() => {
+              const savedActx = actx;
+              actx = null;                     // jen logicky model
+              try {
+                const pair = t => [t.volume, t.period];
+                const bomb = sfxBombTimeline();          // 0x4d08
+                const hatch = sfxHatchTimeline();        // 0x4d7a
+                const pod = sfxInstShotTimeline(20, 200);   // 0x5436
+                const beam = sfxInstShotTimeline(50, 500);  // 0x541e
+                const ping = sfxBoltPingTimeline();      // 0x55bc
+                const cornL = sfxCornTimeline(10000);    // 0x54c8
+                const cornR = sfxCornTimeline(11000);
+                const geyser = sfxGeyserTimeline(0);     // 0x536e
+                const jet = sfxNoiseTimeline(
+                  { scratch: new Uint8Array(256) }, "jet").states;  // 0x52e8
+
+                const fresh = () => ({ tick: 0, rngState: 0x12345678,
+                  rngVhposWord: 0, sfx: createTownSfxState(),
+                  nextBobOrdinal: 1, tokenSfxTasks: [],
+                  townExplosionTasks: [], smartPulse: 0,
+                  smartPulseTasks: [], smartPulseTaskOrdinals: [],
+                  shots: [], air: [], hazards: [], spawns: [], tokens: [],
+                  plops: [], booms: [], effects: [] });
+                const gG = fresh(); sfxGeyser(gG, 40);
+                const geyserEvents = gG.sfx.events.map(
+                  e => [e.kind, e.priority, e.accepted]);
+                let states = 0, ended = 0;
+                for (let i = 0; i < 520; i++) {
+                  advanceTownSfxIrq(gG);
+                  const v = gG.sfx.voices.find(
+                    v => v.effect && v.effect.dynamic &&
+                         v.effect.dynamic.kind === "geyser");
+                  if (v) states = v.effect.dynamic.stateCount;
+                  else if (!ended) ended = i + 1;
+                }
+                const gH = fresh(); sfxInstallationHit(gH);
+                const gI = fresh(); sfxInstShot(gI, 40, 20, 200);
+                const gE = fresh(); sfxExtraLife(gE, 0x1234abcd);
+                const gB = fresh(); const rng0 = gB.rngState;
+                sfxBigDeath(gB); const bigDeathRng = gB.rngState !== rng0;
+                let rngHops = 0, st2 = gB.rngState;
+                { const probe = fresh(); probe.rngState = rng0;
+                  sfxBigDeath(probe);
+                  let v = rng0; while (v !== probe.rngState && rngHops < 8) {
+                    v = rngStep(v); rngHops++; } }
+
+                return {
+                  bomb: [bomb.length, pair(bomb[0]), pair(bomb[3]),
+                         pair(bomb[4]), pair(bomb[47]), bomb[0].wave.length],
+                  hatch: [hatch.length, pair(hatch[0]), pair(hatch[15])],
+                  pod: [pod.length, pair(pod[0]), pair(pod[1]), pair(pod[47])],
+                  beam: [beam.length, pair(beam[0]), pair(beam[1]),
+                         pair(beam[125])],
+                  ping: [ping.map(pair), ping[0].ticks, ping[0].length],
+                  corn: [cornL.length, pair(cornL[0]), pair(cornL.at(-1)),
+                         cornL.filter(s => s.period > 1600).length,
+                         cornR.length, pair(cornR[0]), pair(cornR.at(-1))],
+                  geyser: [geyser.length, geyser[0].ticks,
+                           geyser[0].wave.length,
+                           [geyser[0], geyser[63], geyser[64],
+                            geyser[126]].map(s => s.volume),
+                           geyser.every(s => s.period >= 127 &&
+                                             s.period <= 254)],
+                  sine: [SFX_SINE_WAVE.length, SFX_SINE_WAVE[0],
+                         Math.max(...SFX_SINE_WAVE),
+                         Math.min(...SFX_SINE_WAVE)],
+                  jet: [jet.length, jet[0].ticks, pair(jet[0]),
+                        pair(jet[31]), pair(jet[32]), pair(jet[202])],
+                  geyserEvents, geyserStates: states, geyserEnd: ended,
+                  instHit: [gH.sfx.events.map(e => [e.kind, e.priority]),
+                            gH.sfx.voices.filter(v => v.effect)
+                              .map(v => v.effect.dynamic.base)],
+                  instShot: [gI.sfx.events.map(e => e.kind),
+                             gI.sfx.voices.filter(v => v.effect)
+                               .map(v => v.effect.end)],
+                  bigDeath: [gB.sfx.events.map(
+                               e => [e.kind, e.priority, e.period]), rngHops],
+                  extraLife: [gE.tokenSfxTasks.length,
+                              gE.tokenSfxTasks[0].periods,
+                              gE.tokenSfxTasks[0].x],
+                };
+              } finally { actx = savedActx; }
+            }""")
+            expect(zvuky["bomb"] == [48, [48, 250], [45, 323], [44, 358],
+                                     [1, 423], 16],
+                   "0x4d08 XEVIOUS bomba: %r" % (zvuky["bomb"],))
+            expect(zvuky["hatch"] == [16, [48, 800], [48, 500]],
+                   "0x4d7a poklop PLAT veze: %r" % (zvuky["hatch"],))
+            expect(zvuky["pod"] == [48, [48, 220], [47, 186], [1, 779]],
+                   "0x5436 strela vejce/pody: %r" % (zvuky["pod"],))
+            expect(zvuky["beam"] == [126, [64, 550], [64, 465], [1, 22699]],
+                   "0x541e paprsek instalace: %r" % (zvuky["beam"],))
+            expect(zvuky["ping"] == [[[64, 300], [64, 500], [64, 700]], 2, 2],
+                   "0x55bc bolt ping: %r" % (zvuky["ping"],))
+            expect(zvuky["corn"] == [1720, [64, 10000], [3, 1594], 513,
+                                     1744, [64, 11000], [3, 1598]],
+                   "0x54c8 _CORN: %r" % (zvuky["corn"],))
+            expect(zvuky["geyser"] == [127, 4, 128, [64, 64, 63, 1], True],
+                   "0x536e geyzir: %r" % (zvuky["geyser"],))
+            expect(zvuky["sine"] == [128, 0, 127, -128],
+                   "sinus 0x6a82: %r" % (zvuky["sine"],))
+            expect(zvuky["jet"] == [203, 2, [0, 300], [62, 300], [64, 300],
+                                    [0, 640]],
+                   "0x52e8 BLACKJET: %r" % (zvuky["jet"],))
+            expect(zvuky["geyserEvents"] == [["geyser", 200, True],
+                                             ["geyser-l", 60, True],
+                                             ["geyser-r", 60, True]],
+                   "0x5350 nezalozil tri hlasy: %r" % (zvuky["geyserEvents"],))
+            expect(zvuky["geyserStates"] == 127 and zvuky["geyserEnd"] == 510,
+                   "geyzir necetl 127x RNG / neskoncil na IRQ 510: %r %r" %
+                   (zvuky["geyserStates"], zvuky["geyserEnd"]))
+            expect(zvuky["instHit"] == [[["inst-hit-l", 40],
+                                         ["inst-hit-r", 40]], [400, 400]],
+                   "0x4e2e zasah instalace: %r" % (zvuky["instHit"],))
+            expect(zvuky["instShot"] == [["inst-shot-20-200",
+                                          "inst-shot-20-200-delayed"],
+                                         [50, 58]],
+                   "0x5436 nema druhou vrstvu o 8 IRQ pozdeji: %r" %
+                   (zvuky["instShot"],))
+            expect(zvuky["bigDeath"][1] == 1 and
+                   [e[:2] for e in zvuky["bigDeath"][0]] ==
+                   [["bigdeath", 60], ["bigdeath", 60]] and
+                   zvuky["bigDeath"][0][0][2] == 768 and
+                   769 <= zvuky["bigDeath"][0][1][2] <= 776,
+                   "0x4c3c velka smrt: %r" % (zvuky["bigDeath"],))
+            expect(zvuky["extraLife"] == [1, [424, 336, 266, 212, 168, 133],
+                                          signed_word(0xabcd)],
+                   "0x5600 extra zivot: %r" % (zvuky["extraLife"],))
+
             screenshot = os.environ.get("SWIV_UI_SCREENSHOT")
             if screenshot:
                 page.screenshot(path=screenshot)
             expect(not errors, "browser ohlasil chyby: " + "; ".join(errors[:6]))
-            print("UI OK (%.1fs): %d dispatch zaznamu, %d CAMOGUN, bez JS chyb" %
-                  (time.time() - started, summary["dispatch"], summary["camoguns"]))
+            print("UI OK (%.1fs): %d dispatch zaznamu, %d CAMOGUN, "
+                  "%d novych zvukovych stavu, bez JS chyb" %
+                  (time.time() - started, summary["dispatch"],
+                   summary["camoguns"],
+                   zvuky["corn"][0] + zvuky["jet"][0] + zvuky["geyser"][0]))
         finally:
             browser.close()
 

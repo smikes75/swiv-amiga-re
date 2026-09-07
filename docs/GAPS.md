@@ -390,8 +390,20 @@ Pruchod celym levelem (`TOWN-SURVEY.md`) ukazal dva systemove rozdily:
   kusech). Tim je **prepsano vsech 1497 objektu ve 73 druzich**.
   Overeno zatim jen
   simulaci a archy snimku; porovnani s baseline vAmigy po objektech
-  (jako u TOWN) zbyva. Zvuky DESERTu (`0x5436` strela vejce, `0x541e`
-  paprsek, `0x4e2e` zasah tovarny) zatim bez prepisu.
+  (jako u TOWN) zbyva. Zvuky mimo TOWN jsou od 2026-09-07 prepsane
+  (`0x4cf8`, `0x4d6a`, `0x4e2e`, `0x52d8`, `0x5350`, `0x5436`, `0x541e`,
+  `0x54ac`, `0x55b0`, `0x5600`) - viz docs/SOUND.md.
+- **Perioda geyziru 0x5350 se v prohlizeci losuje z forku PRNG.** Nativni
+  callback `0x536e` cte `0x883c` na kazdem ze 127 stavu, tedy jednou za
+  ctyri zvukova IRQ. Pocet cteni i jejich IRQ prepis dodrzuje (dynamicky
+  hlas `sfxAdvanceGeyser`), ale WebAudio potrebuje cely buffer dopredu,
+  takze zbylych 126 period vznikne z kopie PRNG odebrane pri prvnim stavu.
+  Rozdeleni i pocet sedi, konkretni posloupnost se lisi, jakmile mezi
+  zvukova IRQ zasahne herni kod. Presny prubeh potrebuje per-stav
+  streamovani bufferu (nebo ScriptProcessor), coz zatim nedelame.
+- **Extra zivot `0x5600` se zatim spousti v `awardScore()`.** Nativne prah
+  vyhodnocuje az nasledujici resume ziveho hrace (`0x710c`), takze poradi
+  vuci jinym taskum ve stejnem VBL neni overene.
 - Scroll originalu se pricita jednou za iteraci hlavni smycky (`0x291e`),
   objekty integruji rychlost × ubehle VBL (`0x62fe`); pri zatezi A500 scroll
   zpomali (64–98 px za 8 s misto 100). Prepis bezi konstantne 50 Hz.

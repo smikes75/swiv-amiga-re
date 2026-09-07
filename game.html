@@ -2204,6 +2204,22 @@ const SFX_OPEN_WAVE = new Int8Array([
 const SFX_TOKEN_WAVE_TABLE = new Int8Array([
   8,24,40,56,-56,-40,-24,-8, 8,24,40,56,-56,-40,-24,-8,
 ]);
+/* 0x5456: ctyri slova 7f80 7f80 7f7f 8080 zapsana pred smyckou. */
+const SFX_PULSE_WAVE = new Int8Array([127,-128,127,-128,127,127,-128,-128]);
+/* 0x55da: jedine slovo 0x7f81. */
+const SFX_PING_WAVE = new Int8Array([127,-127]);
+/* 0x5386: 128 bajtu z tabulky 0x6a82 - kazde druhe slovo, ASR.W #1 a
+   horni clamp na 127. Je to sinus s amplitudou 256 pulena na 128. */
+const SFX_SINE_WAVE = new Int8Array([
+  0,6,12,19,25,31,37,43,49,54,60,66,71,76,81,86,
+  90,95,99,103,106,110,113,115,118,120,122,124,125,126,127,127,
+  127,127,127,126,125,124,122,120,118,115,113,110,106,103,99,95,
+  90,86,81,76,71,66,60,54,49,43,37,31,25,19,12,6,
+  0,-7,-13,-19,-25,-31,-37,-43,-49,-55,-61,-66,-71,-76,-81,-86,
+  -91,-95,-99,-103,-107,-110,-113,-116,-119,-121,-123,-124,-126,-127,-128,-128,
+  -128,-128,-128,-127,-126,-124,-123,-121,-119,-116,-113,-110,-107,-103,-99,-95,
+  -91,-86,-81,-76,-71,-66,-61,-55,-49,-43,-37,-31,-25,-19,-13,-7,
+]);
 const sfxAudioCache = new Map();
 
 /* Spolecny vystupni filtr skutecneho A500. SWIV po bootu zhasne power LED
@@ -2406,17 +2422,96 @@ function sfxBossDeathTimeline(base) {
   }
   return states;
 }
-function sfxGooseHitTimeline(scratch) {
+function sfxGooseHitTimeline(scratch, base = 150) {
   // 0x4e7c..0x4e9e: globalni seed je do scratch[0] zapsan pouze pred
   // vstupem. Kratky skok 66dc se vraci na 0x4e7c, ne na RNG v 0x4e76.
+  // Vstupni perioda je parametr D2: 150 u GOOSE 0x4e46, 400 u zasahu
+  // instalace 0x4e2e. Zbytek rutiny 0x4e5e je spolecny.
   const states = [];
-  let period = 150;
+  let period = base;
   for (let volume = 64; volume > 0; volume--) {
     sfxNoiseFill(scratch, 6);                  // 6 longu = AUDLEN 12 words
     states.push({ wave: scratch.slice(0, 24),
                   volume: sfxPaulaVolume(volume), period,
                   length: 24, ticks: 1 });
     period = signedWord(period + (signedWord(period) >> 5));
+  }
+  return states;
+}
+function sfxBombTimeline() {
+  // 0x4d08 (XEVIOUS bomba 0x4cf8): stejny trojuhelnik a stejna maska jako
+  // bublina 0x500e, ale posun o 5 bitu a zaklad rostouci o 3 za stav.
+  const states = [];
+  let base = 250;                                // D1 z 0x4cfe
+  for (let volume = 48; volume > 0; volume--) {
+    let phase = volume;
+    if (phase & 4) phase = ~phase;               // 0x4d46
+    states.push({ wave: SFX_HIT_WAVE, volume,
+                  period: signedWord(base + ((phase & 3) << 5)),
+                  length: 16, ticks: 1 });
+    base = signedWord(base + 3);                 // 0x4d5e
+  }
+  return states;
+}
+function sfxHatchTimeline() {
+  // 0x4d7a (poklop PLAT veze 0x4d6a): pevna hlasitost 48, perioda 800
+  // po dvacitkach dolu; 0x4dbc je signed BGE, takze 500 jeste zazni.
+  const states = [];
+  for (let period = 800; period >= 500; period -= 20)
+    states.push({ wave: SFX_HIT_WAVE, volume: 48, period,
+                  length: 16, ticks: 1 });
+  return states;
+}
+function sfxInstShotTimeline(d1, d2) {
+  // 0x5456: spolecny callback pro 0x5436 (D1 20, D2 200) i 0x541e
+  // (D1 50, D2 500). Delka smycky se vybira testem 0x547e na D1 == 50.
+  const states = [], count = d1 === 50 ? 126 : 48;
+  let sign = d1, period = d2;
+  for (let i = 0; i < count; i++) {
+    states.push({ wave: SFX_PULSE_WAVE, volume: sfxPaulaVolume(count - i),
+                  period: signedWord(period + sign), length: 8, ticks: 1 });
+    period = signedWord(period + (signedWord(period) >> 5));
+    sign = signedWord(-sign);                    // 0x549e NEG.W
+  }
+  return states;
+}
+function sfxBoltPingTimeline() {
+  // 0x55bc: jednoslovna vlna, tri periody po dvou IRQ (0x4ab8).
+  return [300, 500, 700].map(period => ({
+    wave: SFX_PING_WAVE, volume: 64, period, length: 2, ticks: 2 }));
+}
+function sfxCornTimeline(start) {
+  // 0x54c8: prvni sestup jde od 10000 (resp. 11000) az pod 1500, dalsich
+  // 32 pruchodu uz jen kmita 1600 <-> 1500. Hlasitost se zapisuje az na
+  // konci pruchodu, takze plati vzdy pro ten nasledujici.
+  const states = [];
+  let period = start, volume = 64, counter = 96;
+  for (;;) {
+    do {                                         // 0x5502
+      states.push({ wave: SFX_HIT_WAVE, volume: sfxPaulaVolume(volume),
+                    period, length: 16, ticks: 1 });
+      period = signedWord(period - (signedWord(period) >> 8));
+    } while (period > 1500);
+    do {                                         // 0x5516
+      states.push({ wave: SFX_HIT_WAVE, volume: sfxPaulaVolume(volume),
+                    period, length: 16, ticks: 1 });
+      period = signedWord(period + (signedWord(period) >> 8));
+    } while (period < 1600);
+    volume = counter;                            // 0x552e
+    counter -= 3;                                // 0x5532 SUBQ/BCC
+    if (counter < 0) break;
+  }
+  return states;
+}
+function sfxGeyserTimeline(first) {
+  // 0x536e: 128bajtovy sinus, 127 stavu po ctyrech IRQ (0x4ab4). Perioda
+  // kazdeho stavu je 127 + (0x883c & 127), hlasitost je citac 127..1.
+  const states = [];
+  let value = first >>> 0;
+  for (let volume = 127; volume > 0; volume--) {
+    states.push({ wave: SFX_SINE_WAVE, volume: sfxPaulaVolume(volume),
+                  period: 127 + (value & 127), length: 128, ticks: 4 });
+    value = rngStep(value);
   }
   return states;
 }
@@ -2468,6 +2563,16 @@ function sfxNoiseTimeline(voice, kind) {
       noise(8, volume, 500, 32);
     for (let volume = 64; volume > 0; volume--)
       noise(8, volume, 1000, 32, 2);
+  } else if (kind === "jet") {
+    // 0x52e8: 64bajtovy sum, kazdy stav dva IRQ (0x4ab8). Nabeh 0x5302
+    // ma pevnou periodu 300 a citac 0..496 po 16; dobeh 0x5328 pridava
+    // dve k periode a ubira tri z citace, dokud neklesne pod nulu.
+    for (let c = 0; c < 512; c += 16) noise(16, c >> 3, 300, 64, 2);
+    let period = 300;
+    for (let c = 512; c >= 0; c -= 3) {
+      noise(16, c >> 3, period, 64, 2);
+      period = signedWord(period + 2);
+    }
   }
   // Po poslednim audible waitu prijde jeste resume do cleanupu 0x4bf2.
   return { states, logical: { tick: 0, end: tick + 1, ops } };
@@ -2603,7 +2708,8 @@ function sfxAdvanceGooseHit(g, voice, fx) {
     // globalni RNG necte. Ziva scratch se ale smi posunout jen o jeden IRQ,
     // aby preempce zachovala skutecny persistentni stav voice struktury.
     const renderScratch = voice.scratch.slice();
-    sfxPlayTimelineNow(voice, sfxGooseHitTimeline(renderScratch));
+    sfxPlayTimelineNow(voice,
+      sfxGooseHitTimeline(renderScratch, dyn.base ?? 150));
   }
   sfxNoiseFill(voice.scratch, 6);
   dyn.stateCount++;
@@ -2611,6 +2717,20 @@ function sfxAdvanceGooseHit(g, voice, fx) {
   dyn.lastPeriod = dyn.period;
   dyn.volume--;
   dyn.period = signedWord(dyn.period + (signedWord(dyn.period) >> 5));
+}
+function sfxAdvanceGeyser(g, voice, fx) {
+  // 0x53a0: kazdy ze 127 stavu si vezme jedno globalni 0x883c a pak ceka
+  // ctyri IRQ. Prvni stav pripada na IRQ #2 po prijeti pozadavku.
+  const dyn = fx.dynamic;
+  const rel = fx.tick - 1;
+  if (rel < 0 || rel > 4 * 126 || (rel & 3) !== 0) return;
+  const value = random32(g);
+  dyn.stateCount++;
+  // WebAudio potrebuje cely buffer dopredu, takze zbylych 126 period
+  // vznikne z forku PRNG odebraneho pri prvnim stavu. Pocet cteni i jejich
+  // IRQ zustavaji nativni, konkretni posloupnost se lisi, jakmile mezi
+  // zvukove IRQ zasahne herni kod. Viz docs/GAPS.md.
+  if (rel === 0) sfxPlayTimelineNow(voice, sfxGeyserTimeline(value));
 }
 function sfxAdvanceLogicalVoice(g, voice) {
   const fx = voice.effect;
@@ -2625,6 +2745,8 @@ function sfxAdvanceLogicalVoice(g, voice) {
     }
   if (fx.dynamic && fx.dynamic.kind === "goose-hit")
     sfxAdvanceGooseHit(g, voice, fx);
+  if (fx.dynamic && fx.dynamic.kind === "geyser")
+    sfxAdvanceGeyser(g, voice, fx);
   if (++fx.tick >= fx.end) {
     voice.effect = null;
     voice.guard = 0;                            // 0x4bf2 po konci tasku
@@ -2689,6 +2811,18 @@ function sfxBigExplosion(g, x, startDelay = 0) {
     }));
   }
   return last;
+}
+function sfxBigDeath(g, startDelay = 0) {
+  // 0x4c3c (+376 = 0x8876 i 0x88ec): prvni vrstva BIGEXPL.SND s pevnou
+  // periodou 768, teprve pak 0x883c a druha vrstva 769 + (D0 & 7). Oba
+  // pozadavky jdou natvrdo pres 0x4b8c, tedy bez panovani.
+  submitTownSfx(g, 320, 60, "bigdeath", () => ({
+    sample: "BIGEXPL.SND", period: 768, startDelay,
+  }));
+  const period = 769 + (random32(g) & 7);
+  return submitTownSfx(g, 320, 60, "bigdeath", () => ({
+    sample: "BIGEXPL.SND", period, startDelay,
+  }));
 }
 function sfxSmartBomb(g) {
   // 0x885a -> 0x4cb2/0x4cd2: stejny raw sample ve ctyrech mirne
@@ -2785,18 +2919,104 @@ function sfxBossDeath(g) {
     cacheKey: "goose-death-202",
   }));
 }
-function sfxGooseHit(g) {
-  // 0x4e46: dva prostorove preferovane (ne natvrdo vazane) selectory.
-  // Na prazdnu: struct0/AUD3 vlevo, potom struct1/AUD2 vpravo.
+function sfxNoiseSweepPair(g, base, kind) {
+  // 0x4e2e i 0x4e46 sdili callback 0x4e5e a lisi se jen vstupni periodou
+  // D2. Oba nejdriv zkusi 0x4bb4 (dvojice 0/3) a pak 0x4b8c (1/2); kazdy
+  // z nich smi po rejectu propadnout do opacne dvojice.
   const make = () => ({
-    deferred: true, period: 150,
+    deferred: true, period: base,
     logical: { tick: 0, end: 66, ops: [],
-      dynamic: { kind: "goose-hit", volume: 64, period: 150,
+      dynamic: { kind: "goose-hit", volume: 64, period: base, base,
                  stateCount: 0, seed: null } },
   });
-  const left = submitTownSfx(g, 0, 40, "goose-hit-l", make);
-  const right = submitTownSfx(g, 320, 40, "goose-hit-r", make);
+  const left = submitTownSfx(g, 0, 40, kind + "-l", make);
+  const right = submitTownSfx(g, 320, 40, kind + "-r", make);
   return [left, right];
+}
+function sfxGooseHit(g) {
+  return sfxNoiseSweepPair(g, 150, "goose-hit");     // 0x4e46
+}
+function sfxInstallationHit(g) {
+  // 0xb8ca: neletalni zasah tovarny/INST2/INST3/INST4 jde primo do
+  // 0x4e2e, nikoli do vychoziho hitu 0x5070.
+  return sfxNoiseSweepPair(g, 400, "inst-hit");      // 0x4e2e
+}
+function sfxXevBomb(g, x) {
+  return submitTownSfx(g, x, 30, "xev-bomb", () => {   // 0x4cf8
+    const states = sfxBombTimeline();
+    return { states, logical: sfxLogicalTimeline(states, [
+      { tick: 1, bytes: SFX_HIT_WAVE.slice() },
+    ]), cacheKey: "xev-bomb-4d08", period: 250 };
+  });
+}
+function sfxPlatHatch(g, x) {
+  return submitTownSfx(g, x, 40, "plat-hatch", () => {  // 0x4d6a
+    const states = sfxHatchTimeline();
+    return { states, logical: sfxLogicalTimeline(states, [
+      { tick: 1, bytes: SFX_HIT_WAVE.slice() },
+    ]), cacheKey: "plat-hatch-4d7a", period: 800 };
+  });
+}
+function sfxInstShot(g, x, d1, d2) {
+  // 0x5436 (D1 20, D2 200) a 0x541e (D1 50, D2 500) posilaji dve vrstvy
+  // pres tentyz selector: prvni hned (0x5456), druhou az po osmi IRQ
+  // (0x544e = 2x 0x4ab4). Na prazdnu dvojici tak obsadi oba hlasy.
+  const states = sfxInstShotTimeline(d1, d2);
+  const key = "inst-shot-" + d1 + "-" + d2;
+  const ops = [{ tick: 1, bytes: SFX_PULSE_WAVE.slice() }];
+  submitTownSfx(g, x, 100, key, () => ({
+    states, logical: sfxLogicalTimeline(states, ops), cacheKey: key,
+    period: signedWord(d2 + d1) }));
+  return submitTownSfx(g, x, 100, key + "-delayed", () => ({
+    states, cacheKey: key, period: signedWord(d2 + d1),
+    startDelay: 8 / SFX_CIA_HZ,
+    logical: { tick: 0, ops: ops.map(op => ({ ...op, tick: op.tick + 8 })),
+               end: states.reduce((t, s) => t + s.ticks, 2) + 8 } }));
+}
+function sfxJet(g, x) {
+  return sfxNoise(g, x, 70, "jet");                    // 0x52d8
+}
+function sfxCorn(g) {
+  // 0x54ac: priorita 10000 prebije uplne vsechno. Prvni vrstva jde
+  // natvrdo pres 0x4bb4 (perioda 10000), druha pres 0x4b8c (11000).
+  const left = sfxCornTimeline(10000), right = sfxCornTimeline(11000);
+  submitTownSfx(g, 0, 10000, "corn-l", () => ({
+    states: left, logical: sfxLogicalTimeline(left),
+    cacheKey: "corn-54c8-10000", period: 10000 }));
+  return submitTownSfx(g, 320, 10000, "corn-r", () => ({
+    states: right, logical: sfxLogicalTimeline(right),
+    cacheKey: "corn-54c8-11000", period: 11000 }));
+}
+function sfxBoltPing(g, x) {
+  return submitTownSfx(g, x, 20, "bolt-ping", () => {   // 0x55b0
+    const states = sfxBoltPingTimeline();
+    return { states, logical: sfxLogicalTimeline(states, [
+      { tick: 1, bytes: SFX_PING_WAVE.slice() },
+    ]), cacheKey: "bolt-ping-55bc", period: 300 };
+  });
+}
+function sfxGeyser(g, x) {
+  // 0x5350: prvni pozadavek s prioritou 200 podle x, pak jeste levy a
+  // pravy s prioritou 60. Callback 0x536e je u vsech tri stejny.
+  const make = () => ({
+    deferred: true, period: 127,
+    logical: { tick: 0, end: 4 * 127 + 2, ops: [],
+               dynamic: { kind: "geyser", stateCount: 0 } },
+  });
+  submitTownSfx(g, x, 200, "geyser", make);
+  submitTownSfx(g, 0, 60, "geyser-l", make);
+  return submitTownSfx(g, 320, 60, "geyser-r", make);
+}
+function sfxExtraLife(g, score) {
+  // 0x5600 sdili s TOKENem cely zbytek 0x5618: priority100 task 0x564c,
+  // noty 0x5672 s D1 64 a prioritou 120, wait 5 VBL mezi nimi. Selector
+  // vznikne z D0 = signed spodni slovo skore (0x710c).
+  const task = { x: signedWord((score | 0) & 0xffff), kind: "extra-life",
+                 periods: [424, 336, 266, 212, 168, 133],
+                 next: 0, wait: 0, started: false, done: false };
+  assignBobOrdinal(g, task);
+  ensureTokenSfxTasks(g).push(task);
+  return task;
 }
 
 /* paleta platna na dane radce mapy (img souradnice) */
@@ -3484,12 +3704,15 @@ function perturbRandomSoundIrq(g, irqIndex = 0) {
   const hi = (((seed >>> 16) + (vhpos & 0xffff)) & 0xffff) >>> 0;
   g.rngState = ((hi << 16) | (seed & 0xffff)) >>> 0;
 }
+function rngStep(old) {
+  let next = ((old >>> 0) << 1) >>> 0;
+  if ((old >>> 31) !== 0 || next === 0) next ^= 0x1d872b41;
+  return ((next << 16) | (next >>> 16)) >>> 0;
+}
 function random32(g) {
   const old = g && Number.isInteger(g.rngState)
     ? g.rngState >>> 0 : fallbackRandomState >>> 0;
-  let next = (old << 1) >>> 0;
-  if ((old >>> 31) !== 0 || next === 0) next ^= 0x1d872b41;
-  next = ((next << 16) | (next >>> 16)) >>> 0;
+  const next = rngStep(old);
   if (g) g.rngState = next; else fallbackRandomState = next;
   return next;
 }
@@ -4100,6 +4323,7 @@ function activateAirMember(g, a, p) {
     a.vy = 1 + (random32(g) & 0x7FFF) / 65536;
   } else if (a.kind === "jet") {               // 0x7ac8: x az po 0x8822
     a.x = 32 + (random32(g) & 255);
+    sfxJet(g, a.x);                            // 0x7ad8: zvuk 0x52d8(x)
   }
   return true;
 }
@@ -4141,6 +4365,7 @@ function awardScore(g, points) {
     g.lives++; g.nextLife += 30000;
     if (g.player)
       g.player.rank = signedWord((g.player.rank || 0) + 6000);// 0x7116
+    sfxExtraLife(g, g.score);                               // 0x7128
   }
 }
 /* Resident collision sweep 0x6ee2 nepouziva rozmery obrazku. Porovnava
@@ -4417,7 +4642,12 @@ function killSpawnCredited(g, s) {             // 0xa36a z player eventu
 function damageSpawn(g, s) {
   if ((!s.alive || s.hp <= 0) && !s.townResumeActive) return false;
   if (--s.hp > 0) {
-    s.hitFlash = true; sfxGenericHit(g, s.x);
+    s.hitFlash = true;
+    // 0xb8ca ma vlastni zvuk 0x4e2e misto vychoziho 0x5070 z 0xa352.
+    // 0xb832 tovarna, 0xba3a INST2, 0xbb50 INST3, 0xbe50 jadro INST4.
+    if (s.beh === "factory" || s.beh === "inst2" ||
+        s.beh === "inst3" || s.beh === "inst4core") sfxInstallationHit(g);
+    else sfxGenericHit(g, s.x);
     if (s.beh === "inst5") { g.fadeWhite = 64; s.whiteT = 1; }   // 0xc12e
     return false;
   }
@@ -4532,7 +4762,9 @@ function startTownExplosionTask(g, task) {
   // kill (42 tiku, docs/ANIMS.md), +367 |= 1; kazdych 15 tiku (0x629c)
   // oblacek 0x8952 na nahodnem ofsetu, dokud anim bezi (t 0, 15, 30).
   if (boom.kind === "big") boom.puffs = true;
-  sfxBigExplosion(g, task.x, task.sfxDelay || 0);
+  // 0x8876 ma vlastni zvuk 0x4c3c; 0x4c58 patri jen bezne smrti 0x894a.
+  if (boom.kind === "big") sfxBigDeath(g, task.sfxDelay || 0);
+  else sfxBigExplosion(g, task.x, task.sfxDelay || 0);
   return true;
 }
 function runFreshTownExplosionTasks(g) {
@@ -4582,7 +4814,7 @@ function spawnPlayerBurst(g, x, y, theta = 192, count = 16,
   // Sestnact statickych EXPL1 chvostu, kazdy o dva tiky pozdeji. Offset
   // bere signed high word 16.16 rychlosti z puvodni SIN256/COS256 tabulky.
   // 0x88ec (+376 velkych letcu) je tyz kod s osmi chvosty a krokem 0x600.
-  if (count === 16) sfxPlayerBurst(g); else sfxBigExplosion(g, x);
+  if (count === 16) sfxPlayerBurst(g); else sfxBigDeath(g);  // 0x88ec
   for (let i = 0; i < count; i++) {
     const a = (theta + 100 * i) & 255;
     const speedRaw = step * i;
@@ -5112,7 +5344,7 @@ function spawnPlatTurret(g, veh) {             // 0xa4d6 (dite 0x6144)
   // a2c6(_PLAT#19, 0x8000, -16, HP 0, 0 bodu, cost 4), +397 |= 1,
   // +367 |= 12 (blika s rodicem + vazane dite), +332 vx = 11 | -11 =
   // ofset; wait 300, pak smycka { anim 0x0a512 (#20,#21,#22,#22,#21,
-  // #20,#19 perioda 8, drzi #19), wait 24, zvuk 0x4d6a (neprepsan),
+  // #20,#19 perioda 8, drzi #19), wait 24, zvuk 0x4d6a,
   // strela 0x617a(0xa548), wait 120 }.
   const h = { kind: "platturret", file: "_PLAT.LIN", parent: veh,
               platType: veh.platType, ox: veh.platType ? 11 : -11,
@@ -5143,13 +5375,14 @@ function spawnPlatShot(g, t) {                 // 0xa548 (dite 0x617a)
   assignBobOrdinal(g, h); g.hazards.push(h);
 }
 function spawnXevBomb(g, s) {                  // 0x7f9a (dite 0x6178)
-  // Zvuk 0x4cf8 (neprepsan); a2c6(BULLET#3, trida 6, -16, HP 0, 0 bodu,
+  // Zvuk 0x4cf8; a2c6(BULLET#3, trida 6, -16, HP 0, 0 bodu,
   // cost 3), 0x6d96 vynuluje zdedene rychlosti, +367 |= 17 (bez stinu +
   // obrazovka), +364 = 0 (cull margin 0), anim 0x07fc6 BULLET#3/#4
   // perioda 4 loop; rychlost 512/256 = 2 px/t na hrace (0x72ee + 0x65be
   // bez omezeni) s rozptylem (0x883c & 31) - 16, z = (slovo y) >> 1.
   // Trida 6 + HP 0 = smrtici kontakt bez handleru, tedy jako kanonovy
   // granat: bolt hrace jej nezastavi ani nezabije.
+  sfxXevBomb(g, s.x);                          // 0x7f9e, jeste pred a2c6
   const p = g.player;
   const sy = s.y - scrollTop(g);
   const ang = (angTo(s.x, sy, p.x, p.y) +
@@ -5277,7 +5510,7 @@ function factoryDeath(g, s) {                  // 0xb97c (+376)
       const boom = spawnBoom(g, s.x + dx, s.y + dy, "big", 1);
       boom.t = -1 - 20 * round; boom.puffs = true;
       boom.source = "death-factory";
-      sfxBigExplosion(g, s.x + dx, 20 * round);
+      sfxBigDeath(g, 20 * round);              // 0x8876 -> 0x4c3c
     }
 }
 function spawnJetFly(g, s) {                   // 0x9cde (dite 0x6178)
@@ -5358,9 +5591,10 @@ function spawnDiagunLaser(g, s) {              // 0xa804 (dite 0x6178)
   g.hazards.push(h);
 }
 function fireEggShot(g, x, y) {                // 0xa9a0 (dite 0x6178)
-  // +324 += 16, zvuk 0x5436(x) (zatim bez prepisu), a2c6(BULLET#56, 6, 0,
+  // +324 += 16, zvuk 0x5436(x), a2c6(BULLET#56, 6, 0,
   // HP 0, 0 bodu, cost 5), +367 |= 1 (bez stinu), z += 1, PLOP 0x85f0,
   // +336 vy = 6 v mapovych souradnicich, 0x62cc do zabiti/cullu.
+  sfxInstShot(g, x, 20, 200);                  // 0xa9aa: zvuk 0x5436(x)
   const sh = { kind: "eggshot", x, y: y + 16, vy: 6, z: 1,
                bornTick: g.tick | 0, cost: 5, budgeted: true, dead: false };
   g.activeCost = (g.activeCost || 0) + sh.cost;
@@ -5901,6 +6135,7 @@ function advanceTownHazardField(g, h) {
         h.st = 1; h.seq = [20, 21, 22, 22, 21, 20, 19];
         h.per = 8; h.apos = 0; h.at = 0; h.t = 24;
       } else if (h.st === 1) {
+        sfxPlatHatch(g, h.x);                  // 0xa530: zvuk 0x4d6a(x)
         spawnPlatShot(g, h); h.st = 2; h.t = 120;
       } else {
         h.st = 1; h.seq = [20, 21, 22, 22, 21, 20, 19];
@@ -6420,7 +6655,7 @@ function dispatchTownShotEvent(g, task) {
     if (!o.alive) return;
     if (o.beh === "boss") damageBoss(g, o);
     else if (o.beh === "mine") detonateMine(g, o, true);
-    else if (o.boltPing) return;               // 0x7968: jen zvuk 0x55b0
+    else if (o.boltPing) { sfxBoltPing(g, o.x); return; }   // 0x7968
     else damageSpawn(g, o);
   } else if (kind === "air") {
     if (!o.alive) return;
@@ -7890,7 +8125,7 @@ function step(g) {
       }
       if (s.st === 2) {                         // 0xb8a6: anim + paprsek
         s.fr = 13; s.at = 0;
-        sfxGenericHit(g, s.x);                  // 0x541e(x): zvuk paprsku
+        sfxInstShot(g, s.x, 50, 500);           // 0xb8b8: zvuk 0x541e(x)
         spawnFactoryBeam(g, s);
         s.t = 40; s.st = 3;
       } else if (s.st === 3 && --s.t <= 0) {
@@ -7994,7 +8229,7 @@ function step(g) {
         if (Math.abs(d) >= 24) s.vx = d >= 0 ? 2 : -2;
         else { s.vx = 0; s.st = 4; s.t = 4; }    // 0xbb76: wait 4
       } else if (s.st === 4 && --s.t <= 0) {
-        // 0xbb7c: zvuk 0x5436(x) neprepsan, dva pody a skok o 16 px.
+        sfxInstShot(g, s.x, 20, 200);            // 0xbb80: zvuk 0x5436(x)
         spawnWalkerPod(g, s, 19, 20);            // 0xbbba(+19, +20)
         spawnWalkerPod(g, s, -19, 20);           // 0xbbba(-19, +20)
         s.y -= 16; s.hops = 16;                  // 0xbb90
@@ -8038,7 +8273,7 @@ function step(g) {
       }
       if (s.st === 0) {                          // 0xafb8: zacatek cyklu
         queueTownExplosionTask(g, s.x, s.y, 1, "geyser-puff");   // 0x894a
-        // zvuk 0x5350(x) neprepsan
+        sfxGeyser(g, s.x);                       // 0xafc4: zvuk 0x5350(x)
         s.rocks = ((g.rngState >>> 16) & 7) + 3; // fp@(11172), bez posunu RNG
         s.st = 1;
       }
@@ -8179,6 +8414,7 @@ function step(g) {
         s.invulnerable = false;                 // 0xba3a: handler 0xb8ca
         s.st = 3; s.t = 50;
       } else if (s.st === 3 && --s.t <= 0) {    // 0xba4a: paprsek
+        sfxInstShot(g, s.x, 50, 500);           // 0xba4e: zvuk 0x541e(x)
         spawnInst2Beam(g, s);
         s.st = 4; s.t = 20;
       } else if (s.st === 4 && --s.t <= 0) {
@@ -8327,7 +8563,10 @@ function step(g) {
     } else if (s.beh === "corn") {
       s.vy += s.ay; s.y += s.vy; s.z += s.vz;    // housekeeping 0x62fe
       if (s.st === 0) {
-        if (s.sy >= 80) { s.st = 1; s.vz = 0.25; s.lethal = true; }
+        if (s.sy >= 80) {
+          s.st = 1; s.vz = 0.25; s.lethal = true;
+          sfxCorn(g);                            // 0x8244: zvuk 0x54ac
+        }
       } else if (s.st === 1 && s.z >= 32) {      // 0x824e: cele slovo z
         s.vz = 0; s.ay = 2048 / 65536; s.st = 2;
       }

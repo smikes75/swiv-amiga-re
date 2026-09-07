@@ -120,6 +120,46 @@ The HOMING routine inherits an unresolved D0 at its sound call. The browser
 uses explicit deterministic pan value zero until that register provenance is
 closed; it does not claim that the missile's x coordinate is native.
 
+## Effects outside TOWN
+
+Ten further effects are transcribed from the same engine. All of them reach
+`0x4C0C` (or hard-code both selectors) and run as ordinary voice coroutines.
+
+| event | native path | priority | implemented result |
+|---|---|---:|---|
+| big death (`+376`) | `0x8880`, `0x88EC -> 0x4C3C` | 60 | two `BIGEXPL.SND` layers at period 768 and `769 + (0x883C & 7)`, both forced through the right selector; exactly one PRNG advance, taken between the two requests |
+| XEVIOUS bomb start | `0x7F9E -> 0x4CF8 -> 0x4D08` | 30 | 48 triangle states, volume 48..1, period `250 + 3i + ((phase & 3) << 5)` with the same `BTST #2 / NOT.W` mask as the shield tone |
+| PLAT turret hatch | `0xA530 -> 0x4D6A -> 0x4D7A` | 40 | 16 triangle states at fixed volume 48, period 800 down to 500 by 20 (`BGE`, so 500 still sounds) |
+| installation hit | `0xB8CA -> 0x4E2E -> 0x4E5E` | 40 | the GOOSE-hit callback with `D2 = 400`: 64 fresh-noise states, volume 64..1, `p += p>>5`; forced left then right selector |
+| BLACKJET arrival | `0x7AD8 -> 0x52D8 -> 0x52E8` | 70 | 32 rising noise states (volume 0..62, period 300) then 171 falling ones (period `300 + 2j`, volume `(512-3j) >> 3`), all two IRQ long |
+| geyser eruption | `0xAFC4 -> 0x5350 -> 0x536E` | 200 + 60 + 60 | three voices; 127 states of the 128-byte sine from `0x6A82`, four IRQ each, volume 127..1, period `127 + (0x883C & 127)` per state |
+| egg shot / walker pods | `0xA9AA`, `0xBB80 -> 0x5436 -> 0x5456` | 100 x2 | 48 pulse states, volume 48..1, period `D2 + (-1)^i * 20` with `D2 += D2>>5`; second layer delayed 8 IRQ by `0x544E` |
+| factory / INST2 beam | `0xB8B8`, `0xBA4E -> 0x541E -> 0x5456` | 100 x2 | the same callback with `D1 = 50`, `D2 = 500`, which the `0x547E` test lengthens to 126 states |
+| `_CORN` launch | `0x8244 -> 0x54AC -> 0x54C8` | 10000 x2 | two hard-panned voices, glide from 10000 (11000) down under 1500 by `p -= p>>8`, then 32 passes of 1500 <-> 1600 with volume 96 down to 3 in steps of 3 |
+| XEVIOUS bolt ping | `0x7968 -> 0x55B0 -> 0x55BC` | 20 | one-word wave `0x7F81` at volume 64, periods 300, 500 and 700 for two IRQ each |
+| extra life | `0x7128 -> 0x5600 -> 0x5618` | 120 | the TOKEN note generator `0x5672` driven by the six-entry table at `0x5606`: periods 424, 336, 266, 212, 168 and 133, five VBL apart |
+
+`0x5600` and `0x5614` differ only in the note table they hand to the shared
+tail at `0x5618`, so the extra-life chime and the TOKEN chime use one
+priority-100 task, one selector capture and one note callback. The extra-life
+pan comes from `D0` at `0x710C`, which is the signed low word of the score
+long the threshold was just compared against.
+
+The geyser is the only effect that reads the global PRNG once per state.
+`sfxAdvanceGeyser` keeps those 127 reads on their native IRQs; the rendered
+buffer draws its periods from a fork taken at the first state, because
+WebAudio needs the whole buffer before the first sample. See docs/GAPS.md.
+
+The `+376` big-death callback `0x8876` (and the eight-tail variant `0x88EC`)
+uses `0x4C3C`, not the standard `0x4C58` of `0x894A`. The two differ in
+priority, in period and in PRNG cost: `0x4C58` draws twice, `0x4C3C` once.
+Until 2026-09-07 the browser played `0x4C58` for both.
+
+`0x4F9E` and `0x523A` are complete voice routines with no reference anywhere
+in `AMPROG.OBJ` and are deliberately not wired up. `0x51D4` (four noise
+voices at periods 400, 480, 413 and 441, volume `counter >> 7`, endless loop)
+belongs to `0xF94` in the loader, outside the gameplay slice.
+
 ## Attract music and verified A500 output path
 
 The browser loads `AMTITUNE.MOD` from the inserted disk, starts it after the
@@ -169,14 +209,12 @@ an exact reuse pattern still needs scanline DMA-slot phase.
 
 ## Still open
 
-- Remaining special/player-transition effects outside the TOWN hooks listed
-  above still need their exact call-site map; the six-note extra-life chime at
-  `0x5600` is known but not yet connected to the browser's score threshold.
-  It uses periods 424/336/266/212/168/133 at offsets 0/5/10/15/20/25 VBL,
-  priority 120 and a stereo selector derived from the signed low score word;
-  the threshold itself belongs to the following live-player resume, not to
-  `awardScore()`.
-- Sounds belonging only to later levels are outside the current TOWN slice.
+- The extra-life chime is connected, but from inside `awardScore()`. Natively
+  the threshold is evaluated by the following live-player resume at `0x710C`,
+  so its ordering against other tasks created in the same VBL is unverified.
+- Nothing in the effect table is unhooked any more; what remains open is the
+  exact CIA/beam phase behind the sub-millisecond onset differences already
+  listed above.
 - `AMHITUNE.MOD` is decoded and included in the effect-census tests, but no
   runtime scene currently starts it or switches to it. Its native
   high-score/post-game call site remains to be connected.
