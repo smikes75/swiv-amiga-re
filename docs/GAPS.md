@@ -665,3 +665,33 @@ jsou tyto veci:
 - Plynuly posuvnik 0,5x az 6x po 0,05: neceločíselne zvetseni pixelartu
   dela ruzne siroke pixely, coz je presne to, co jsme odstranovali.
 
+## Strely (HW sprity) se neinterpolovaly (nahlaseno 2026-09-07, opraveno)
+
+Po vyhlazeni pozadi zustaly strely znatelne mene plynule. Zmereno:
+`hwSpriteCandidate` pocita kotvu z `positionWord(source.x/y)`, tedy
+celociselnou polohu tiku, a `drawTownHardwareSprites` ji kreslila
+**bez jakekoli interpolace** - hracovy bolty, cannon a PLOP tedy skakaly
+po 50 Hz, zatimco teren i BOBy uz jely plynule. Na 120 Hz to byl
+nejnapadnejsi rozdil v obraze.
+
+Oprava: HW sprity jdou stejnou cestou jako BOBy. Polohy tiku se
+zaznamenaji jednou (`g.hwCur`/`g.hwPrev`, klic `kind#ordinal` u cannon a
+PLOP, `kind#s<slot>` u boltu z poolu 0x6028), paruje se jen se sousednim
+tikem a u boltu se navic overuje totoznost zdroje, protoze **slot v poolu
+se po uvolneni znovu obsadi** a jinak by novy bolt zdedil polohu stareho.
+Kotva se prepocita na svet (`kotva + top` prislusneho tiku), interpoluje
+a odecte se interpolovany scroll.
+
+Zmereno na jednom boltu pri zoomu 4x uvnitr jednoho tiku (alfa 0 →
+0,999): y 150,5 → 148,25 → 146 → 144 → 141,75, tedy kroky po ~2,25 px
+kvantovane na 1/4 px. Drive byla hodnota po celý tik konstantni.
+
+**Zbyva (dalsi krok):** kotvy jsou v kazdem tiku zaokrouhlene dolu na
+cele pixely (`positionWord`, resp. `Math.floor` u BOBu), takze
+interpolace jede mezi zaokrouhlenymi konci. U pomaleho objektu to dela
+nerovnomernou rychlost - zmereno na letci YELLOW s 0,615 px za tik:
+skutecne polohy 101,073 → 101,688 → 102,303 → 102,919, po zaokrouhleni
+101, 101, 102, 102, tedy kroky 0, 1, 0, 1. Je to tataz trida chyby jako
+drive u pozadi; naprava je interpolovat ze zlomkovych poloh a kontrakt
+zarovnat na tiky, kde poloha vyjde cela.
+

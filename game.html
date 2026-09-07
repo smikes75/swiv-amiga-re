@@ -3006,10 +3006,11 @@ function townHwCandidates(g) {
 }
 function allocateHwSpriteQueue(candidates, fadeBlack = 0) {
   const channels = Array.from({ length: 8 }, () => []);
+  const all = candidates;
   const traversal = candidates.slice().sort((a, b) =>
     ((b.key & 0xffff) - (a.key & 0xffff)) || (b.serial - a.serial));
   const accepted = [];
-  if (fadeBlack) return { channels, traversal, accepted, remaining: 64 };
+  if (fadeBlack) return { channels, traversal, accepted, remaining: 64, all };
   let remaining = 64;
   for (const r of traversal) {
     if (r.startY < 0 || remaining === 0) continue;
@@ -3031,7 +3032,7 @@ function allocateHwSpriteQueue(candidates, fadeBlack = 0) {
       }
     }
   }
-  return { channels, traversal, accepted, remaining };
+  return { channels, traversal, accepted, remaining, all };
 }
 function allocateTownHwSprites(g) {
   const result = allocateHwSpriteQueue(townHwCandidates(g), g.fadeBlack || 0);
@@ -3047,8 +3048,27 @@ function hwSpritePalette(g, bank) {
   return { pal, key: `hw:${bank}:${high[base + 1].toString(16)}:` +
     `${high[base + 2].toString(16)}:${high[base + 3].toString(16)}` };
 }
-function drawTownHardwareSprites(ctx, g) {
+/* Klic pro parovani HW spritu mezi tiky. Cannon a PLOP maji creation
+   ordinal, hracovy bolty slot v poolu 0x6028 - slot se ale po uvolneni
+   znovu obsadi, takze se u nalezu jeste overuje totoznost zdroje. */
+function hwSmoothKey(r) {
+  return r.kind + "#" + (Number.isInteger(r.taskOrdinal) ? r.taskOrdinal
+                         : Number.isInteger(r.poolSlot) ? "s" + r.poolSlot : null);
+}
+function drawTownHardwareSprites(ctx, g, view) {
   const allocation = allocateTownHwSprites(g);
+  // Polohy tohoto tiku se zaznamenaji jednou, i kdyz smycka displeje vola
+  // kresleni vickrat za tik; parovat lze jen se sousednim tikem.
+  if (g.hwTick !== g.tick) {
+    g.hwTopPrev = g.hwTopCur;
+    g.hwTopCur = Math.max(0, Math.min(g.mapH - 256, Math.floor(g.scroll)));
+    g.hwPrev = g.hwTick === (g.tick | 0) - 1 ? g.hwCur : null;
+    g.hwCur = new Map();
+    for (const r of allocation.all || [])
+      g.hwCur.set(hwSmoothKey(r), { x: r.anchorX, y: r.anchorY, src: r.source });
+    g.hwTick = g.tick;
+  }
+  const lerp = view && view.smooth && g.hwPrev;
   // Nizsi sprite number ma vyssi pixelovou prioritu; Canvas jej proto
   // kresli pozdeji. Uvnitr channelu zustava fyzicke DMA-list poradi.
   for (let channel = 7; channel >= 0; channel--) {
@@ -3056,8 +3076,21 @@ function drawTownHardwareSprites(ctx, g) {
     for (const r of allocation.channels[channel]) {
       if (!r.dmaVisible) continue;
       const spr = sprite(r.file, r.frame, hp.pal, hp.key);
-      if (spr) ctx.drawImage(spr.cv, r.anchorX + spr.ox,
-                             r.anchorY + spr.oy);
+      if (!spr) continue;
+      let ax = r.anchorX, ay = r.anchorY;
+      if (lerp) {
+        // Strely se drive kreslily rovnou na celociselne poloze tiku, tedy
+        // skakaly po 50 Hz, zatimco zbytek obrazu jel plynule. Ted jdou
+        // stejnou cestou jako BOBy: svet = kotva + cely scroll, interpolace
+        // mezi tiky a odecteni interpolovaneho scrollu.
+        const p = g.hwPrev.get(hwSmoothKey(r));
+        if (p && p.src === r.source) {
+          const wyC = r.anchorY + view.top, wyP = p.y + view.topPrev;
+          ax = view.q(p.x + (r.anchorX - p.x) * view.alpha);
+          ay = view.q(wyP + (wyC - wyP) * view.alpha) - view.scrollF;
+        } else ay = r.anchorY + view.top - view.scrollF;
+      }
+      ctx.drawImage(spr.cv, ax + spr.ox, ay + spr.oy);
     }
   }
   return allocation;
@@ -9575,7 +9608,15 @@ function frame(now) {
   // hardwarovymi sprity, ktere se skladaji az nize.
   // Jediny 0x3d00/0x3d4e pass pro cannon, PLOP#1 a P1 bolt pool:
   // 64 records, osm channel listu, banky podle channel pair a HW priorita.
-  if (!g.over) drawTownHardwareSprites(ctx, g);
+  if (!g.over)
+    drawTownHardwareSprites(ctx, g, smooth ? {
+      smooth: true, alpha: Math.max(0, Math.min(1, g.frac / TICK)),
+      top, scrollF: g.smoothScrollF ?? top,
+      // o kolik se scroll posunul mezi minulym a timto tikem: kotva
+      // predchoziho tiku byla vuci jeho vlastnimu `top`
+      topPrev: g.hwTopPrev ?? top,
+      q: v => state.blendBg ? v : Math.round(v * S) / S,
+    } : null);
   if (smooth) ctx.restore();
 
   if (g.over) {
