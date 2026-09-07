@@ -950,8 +950,14 @@ const ATTRACT_HOLD_VBLS = Object.freeze({
 });
 const ATTRACT_PALETTE_OFFSETS = Object.freeze({
   cover: 0x29BC, sales: 0x29BC, faces: 0x29DC, scores: 0x29FC,
+  stats: 0x2A1C,                               // 0xdbc: post-game 0x0da2
   outline: 0x2A3C, white: 0x2A5C, jeep: 0x2A7C, heli: 0x2A9C,
 });
+/* 0x33fe: sedm longu vychozi tabulky skore. Radek 0x33ba je vypisuje pres
+   0x5956 a pak jeste prilepi znak '0' (0x33ec), takze na obrazovce stoji
+   700000 az 100000; ulozena hodnota je desetina, stejne jako herni skore. */
+const NATIVE_DEFAULT_SCORES = Object.freeze([70000, 60000, 50000, 40000,
+                                             30000, 20000, 10000]);
 const ATTRACT_FADE_LEVELS = Object.freeze(
   Array.from({ length: 17 }, (_, i) => i * 16));
 const BLUEPRINT_COLOR_STARTS = Object.freeze([0, 8, 16, 24, 32, 40, 48]);
@@ -1042,8 +1048,12 @@ function drawIntroText(prog, pixels, text, anchorX, y, color, align = 1) {
 
 /* 0x5730..0x5934: formatovany text pouzivany sales/FACES/high-score.
    _xNNN, _yNNN, _cNN, _aN, _n(+8), _m(+12), _f(flush). */
-function drawIntroFormatted(prog, pixels, stream) {
-  let x = 0, y = 0, color = 1, align = 1, p = 0, text = "";
+function drawIntroFormatted(prog, pixels, stream, init = null) {
+  // 0x5730 drzi x/y/barvu/zarovnani v globalech fp@(3592..3598), takze
+  // navazujici volani 0x5934 pokracuje tam, kde predchozi skoncilo.
+  let x = init ? init.x : 0, y = init ? init.y : 0;
+  let color = init ? init.color : 1, align = init ? init.align : 1;
+  let p = 0, text = "";
   const flush = () => {
     if (text) drawIntroText(prog, pixels, text, x, y, color, align);
     text = "";
@@ -1309,15 +1319,26 @@ function createAttractState() {
   return a;
 }
 
-function startAttractMusic() {
+/* 0x5ea: pozadovany modul drzi fp@(10798), nahrany fp@(10802); loader
+   task je porovnava a pri rozdilu prehodi. 1 = AMTITUNE, 2 = AMHITUNE. */
+function startModuleMusic(which) {
   unlockAudioContext();
-  if (actx && !state.titleMod) {
-    const file = state.files.find(f => f.name === "AMTITUNE.MOD");
-    if (file) {
-      state.titleMod = ModPlayer(unpackFile(state.adf, file));
-      state.titleMod.start(actx, 1);
-    }
-  }
+  if (!actx) return;
+  if (state.modPlaying === which && state.titleMod) return;
+  if (state.titleMod) { state.titleMod.stop(); state.titleMod = null; }
+  const name = which === 2 ? "AMHITUNE.MOD" : "AMTITUNE.MOD";
+  const file = state.files.find(f => f.name === name);
+  if (!file) return;
+  state.titleMod = ModPlayer(unpackFile(state.adf, file));
+  state.titleMod.start(actx, 1);
+  state.modPlaying = which;
+}
+function stopModuleMusic() {
+  if (state.titleMod) { state.titleMod.stop(); state.titleMod = null; }
+  state.modPlaying = 0;
+}
+function startAttractMusic() {
+  startModuleMusic(1);
 }
 
 function stepAttract(a = state.attract) {
@@ -3518,6 +3539,7 @@ function firstFreePlayerBulletSlot(g) {
 function spawnPlayerBullet(g, spec) {
   const slot = firstFreePlayerBulletSlot(g);
   if (slot < 0) return false;
+  g.shotsFired = (g.shotsFired | 0) + 1;       // 0x6014, az po nalezeni slotu
   spec.poolSlot = slot;
   g.bullets.push(spec);
   return true;
@@ -4597,6 +4619,7 @@ function deathBoomZ(s) {                       // 0x894a: z rodice + 1
   return 1;
 }
 function killSpawnCredited(g, s) {             // 0xa36a z player eventu
+  g.enemiesKilled = (g.enemiesKilled | 0) + 1;         // 0xa36a: fp@(12498)
   if (s.beh === "inst4boss") g.inst4BossDead = true;   // 0xbe60: ST fp@(3617)
   if (!s.alive && !s.townResumeActive) return;
   if (s.beh === "egg") {
@@ -6556,6 +6579,85 @@ function stepPostLifeSequence(g) {
   }
 }
 
+/* ---- 0x0da2: post-game statistika --------------------------------- */
+function statsHighScoreTable() {
+  // 0x3004 zapisuje skore primo do polozky tabulky (+40), takze zmena
+  // prezije do dalsi hry v temze sezeni. Vychozi hodnoty jsou z 0x33fe.
+  if (!state.highScores) state.highScores = NATIVE_DEFAULT_SCORES.slice();
+  return state.highScores;
+}
+function statsQualified(g) {
+  // 0xf0c -> 0x3040: zaznam hrace jeste nezapsany (+88 == 0) a jeho skore
+  // (+80) neni unsigned mensi nez skore navazane polozky (+4 -> +40).
+  // Model: navazana polozka je nejnizsi v tabulce.
+  const table = statsHighScoreTable();
+  return (g.score | 0) >= table[table.length - 1];
+}
+function statsPercentage(g) {
+  // 0xe06: WORD (0xe9c0 - fp@(3534)), pak unsigned *100 a /26817.
+  // fp@(3530) drzi pri startu hry prave 0xe9c0 a se scrollem klesa
+  // (0x3cd4), citatel je tedy ujeta vzdalenost; 26817 je delka celeho
+  // retezu map. 0xe18: dohrana hra ma natvrdo 100.
+  if (g.won) return 100;
+  const travelled = Math.round(g.statScrolled || 0) & 0xffff;
+  return Math.floor((travelled * 100) / 26817) & 0xffff;
+}
+function buildStatsScreen(g) {
+  const prog = state.prog, raw = blankIntroRaw();
+  // 0xdce/0xdda: titulek podle bitu 3 fp@(12353).
+  let st = drawIntroFormatted(prog, raw.pixels,
+                              programCString(prog, g.won ? 0x0e6d : 0x0e50));
+  // 0xde2: popisky; retezec konci na _x230_y080_a2 pro sloupec cisel.
+  st = drawIntroFormatted(prog, raw.pixels, programCString(prog, 0x0e8f), st);
+  const values = [
+    g.shotsFired | 0,                                    // 0xdea
+    g.enemiesKilled | 0,                                 // 0xdf0
+    Math.max(0, (g.enemiesSeen | 0) - (g.enemiesKilled | 0)),  // 0xdf6
+    g.tokensStat | 0,                                    // 0xe00, vzdy 0
+    statsPercentage(g),                                  // 0xe06
+  ];
+  let y = st.y;
+  for (const value of values) {
+    // 0xe40: 0x5956 potlaci vedouci nuly, 0x5880 vykresli, 0xe48 y += 16.
+    drawIntroText(prog, raw.pixels, String(value >>> 0), st.x, y,
+                  st.color, st.align);
+    y += 16;
+  }
+  return raw;
+}
+function beginStatsScreen(g) {
+  g.statsRaw = buildStatsScreen(g);
+  g.statsVbl = 0;
+  g.statsQualified = statsQualified(g);
+  if (g.statsQualified) {                      // 0x3004
+    const table = statsHighScoreTable();
+    table[table.length - 1] = g.score | 0;
+    table.sort((a, b) => b - a);
+  }
+  // 0xdb0 -> 0xf2a: fp@(10798) = 1 - fp@(3618), tedy 2 = AMHITUNE pri
+  // zapisu do tabulky, jinak zpatky titulni AMTITUNE.
+  startModuleMusic(g.statsQualified ? 2 : 1);
+  // 0xe2a: se zapisem drzi obrazovka 400 VBL (0x5f22), jinak 0x27ec =
+  // pet sekund nebo fire.
+  g.statsHold = g.statsQualified ? 400 : 250;
+}
+function stepStatsScreen(g) {
+  if (!g.statsRaw) beginStatsScreen(g);
+  if (g.statsDone) return;
+  g.statsVbl = (g.statsVbl | 0) + 1;
+  if (g.statsVbl <= 16) return;                // 0x2868: fade z cerne
+  if (!g.statsQualified && g.keys && g.keys.f) { g.statsDone = true; return; }
+  if (g.statsVbl - 16 >= g.statsHold) g.statsDone = true;
+}
+function renderStatsScreen(ctx, g) {
+  if (!g.statsRaw) beginStatsScreen(g);
+  const palette = readProgramPalette(state.prog, ATTRACT_PALETTE_OFFSETS.stats);
+  const black = Math.max(0, 256 - (g.statsVbl | 0) * 16);
+  if (!g.statsRgba) g.statsRgba = new Uint8ClampedArray(320 * 256 * 4);
+  colorizeAttractRaw(g.statsRaw, palette, black, [], g.statsRgba);
+  ctx.putImageData(new ImageData(g.statsRgba, 320, 256), 0, 0);
+}
+
 function respawnPlayer(g) {                    // 0x714e -> 0x9046 -> 0x9410
   if (--g.lives <= 0) {
     g.lives = 0;
@@ -6906,6 +7008,14 @@ function startGame(lv) {
     // Po vlozeni prvniho kreditu zbyvaji nativne dva dalsi. Posledni
     // smrt nezmrazi scheduler: nasleduje continue a zaviraci faze.
     continues: 2, playerPhase: "active", playerPhaseT: 0,
+    // Statistika post-game obrazovky 0x0da2. 0x1d56..0x1d62 nuluje vsechny
+    // ctyri longy pri startu hry; fp@(12490) uz nikdo nezvysuje, takze
+    // "Tokens picked up" je v originale vzdy nula.
+    shotsFired: 0,      // fp@(12486), 0x6014
+    enemiesSeen: 0,     // fp@(12494), 0xa2e4
+    enemiesKilled: 0,   // fp@(12498), 0xa36a
+    tokensStat: 0,      // fp@(12490), nikde se nezvysuje
+    statScrolled: 0,    // 0xe06: 0xe9c0 - fp@(3534), tedy ujeta vzdalenost
     joinClosed: false,
     jeepLives: 1, jeepScore: 0, jeepTokenCount: 0,
     townColor07Enabled: lv === 0,
@@ -6938,7 +7048,7 @@ function startGame(lv) {
   g.player.weaponX = startPos.x; g.player.weaponY = startPos.y;
   applyWeaponTable(g.player);                 // 0x70c8: start = power2/reload11
   for (const s of g.spawns) s.armed = (s.y - scrollTop(g)) < -32;
-  if (state.titleMod) { state.titleMod.stop(); state.titleMod = null; }
+  stopModuleMusic();
   $("#levelpick").style.display = "none";
   $("#gamewrap").style.display = "";
   if (!state.loopRunning) { state.loopRunning = true; requestAnimationFrame(frame); }
@@ -7103,8 +7213,13 @@ function step(g) {
   // 0xb6ae (aktivni instalace nebo boss) a uvolni jej 0xb6ba pri
   // poslednim; bit 1 nastavi INST4#0 na konci urovne (0xbed0).
   g.scrollHeld = (g.inst1Factories | 0) > 0 || !!g.levelEndHold;
-  if (!g.scrollHeld)
-    g.scroll -= SCROLL * TICK * (g.scrollMul ?? 1); // scroll nahoru (fixture: 0 = stoji)
+  if (!g.scrollHeld) {
+    const step = SCROLL * TICK * (g.scrollMul ?? 1);
+    g.scroll -= step;                          // scroll nahoru (fixture: 0 = stoji)
+    // 0x3cd4 ubira tyz krok z mapove pozice fp@(3530); post-game procenta
+    // z 0xe06 pak ctou prave tuto ujetou vzdalenost.
+    g.statScrolled = (g.statScrolled || 0) + step;
+  }
   // fp@(3542) je WORD = cela cast 16.16 citace (0x1da6: +0x4000 za VBL),
   // takze screen-y objektu i kompenzace bitu 4 (+372, 0x6434) pracuji s
   // celociselnym scrollem, ktery skoci o 1 px kazde 4 VBL. Zmereno:
@@ -7411,6 +7526,9 @@ function step(g) {
     }
     if (fire) {
       s.born = true;
+      // 0xa2e4: a2c6 zvysi citac hned po tom, co 0x9ac8 vrati "objekt se
+      // skutecne objevil" (EQ), tedy prave pri prekroceni vstupniho prahu.
+      g.enemiesSeen = (g.enemiesSeen | 0) + 1;
       assignBobOrdinal(g, s);
       if (s.beh === "wave") {
         // 0x8048 je okamzita a2a2 formace, ne wait(10) stream z 0x8008.
@@ -9611,7 +9729,13 @@ function frame(now) {
   let dt = Math.min(0.1, (now - g.last) / 1000); g.last = now;
   g.frac += dt;
   let stepped = 0;
-  while (g.frac >= TICK) { g.frac -= TICK; if (!g.over) { step(g); stepped++; } }
+  while (g.frac >= TICK) {
+    g.frac -= TICK;
+    if (!g.over) { step(g); stepped++; } else stepStatsScreen(g);
+  }
+  if (g.statsDone) {                           // 0xda0: zpet na 0x0d64
+    state.loopRunning = false; state.g = null; showTitle(); return;
+  }
 
   const cv = $("#game"), ctx = cv.getContext("2d");
   // Vylepseny rezim kresli do plochy skalovane S-krat, aby sly polohy
@@ -9872,18 +9996,9 @@ function frame(now) {
     } : null);
   if (smooth) ctx.restore();
 
-  if (g.over) {
-    // Po continue + closing fadu uz nesmi pod stat obrazem prosvitat HUD
-    // ani pozdni HW sprity. Pixelove presny nativni stats screen je dalsi
-    // samostatny parity krok; tento mezistav zachovava spravnou fazovou mez.
-    ctx.fillStyle = "#000"; ctx.fillRect(0, 0, 320, 256);
-    ctx.fillStyle = "#fff"; ctx.font = "bold 16px monospace";
-    ctx.fillText(g.won ? "LEVEL COMPLETE!" : "GAME OVER", 92, 112);
-    ctx.font = "10px monospace";
-    ctx.fillText("TOKENS PICKED UP", 56, 144);
-    ctx.fillText(String(g.tokensPickedUp || 0).padStart(3, "0"), 238, 144);
-    ctx.fillText("reload to play again \u2014 reconstruction", 58, 178);
-  }
+  // Po continue + closing fadu uz pod statistikou neprosvita HUD ani
+  // pozdni HW sprity: 0x0da2 kresli na cistou plochu s paletou 0x2a1c.
+  if (g.over) renderStatsScreen(ctx, g);
 
   requestAnimationFrame(frame);
 }

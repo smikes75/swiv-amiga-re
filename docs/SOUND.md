@@ -234,6 +234,15 @@ when the saved event is dispatched on the object's next resume. Integrated
 tests cover TOKEN pickup, MINE core, cannon/HOMING contact and both GOOSE hit
 and death paths.
 
+`AMHITUNE.MOD` is connected as of 2026-09-07. The module is chosen by the
+native mechanism at `0x5EA`: `fp@(10798)` holds the requested module (1 =
+`AMTITUNE`, 2 = `AMHITUNE`) and the loader task swaps when it differs from
+the loaded one. `0xF2A` computes `1 - fp@(3618)`, and `fp@(3618)` is set by
+`0xF0C` -> `0x3040` when a player's score reaches the high-score table. So
+the post-game statistics screen `0x0DA2` plays `AMHITUNE` after a qualifying
+game and `AMTITUNE` otherwise. `0x51D4` still has no scene: it belongs to the
+`CONGRAT2` branch, which needs the game to be completable.
+
 SWIV's tracker music is title-screen music; the author states that it was
 removed when gameplay data was loaded and that many in-game effects used
 software synthesis. See the

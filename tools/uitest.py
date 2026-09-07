@@ -6083,6 +6083,82 @@ def main():
                                           signed_word(0xabcd)],
                    "0x5600 extra zivot: %r" % (zvuky["extraLife"],))
 
+            stats = page.evaluate("""() => {
+              const prog = state.prog;
+              const fresh = (won, score) => {
+                const g = { score, won, tick: 0, keys: {},
+                  shotsFired: 1234, enemiesSeen: 40, enemiesKilled: 15,
+                  tokensStat: 0, statScrolled: 1001 };
+                return g;
+              };
+              const titleOver = programCString(prog, 0x0e50);
+              const titleWon = programCString(prog, 0x0e6d);
+              const labels = programCString(prog, 0x0e8f);
+              const raw = blankIntroRaw();
+              const head = drawIntroFormatted(prog, raw.pixels, titleOver);
+              const tail = drawIntroFormatted(prog, raw.pixels, labels, head);
+              state.highScores = null;
+              const gLow = fresh(false, 500);
+              beginStatsScreen(gLow);
+              const lowTable = statsHighScoreTable().slice();
+              state.highScores = null;
+              const gHigh = fresh(false, 12345);
+              beginStatsScreen(gHigh);
+              const highTable = statsHighScoreTable().slice();
+              let lowVbl = 0;
+              while (!gLow.statsDone && lowVbl < 2000) { stepStatsScreen(gLow); lowVbl++; }
+              const gFire = fresh(false, 500);
+              beginStatsScreen(gFire);
+              for (let i = 0; i < 20; i++) stepStatsScreen(gFire);
+              gFire.keys.f = true; stepStatsScreen(gFire);
+              return {
+                titleOver, titleWon, labels,
+                head: [head.x, head.y, head.color, head.align],
+                tail: [tail.x, tail.y, tail.color, tail.align],
+                defaults: NATIVE_DEFAULT_SCORES.slice(),
+                lowTable, highTable,
+                low: [gLow.statsQualified, gLow.statsHold, lowVbl],
+                high: [gHigh.statsQualified, gHigh.statsHold],
+                pct: [statsPercentage(fresh(false, 0)),
+                      statsPercentage(fresh(true, 0)),
+                      statsPercentage(Object.assign(fresh(false, 0),
+                                                    { statScrolled: 26817 }))],
+                fireExit: gFire.statsDone,
+                ink: raw.pixels.reduce((n, v) => n + (v ? 1 : 0), 0),
+              };
+            }""")
+            expect(stats["titleOver"] == "_x020_y048_c15_a1Game Over_n" and
+                   stats["titleWon"] == "_x020_y048_c15_a1Game Completed_n",
+                   "0xe50/0xe6d titulky: %r" % (stats["titleOver"],))
+            expect(stats["labels"].startswith("_y080Bullets fired:") and
+                   stats["labels"].endswith("_x230_y080_a2"),
+                   "0xe8f popisky: %r" % (stats["labels"],))
+            expect(stats["head"] == [20, 56, 15, 1],
+                   "titulek nekonci na x20/y56/c15/a1: %r" % (stats["head"],))
+            expect(stats["tail"] == [230, 80, 15, 2],
+                   "sloupec cisel neni x230/y80/a2: %r" % (stats["tail"],))
+            expect(stats["defaults"] == [70000, 60000, 50000, 40000,
+                                         30000, 20000, 10000],
+                   "0x33fe vychozi tabulka: %r" % (stats["defaults"],))
+            expect(stats["low"][:2] == [False, 250] and
+                   stats["high"][:2] == [True, 400],
+                   "0x3040/0xe2a kvalifikace a drzeni: %r %r" %
+                   (stats["low"], stats["high"]))
+            expect(stats["lowTable"] == stats["defaults"] and
+                   stats["highTable"] == [70000, 60000, 50000, 40000,
+                                          30000, 20000, 12345],
+                   "0x3004 zapis do tabulky: %r" % (stats["highTable"],))
+            expect(stats["low"][2] == 266,
+                   "0x27ec ma skoncit na 16+250 VBL, skoncil na %r" %
+                   (stats["low"][2],))
+            expect(stats["pct"] == [3, 100, 100],
+                   "0xe06 procenta (1001 radku, dohrano, 26817): %r" %
+                   (stats["pct"],))
+            expect(stats["fireExit"] is True,
+                   "0x27ec neukoncil obrazovku pri fire")
+            expect(stats["ink"] > 1500,
+                   "statistika nakreslila jen %d pixelu" % stats["ink"])
+
             screenshot = os.environ.get("SWIV_UI_SCREENSHOT")
             if screenshot:
                 page.screenshot(path=screenshot)

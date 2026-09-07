@@ -338,12 +338,51 @@ Otevrene zustava:
 - fire/click vzdy spusti jednoplayerovy HELI TOWN. Nativni rozliseni
   P1/P2, JEEP a kreditove startovaci vetve zatim prepsane neni; `L` je pouze
   browserovy vyvojarsky level picker;
-- `AMHITUNE.MOD` decoder a regrese znaji, ale zadna runtime scena jej zatim
-  nespousti ani na nej neprepina;
-- podminene post-game obrazovky nejsou soucasti normalni attract smycky.
-  Zejmena `0x0f42..0x1042` nacita `CONGRAT2.RAW`, paletu `0x2abc` a REACTOR
-  tasky; spolu s `CONGRAT1`, high-score vstupem a navratem na titul patri do
-  dosud otevreneho post-game toku.
+- fire/click vzdy spusti jednoplayerovy HELI TOWN (viz vyse); obrazovka volby
+  ovladani `0x1f5e` ("Press function keys to select controls") prepsana neni;
+- `0x0f42..0x1042` (`CONGRAT2.RAW`, paleta `0x2abc`, REACTOR tasky, zvuk
+  `0x51d4`) a `CONGRAT1.RAW` nejsou prepsane - jsou dostupne jen po dohrani
+  hry (`fp@(12353)` bit 3);
+- zapis do tabulky skore `0x2fe8` meni jen model tabulky, ne jeji obrazovku:
+  nativne po nem jeste bezi `0x3062`, ktery vykresli jmeno hrace ze zaznamu
+  (`+40`). Jmena bere hra z `AMDLS0.CAT` / `HS*.TXT`, hrac je nezadava.
+
+### Post-game statistika `0x0da2` - PREPSANA (2026-09-07)
+
+Obrazovka po konci hry uz neni zastupny text. Kresli ji nativni formatovany
+text (`0x5934`) z retezcu `0x0e50` / `0x0e6d` (titulek podle bitu 3
+`fp@(12353)`) a `0x0e8f` (popisky), paletou `0x2a1c` a peti cisly zarovnanymi
+vpravo na x=230 s krokem 16 px (`0xe40`/`0xe48`). Citace maji v celem
+`AMPROG.OBJ` po jedinem miste: `0x6014` (vystrelene strely, az po nalezeni
+volneho slotu z tricetiprvkoveho poolu), `0xa2e4` (nepratele, kteri se
+skutecne objevili - hned po `0x9ac8`) a `0xa36a` (zniceni). "Enemies escaped"
+je jejich rozdil.
+
+**`fp@(12490)` ("Tokens picked up") se v originale nikde nezvysuje**, takze
+tam vzdy stoji nula; prepis to drzi.
+
+Procenta `0xe06` pocitaji `(0xe9c0 - fp@(3534)) * 100 / 26817` v unsigned
+word aritmetice. `fp@(3530)` je mapova pozice 16.16, kterou scroll task
+`0x3cd4` snizuje a `0x1e0e` ji na konci hry odlozi do `fp@(3534)`; konstanta
+`0xe9c0` je tedy jeji hodnota pri startu hry a citatel je ujeta vzdalenost.
+Deleni 26817 odpovida souctu vysek vsech sedmi map minus prekryvy junkci
+(hrube 27496 - 6x225). Dohrana hra ma podle `0xe18` natvrdo 100.
+**Neovereno na originalu**: pocatecni hodnotu `fp@(3530)` jsme odvodili z
+konstanty ve vzorci, ne zmerili; az harness dokaze dohrat do game over,
+staci porovnat jedno cislo.
+
+Modul se prepina nativnim mechanismem `0x5ea`: `fp@(10798)` = 1 (AMTITUNE)
+nebo 2 (AMHITUNE) a loader task pri rozdilu prehodi. `0xf2a` pocita
+`1 - fp@(3618)`, kde `fp@(3618)` nastavuje `0xf0c` -> `0x3040` = "skore
+hrace neni mensi nez skore navazane polozky tabulky". Vychozi tabulka je
+sedm longu na `0x33fe` (70000..10000; radek `0x33ba` za ne jeste prilepi
+znak '0', proto attract ukazuje 700000..100000). Tyz priznak podle `0xe2a`
+urcuje, jestli obrazovka drzi 400 VBL (`0x5f22`) nebo pet sekund s moznosti
+prerusit palbou (`0x27ec`).
+
+Model navazane polozky (`+4 -> +40`) je zjednoduseny na "nejnizsi zaznam
+tabulky" - nativni vazba zaznamu hrace na konkretni radek zatim prepsana
+neni.
 
 ## 9. Zony a tempo — RETEZENI MAP A ZPOMALENI SCROLLU OTEVRENE (2026-09-03)
 
