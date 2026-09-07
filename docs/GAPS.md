@@ -437,17 +437,29 @@ s Kickstartem, projede vstupni sekvenci a ulozi snimek (716x285 RGB24,
 stejny vyrez jako VAHeadless) nebo kus chip RAM. Jeden snimek v case
 t=17 s trva 14 s.
 
-**Otevrene: zarovnani casu.** Prevod "1 sekunda = 50 snimku" nesouhlasi
-s `wait N` z RetroShellu. Na kontrolnim case t=17 vysel rozdil 1268 z
-612180 bajtu (0,21 %), ale je to **falesna shoda** - v tom okamziku
-obrazovka stmiva a je skoro staticka, takze sedi i posun o celou
-sekundu. Na t=30 je nejlepsi shoda v okne +-6 s teprve 3,3 % a lezi 59
-snimku od mista, kam ji prevod klade.
+**Opraveno 2026-09-07: harness se nikdy nedostal do hry.** Vstup se
+posilal jako retezce do RetroShellu (`mouse1 press left`) a ty nedelaly
+nic, takze emulace stala na cracktru. Vsechna drivejsi mereni zarovnani
+tim porovnavala tmu s tmou - i ta "shoda 0,21 % v case t=17". Vstup nyni
+jde primo pres `VA.fn.mouse` / `VA.fn.joy` (GamePadAction 4 fire, 7 press
+left, 13 release fire, 16 release left) s podrzenim 4 snimku; sekvence je
+32 s cracktro, 40 s MEGA TRAINER, 85 s fire na kreditove obrazovce.
+Harness ukazuje skutecnou hru v TOWN uz od t=21 a je deterministicky
+(dva behy = stejne MD5 chip RAM i stejny pocet vzorku).
 
-Nez se harness pouzije k porovnavani po objektech, musi se cas merit
-primo: dat obema stranam vypsat pocet snimku Agnusu v okamziku snimku
-(`wasm_agnus_frame` uz existuje, na strane VAHeadless je potreba
-prikaz RetroShellu) a sekvenci ridit podle nej, ne podle sekund.
+**Zvuk z harnessu.** `VA.audio()` / `VA.runAudio(n)` vraci float vzorky.
+Objevi se az po `VA.fn.warp(0)` - ve warpu je zvuk potlaceny - a jejich
+spicka je zhruba 1 % plneho rozsahu (0,014 pri titulni hudbe, 0,034 pri
+strelbe). Konfigurace vAmigy je pritom normalni (VOL0-3 100 %, VOLL/VOLR
+100 %, ASR false, SAMPLING_METHOD NONE), takze jde o vnitrni meritko
+jadra, ne o chybu prenosu; dynamika mezi ticho/hudba/strelba sedi.
+Referencni nahravky se proto normalizuji (`build/vacmp/sfx/*.wav`).
+
+Zarovnani casu s VAHeadless zustava otevrene, ale uz vime, ze **nejde
+jen o posun**: obe strany bezi jinou vstupni cestou a globalni PRNG hry
+navic perturbuje `VHPOSR` ze zvukoveho preruseni. Nez se harness pouzije
+k porovnavani po objektech, musi se cas merit primo (`wasm_agnus_frame`
+uz existuje, na strane VAHeadless je potreba prikaz RetroShellu).
 Take je potreba najit bazi A6, aby se daly cist zaznamy uloh z chip RAM.
 
 ## Junkce map a `levelPhase` (nalezeno pri revizi 2026-09-06)

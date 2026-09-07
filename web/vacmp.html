@@ -28,6 +28,12 @@ createVAmiga().then(M => {
     chipSize: c('wasm_chip_size', 'number', []),
     texPtr: c('wasm_texture_ptr', 'number', []),
     warp: c('wasm_warp', 'number', ['number']),
+    audioCount: c('wasm_audio_count', 'number', []),
+    audioCopy: c('wasm_audio_copy', 'number', ['number']),
+    audioLeft: c('wasm_audio_left', 'number', []),
+    audioRight: c('wasm_audio_right', 'number', []),
+    setRate: c('wasm_set_sample_rate', 'number', ['number']),
+    shellText: c('wasm_retroshell_text', 'string', []),
     joy: c('wasm_joystick', 'number', ['number', 'number']),
     mouse: c('wasm_mouse', 'number', ['number', 'number']),
     key: c('wasm_key', 'number', ['number', 'number']),
@@ -86,6 +92,32 @@ VA.frameRGB = function () {
   for (let i = 0; i < out.length; i += 0x8000)
     s += String.fromCharCode.apply(null, out.subarray(i, i + 0x8000));
   return btoa(s);
+};
+
+/* Zvuk: vzorky, ktere jadro nasbiralo od posledniho odberu (AudioPort
+   stream). Vraci pole cisel -1..1 pro levy kanal; pro nase mereni efektu
+   staci jeden kanal, pan je stejne 50 pro vsechny hlasy. */
+VA.audio = function () {
+  const n = VA.fn.audioCount();
+  if (n <= 0) return [];
+  const got = VA.fn.audioCopy(Math.min(n, 4096));
+  const p = VA.fn.audioLeft() >> 2;
+  const H = VA.M.HEAPF32;
+  const out = new Array(got);
+  for (let i = 0; i < got; i++) out[i] = H[p + i];
+  return out;
+};
+/* Odsimuluje n snimku a vrati zvuk jako jedno pole (odebira po snimku,
+   aby nepretekl 4096vzorkovy buffer jadra). */
+VA.runAudio = function (n) {
+  const all = [];
+  for (let i = 0; i < n; i++) {
+    if (VA.fn.step() < 0) return { err: VA.fn.err(), samples: all };
+    const s = VA.audio();
+    for (let k = 0; k < s.length; k++) all.push(s[k]);
+  }
+  VA.frames = VA.fn.frames();
+  return { err: '', samples: all };
 };
 
 /* Kopie zacatku chip RAM (stav hry) jako base64. */

@@ -13,16 +13,12 @@ Sekvence (emulovane sekundy od zapnuti, 50 snimku = 1 s):
     40  mouse1 press left      MEGA TRAINER (vychozi volby = cista hra)
     85  joystick2 press 1      fire na kreditove obrazovce
     86  joystick2 unpress 1
-**Zarovnani casu s VAHeadless zatim NENI hotove** (viz docs/GAPS.md).
-Jadro bezi a je reprodukovatelne, ale prevod "sekunda = 50 snimku" nesedi
-na `wait N` z RetroShellu: na t=17 vysel rozdil 0,21 %, jenze tam obrazovka
-prave stmiva a je skoro staticka (falesna shoda); na t=30 je nejlepsi shoda
-v okne +-6 s az 3,3 % a lezi 59 snimku od ocekavaneho mista. Nez se harness
-pouzije k porovnavani po objektech, je potreba zmerit skutecny cas primo
-(pocet snimku Agnusu na obou stranach), ne ho odvozovat.
-
-Diagnostika je hotova: skript v scratchpadu projede okno snimku a vypise
-nejlepsi shodu; staci ho zopakovat proti referenci z tools/baseline.sh.
+Harness je **deterministicky** (dva behy daji tentyz obsah chip RAM i tentyz
+pocet zvukovych vzorku), ale **neni snimek po snimku shodny s VAHeadless**:
+vstup jde jinou cestou a hra ma RNG michany hodnotou VHPOSR z audio
+preruseni, takze se behy brzy rozejdou. Harness proto slouzi jako **vlastni
+reference** (obraz, chip RAM i zvuk z jednoho behu), ne jako nahrada
+tools/baseline.sh.
 """
 import base64
 import functools
@@ -41,13 +37,16 @@ ADF = os.path.join(ROOT, "SWIVFIX.ADF")
 FPS = 50                                        # PAL
 
 # (sekunda od zapnuti, prikaz RetroShellu)
-SEQUENCE = [(32, "mouse1 press left"), (40, "mouse1 press left"),
-            (85, "joystick2 press 1"), (86, "joystick2 unpress 1")]
-ZERO_AT = 85                                    # stisk fire
-# S vypnutym FRAME_SKIPPING prehazuje Denise buffery kazdy snimek, takze
-# sudy a lichy snimek ukazuji jinou polovinu dvojiteho bufferu; posun o
-# jeden snimek meni ctvrtinu obrazu. Hodnota je zatim odhad, ne mereni.
-EXTRA_FRAMES = 1
+# Vstup se posila PRIMO pres GamePadAction (wasm_mouse/wasm_joystick), ne
+# prikazem RetroShellu: retezce typu "mouse1 press left" se v tomto rezimu
+# neprojevily a hra zustala viset na cracktru (zmereno 2026-09-07 - snimek
+# v case 25 s po "fire" porad ukazoval text cracku).
+#   (sekunda od zapnuti, ('mouse'|'joy'), port, akce stisk, akce uvolneni)
+SEQUENCE = [(32, "mouse", 1, 7, 16),    # pryc z cracktra
+            (40, "mouse", 1, 7, 16),    # MEGA TRAINER (vychozi volby)
+            (85, "joy", 2, 4, 13)]      # fire na kreditove obrazovce
+ZERO_AT = 85                            # cas na radce se pocita od fire
+HOLD = 4                                # snimku mezi stiskem a uvolnenim
 
 
 class _Quiet(http.server.SimpleHTTPRequestHandler):
@@ -63,8 +62,25 @@ def serve(root):
     return srv, srv.server_address[1]
 
 
+def playSequence(page, target):
+    """Odsimuluje vstupni sekvenci az do `target` sekund od zapnuti."""
+    now = 0
+    for sec, dev, port, down, up in SEQUENCE:
+        if sec > target:
+            break
+        if sec > now:
+            page.evaluate("n => VA.run(n, null)", (sec - now) * FPS)
+            now = sec
+        page.evaluate("([d, p, a]) => (d === 'mouse' ? VA.fn.mouse : VA.fn.joy)(p, a)",
+                      [dev, port, down])
+        page.evaluate("n => VA.run(n, null)", HOLD)
+        page.evaluate("([d, p, a]) => (d === 'mouse' ? VA.fn.mouse : VA.fn.joy)(p, a)",
+                      [dev, port, up])
+    return now
+
+
 def grab(t_after_fire, out_raw, chip=None, headless=True):
-    """Vrati (raw RGB24 716x285, volitelne kopii chip RAM) v case t."""
+    """Vrati (raw RGB24 716x285, volitelne kopii chip RAM) v case t po fire."""
     target = ZERO_AT + t_after_fire
     srv, port = serve(os.path.join(ROOT, "web"))
     with sync_playwright() as pw:
@@ -81,21 +97,9 @@ def grab(t_after_fire, out_raw, chip=None, headless=True):
         err = page.evaluate("([r, a]) => VA.boot(r, a)", [rom, adf])
         if err:
             b.close(); sys.exit("boot: " + err)
-        now = 0
-        for sec, cmd in SEQUENCE:
-            if sec > target:
-                break
-            n = (sec - now) * FPS
-            if n > 0:
-                e = page.evaluate("n => VA.run(n, null)", n)
-                if e:
-                    b.close(); sys.exit(e)
-                now = sec
-            if cmd:
-                page.evaluate("c => VA.fn.shell(c)", cmd)
-        rest = (target - now) * FPS + EXTRA_FRAMES
-        if rest > 0:
-            e = page.evaluate("n => VA.run(n, null)", rest)
+        now = playSequence(page, target)
+        if target > now:
+            e = page.evaluate("n => VA.run(n, null)", (target - now) * FPS)
             if e:
                 b.close(); sys.exit(e)
         raw = base64.b64decode(page.evaluate("() => VA.frameRGB()"))
