@@ -30,38 +30,53 @@ JS = """(tick) => {
   const diff = (a, b, mask) => { let n = 0, out = 0; for (let i = 0; i < a.length; i += 4)
     if (a[i] !== b[i] || a[i+1] !== b[i+1] || a[i+2] !== b[i+2]) { n++; if (mask && !mask[i >> 2]) out++; } return [n, out]; };
   // frame(0) s g.last = 0 ma dt = 0, takze nekrokuje; g.frac = TICK krokuje
-  // presne jeden tik. Parovani poloh (bobPrev/bobCur) se zaznamenava jen pri
-  // zapnutem smooth, proto se oba tiky krokuji v plynulem rezimu.
+  // presne jeden tik. Parovani poloh se zaznamenava jen pri zapnutem smooth.
   const render = (smooth, frac) => { state.smooth = smooth; g.frac = frac; g.last = 0; frame(0); };
   const snap = () => { const top = Math.max(0, Math.min(g.mapH - 256, Math.floor(g.scroll)));
     return composeTownBobs(g, top).ordered.filter(r => r.spr).map(r => ({ key: smoothBobKey(r),
       ax: r.x, ay: r.y, spr: r.spr, op: r.op })); };
-  for (let t = 0; t < tick - 2; t++) step(g);
-  render(true, TICK); const recPrev = snap();            // tik n, zaznam poloh
-  if (cv.width !== 320) return { error: 'S != 1: ' + cv.width };
-  render(false, 0); const prevClassic = grab();         // klasicky snimek tiku n
-  render(true, TICK); const recCur = snap();            // tik n+1, bobPrev = tik n
-  render(true, 0); const smooth0 = grab();              // alfa = 0
-  render(true, TICK * 0.999); const smooth1 = grab();   // alfa ~ 1
-  render(false, 0); const curClassic = grab();          // klasicky snimek tiku n+1
-  // maska: kde se pri alfa = 0 smi lisit vzhled - sprity se zmenenym snimkem
-  // nebo op (obdelnik predchoziho spritu i aktualniho spritu na predchozi
-  // kotve), zaznamy nove (kresli se na aktualni poloze) a zanikle.
-  const mask = new Uint8Array(320 * 240);
-  const box = (ax, ay, spr) => { const bx = Math.floor(ax + spr.ox), by = Math.floor(ay + spr.oy) - 16;
+  const box = (mask, ax, ay, spr) => { const bx = Math.floor(ax + spr.ox), by = Math.floor(ay + spr.oy) - 16;
     for (let y = Math.max(0, by); y < Math.min(240, by + spr.h); y++)
       for (let x = Math.max(0, bx); x < Math.min(320, bx + spr.w); x++) mask[y * 320 + x] = 1; };
-  const prevBy = new Map(recPrev.map(r => [r.key, r])), curKeys = new Set(recCur.map(r => r.key));
-  let changed = 0;
-  for (const r of recCur) { const p = prevBy.get(r.key);
-    if (p && p.spr === r.spr && p.op === r.op) continue;
-    changed++;
-    if (p) { box(p.ax, p.ay, p.spr); box(p.ax, p.ay, r.spr); } else box(r.ax, r.ay, r.spr); }
-  for (const p of recPrev) if (!curKeys.has(p.key)) { changed++; box(p.ax, p.ay, p.spr); }
-  const [d0, d0out] = diff(smooth0, prevClassic, mask);
-  const [d1] = diff(smooth1, curClassic, null);
+  // Maska: kde se smi lisit vzhled - sprity se zmenenym snimkem animace nebo
+  // op, nove a zanikle zaznamy. Poloha uvnitr masky se nekontroluje.
+  const maskOf = (recPrev, recCur) => { const mask = new Uint8Array(320 * 240);
+    const prevBy = new Map(recPrev.map(r => [r.key, r])), curKeys = new Set(recCur.map(r => r.key));
+    let changed = 0;
+    for (const r of recCur) { const p = prevBy.get(r.key);
+      if (p && p.spr === r.spr && p.op === r.op) continue;
+      changed++;
+      if (p) { box(mask, p.ax, p.ay, p.spr); box(mask, p.ax, p.ay, r.spr); } else box(mask, r.ax, r.ay, r.spr); }
+    for (const p of recPrev) if (!curKeys.has(p.key)) { changed++; box(mask, p.ax, p.ay, p.spr); }
+    return { mask, changed }; };
+  // Scroll bezi 0,25 radku za tik a plynuly rezim ho interpoluje ZLOMKOVE,
+  // takze plynuly a klasicky snimek splynou jen v tiku, kde je scroll cele
+  // cislo (kazdy ctvrty). Pro kazdy konec intervalu se proto zarovnava zvlast,
+  // a to krokovanim PRES render() - jinak by se neaktualizovalo parovani
+  // poloh (g.bobPrev) a interpolace by se vypnula.
+  const isInt = () => Math.abs(g.scroll - Math.round(g.scroll)) < 1e-9;
+  for (let t = 0; t < tick - 2; t++) step(g);
+  if (cv.width !== 320) return { error: 'S != 1: ' + cv.width };
+
+  // A) alfa = 0 vs klasicky snimek PREDCHOZIHO tiku - ten musi mit cely scroll
+  for (let k = 0; k < 8 && !isInt(); k++) render(true, TICK);
+  const recA0 = snap();
+  render(false, 0); const prevClassic = grab();
+  render(true, TICK); const recA1 = snap();
+  render(true, 0); const smooth0 = grab();
+  const mA = maskOf(recA0, recA1);
+  const [d0, d0out] = diff(smooth0, prevClassic, mA.mask);
+
+  // B) alfa -> 1 vs klasicky snimek AKTUALNIHO tiku - ten musi mit cely scroll
+  let recB0 = snap(), recB1 = recB0;
+  for (let k = 0; k < 8; k++) { recB0 = snap(); render(true, TICK); recB1 = snap(); if (isInt()) break; }
+  render(true, TICK * 0.999); const smooth1 = grab();   // frac < TICK: nekrokuje
+  render(false, 0); const curClassic = grab();
+  const mB = maskOf(recB0, recB1);
+  const [d1, d1out] = diff(smooth1, curClassic, mB.mask);
+
   const [moved] = diff(prevClassic, curClassic, null);
-  return { d0, d0out, d1, classicMoved: moved, changed };
+  return { d0, d0out, d1, d1out, classicMoved: moved, changed: mA.changed + mB.changed };
 }"""
 
 with sync_playwright() as pw:
@@ -76,8 +91,8 @@ with sync_playwright() as pw:
     b.close()
 if errs or "error" in res:
     sys.exit("CHYBA: " + (res.get("error") or "; ".join(errs)))
-ok = res["d0out"] <= OUT_LIMIT and res["d1"] == 0
-print(f"zona {zone} tik {tick}: alfa~1 vs aktualni {res['d1']} px; alfa=0 vs predchozi {res['d0']} px, "
-      f"z toho mimo {res['changed']} spritu se zmenenou animaci {res['d0out']} px "
-      f"(klasicke snimky se lisi v {res['classicMoved']} px) -> {'OK' if ok else 'FAIL'}")
+ok = res["d0out"] <= OUT_LIMIT and res["d1out"] <= OUT_LIMIT
+print(f"zona {zone} tik {tick}: alfa=0 vs predchozi {res['d0']} px (mimo masku {res['d0out']}), "
+      f"alfa~1 vs aktualni {res['d1']} px (mimo masku {res['d1out']}); "
+      f"maska {res['changed']} spritu se zmenenou animaci -> {'OK' if ok else 'FAIL'}")
 sys.exit(0 if ok else 1)

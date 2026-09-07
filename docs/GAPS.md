@@ -490,23 +490,36 @@ frontou jako BOBy, interpoluji se tedy take. Kontrakt `tools/compare.py`
 se tyka jen klasicke cesty; pro plynulou zatim zadny neni.
 
 Sjednoceno (tez 2026-09-06): teren se drive extrapoloval o tik dopredu,
-objekty interpolovaly o tik dozadu. Ted jde **oboji dozadu**: interpoluje
-se mezi dvema klasickymi snimky - scroll (`g.scrollPrev` ze zacatku
-`step()`) i rohy spritu jsou v obou tikach cela cisla (68k high-word,
-klasicky blit `Math.floor`) a mezipoloha se zaokrouhli na nejblizsi 1/S
-px; objekty odcitaji tentyz kvantovany scroll jako teren (drive odcitaly
-zlomkovy a byly vuci terenu trvale o pixel jinde). Skok scrollu o vic nez
-4 radky (konec SCIFI, −319) se neinterpoluje, bez `bobPrev` se kresli
-aktualni tik. Vzhled spritu (snimek animace, zablesk zasahu) je vzdy
-z aktualniho tiku.
+objekty interpolovaly o tik dozadu. Ted jde **oboji dozadu** z hodnot
+predchoziho tiku (`g.scrollPrev` ze zacatku `step()`) k aktualnim.
 
-**Kontrakt `tools/smoothtest.py`** (S = 1, bez HUD): pri alfa → 1 se
-plynuly snimek rovna klasickemu snimku aktualniho tiku presne; pri
-alfa = 0 se od klasickeho snimku predchoziho tiku lisi jen uvnitr
-obdelniku spritu, kterym se mezi tiky zmenil snimek animace (TOWN tik
-3000: 1388 px, vsech 16 v letcich YELLOW), mimo ne nejvyse 150 px
-(zarazka; SCIFI tik 9000 dava 95 px na hranach prekryvu letících kamenu
-se stinem a BOSu orezaneho hornim okrajem). Kontrakt zaroven odhalil, ze
+**Scroll se pritom interpoluje ZLOMKOVE, rohy spritu z celych cisel.**
+Prvni verze zaokrouhlovala oba konce dolu, aby snimek pri alfa = 0 a 1
+presne sedel s klasickym; jenze mapa se posouva **0,25 radku za tik**,
+takze mezi celociselnymi konci stala tri tiky a pak skocila o cely pixel
+- tedy presne to cukani, ktere ma plynuly rezim odstranit (zmereno pri
+testu na 120 Hz: 3 snimky stoji, 3 se posouvaji, 6 stoji). Ted se scroll
+interpoluje ze zlomkove hodnoty a kvantuje na 1/S px, sprity od nej
+odcitaji tentyz zlomkovy scroll (takze se vuci zemi neplavou) a jejich
+vlastni rohy zustavaji cele, jako v klasickem blitu. Zmereno pri zoomu
+3x (S = 3): 37 ruznych poloh pozadi za sekundu, krok vzdy 1/3 px, pri
+120 Hz pauza 2 az 4 snimky mezi kroky (rovnomerne), pri 60 Hz 0 az 2.
+
+Skok scrollu o vic nez 4 radky (konec SCIFI, −319) se neinterpoluje, bez
+`bobPrev` se kresli aktualni tik. Vzhled spritu (snimek animace, zablesk
+zasahu) je vzdy z aktualniho tiku. `g.smoothScrollF` drzi skutecne
+pouzitou hodnotu pro diagnostiku.
+
+**Kontrakt `tools/smoothtest.py`** (S = 1, bez HUD): plynuly snimek se
+pri alfa → 1 rovna klasickemu snimku aktualniho tiku a pri alfa = 0
+klasickemu snimku predchoziho tiku - mimo obdelniky spritu, kterym se
+mezi tiky zmenil snimek animace. Protoze scroll je zlomkovy, splynou
+snimky jen v tiku s celociselnym scrollem (kazdy ctvrty), takze se
+kazdy konec intervalu zarovnava zvlast, a to krokovanim pres render()
+(jinak by se neaktualizovalo parovani poloh). Zmereno: mimo masku
+nejvyse 150 px
+(zarazka; SCIFI tik 9000 dava 103 px na hranach prekryvu letících kamenu
+se stinem a BOSu orezaneho hornim okrajem, ICE 31 px). Kontrakt zaroven odhalil, ze
 kopie formaci (0x6178 pres `Object.assign`) dedily `bobOrdinal` rodice a
 v plynulem rezimu se parovaly navzajem - ted dostavaji vlastni poradi
 vzniku. Cena

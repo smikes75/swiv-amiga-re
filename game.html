@@ -9147,17 +9147,20 @@ function renderSmoothField(ctx, g, S, composed) {
   // Bez bobPrev (prvni snimek, skrtnuti displeje) se kresli aktualni tik.
   // Skok scrollu o vic nez 4 radky (konec SCIFI 0xbec6: -319) se
   // neinterpoluje - original mapu prepne v jednom tiku.
-  // Interpoluje se mezi dvema KLASICKYMI snimky: scroll i rohy spritu jsou
-  // v obou tikach cela cisla (68k high-word, blitIndexedOperation floor) a
-  // mezipoloha se zaokrouhli na nejblizsi 1/S px. Pri alfa = 0 tak vyjde
-  // presne klasicky snimek predchoziho tiku, pri alfa -> 1 aktualniho
-  // (kontrakt tools/smoothtest.py).
-  const prevScroll = Number.isFinite(g.scrollPrev) ? g.scrollPrev : g.scroll;
-  const lerpOK = !!g.bobPrev && Math.abs(g.scroll - prevScroll) <= 4;
-  const clampTop = v => Math.floor(Math.max(0, Math.min(g.mapH - 256, v)));
-  const topP = clampTop(prevScroll), topC = clampTop(g.scroll);
+  // Rohy spritu jsou v obou tikach cela cisla (68k high-word, klasicky blit
+  // floor) a mezipoloha se zaokrouhli na 1/S px. **Scroll se ale interpoluje
+  // ze ZLOMKOVE hodnoty**: mapa se posouva 0,25 radku za tik, takze mezi
+  // celociselnymi konci by stala tri tiky a pak skocila o pixel - presne to,
+  // co ma plynuly rezim odstranit. Sprity odcitaji tentyz zlomkovy scroll,
+  // takze se vuci zemi neplavou.
+  const clamp = v => Math.max(0, Math.min(g.mapH - 256, v));
+  const prevScroll = Number.isFinite(g.scrollPrev) ? clamp(g.scrollPrev) : clamp(g.scroll);
+  const curScroll = clamp(g.scroll);
+  const lerpOK = !!g.bobPrev && Math.abs(curScroll - prevScroll) <= 4;
   const rq = v => Math.round(v * S) / S;
-  const scrollF = lerpOK ? rq(topP + (topC - topP) * alpha) : topC;
+  const scrollF = lerpOK ? rq(prevScroll + (curScroll - prevScroll) * alpha)
+                         : rq(curScroll);
+  g.smoothScrollF = scrollF;              // diagnostika (tools/survey/bgsmooth)
   // Polohy se kvantuji na 1/S px smerem dolu jako 68k high-word (klasicka
   // cesta: Math.floor v blitIndexedOperation), aby pri alfa = 1 vysel presne
   // klasicky snimek; prohlizec by jinak zlomky zaokrouhlil k nejblizsimu.
