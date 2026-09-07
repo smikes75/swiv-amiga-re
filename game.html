@@ -63,6 +63,8 @@ a { color:#cfe0ff }
       style="width:3.5em;font:inherit">
     &nbsp;&middot;&nbsp; scroll <input type="range" id="scrollpct" min="25" max="200" step="5"
       value="100" style="width:130px;vertical-align:middle"><span id="scrollval">100%</span>
+    &nbsp;&middot;&nbsp; zoom <input type="range" id="zoombox" min="0" max="12" step="1"
+      value="0" style="width:110px;vertical-align:middle"><span id="zoomval">auto</span>
   </div>
 </div>
 
@@ -6649,13 +6651,66 @@ function startGame(lv) {
   if (!state.loopRunning) { state.loopRunning = true; requestAnimationFrame(frame); }
 }
 
+/* ---- velikost herniho pole ----------------------------------------------
+   Pixelart snese jen CELE nasobky, jinak je cast hernich pixelu na
+   obrazovce o bod sirsi nez zbytek a rolujici teren dela vlnky. Nasobek
+   se proto pocita ve skutecnych bodech displeje (`devicePixelRatio`, na
+   Windows se skalovanim 125 % je 1,25), ne v CSS pixelech.
+
+   Vnitrni platno ma sirku 320*S, kde S je nadvzorkovani plynuleho rezimu
+   (polohy se kvantuji na 1/S px). Aby prohlizec zvetsoval cele, musi byt
+   `dev / S` cele cislo, takze S je nejvetsi delitel `dev` do ctyr - u
+   prvocisel (5, 7, 11) vyjde 1 a plynuly rezim pak jen neopakuje snimky,
+   nema subpixelove polohy. Klasicka cesta ma S = 1 vzdy.
+
+   state.zoom: 0 = auto (nejvetsi nasobek, ktery se vejde do okna). */
+function bestS(dev) {                   // nejvetsi delitel `dev` do ctyr
+  for (let k = Math.min(4, dev); k >= 1; k--) if (dev % k === 0) return k;
+  return 1;
+}
+function viewScale(smooth) {
+  const dpr = window.devicePixelRatio || 1;
+  const fit = Math.max(1, Math.floor(Math.min(
+    (window.innerWidth - 40) * dpr / 320, (window.innerHeight - 170) * dpr / 256)));
+  let dev = (state.zoom | 0) > 0 ? Math.min(state.zoom | 0, fit) : fit;
+  // Auto radeji o krok mensi nasobek nez takovy, u ktereho by S vyslo 1:
+  // u prvocisel (5, 7, 11) by plynuly rezim prisel o subpixelove polohy.
+  // Nezavisi na `smooth`, aby prepnuti rezimu nemenilo velikost obrazu.
+  if (!(state.zoom | 0)) while (dev > 1 && bestS(dev) === 1) dev--;
+  return { dev, fit, S: smooth ? bestS(dev) : 1,
+           cssW: 320 * dev / dpr, cssH: 256 * dev / dpr };
+}
+function updateZoomLabel() {
+  const z = viewScale(!!state.smooth);
+  const box = document.getElementById("zoombox");
+  box.max = String(z.fit);              // vetsi nez okno nema smysl nabizet
+  if ((state.zoom | 0) > z.fit) box.value = String(z.fit);
+  document.getElementById("zoomval").textContent =
+    ((state.zoom | 0) > 0 ? "" : "auto ") + z.dev + "\u00d7" +
+    (state.smooth ? z.S > 1 ? " (1/" + z.S + " px)" : " (cele px)" : "");
+}
+try {                                   // volba prezije reload (per-viewer)
+  const saved = parseInt(localStorage.getItem("swivZoom") || "", 10);
+  if (Number.isInteger(saved) && saved >= 0 && saved <= 12) state.zoom = saved;
+} catch (e) { /* privatni okno / zakazane uloziste */ }
+document.getElementById("zoombox").value = state.zoom | 0;
+document.getElementById("zoombox").oninput = e => {
+  state.zoom = Math.max(0, Math.min(12, +e.target.value || 0));
+  try { localStorage.setItem("swivZoom", String(state.zoom)); } catch (err) {}
+  updateZoomLabel();
+};
+window.addEventListener("resize", updateZoomLabel);
+updateZoomLabel();
+
 /* ---- testovaci lista (CRT, zivoty, rychlost scrollu) ---- */
 document.getElementById("crtchk").onchange = e =>
   document.getElementById("crtfx").style.display = e.target.checked ? "" : "none";
 // Rezim "vylepseno": logika zustava 50 Hz jako original, renderer pri kazdem
 // snimku displeje interpoluje scroll i polohy BOBu mezi poslednimi dvema
 // tiky (viz renderSmoothField). Vychozi je original (kontrakty).
-document.getElementById("smoothchk").onchange = e => { state.smooth = e.target.checked; };
+document.getElementById("smoothchk").onchange = e => {
+  state.smooth = e.target.checked; updateZoomLabel();
+};
 document.getElementById("livesbox").onchange = e => {
   const g = state.g; if (!g) return;
   g.lives = Math.max(1, +e.target.value || 4);
@@ -9170,15 +9225,14 @@ function frame(now) {
   while (g.frac >= TICK) { g.frac -= TICK; if (!g.over) { step(g); stepped++; } }
 
   const cv = $("#game"), ctx = cv.getContext("2d");
-  const fit = Math.max(1, Math.floor(Math.min(
-    (window.innerWidth - 40) / 320, (window.innerHeight - 160) / 256)));
-  const scale = fit * 1.5;
   // Vylepseny rezim kresli do plochy skalovane S-krat, aby sly polohy
-  // interpolovat po 1/S px; original zustava 320x256 (putImageData).
+  // interpolovat po 1/S px; original zustava 320x256 (putImageData,
+  // kontrakty compare.py a smoothtest.py na tom stoji).
   const smooth = !!state.smooth && !g.over;
-  const S = smooth ? Math.max(1, Math.min(4, fit)) : 1;
-  if (cv.width !== 320 * S) { cv.width = 320 * S; cv.height = 256 * S; }
-  cv.style.width = (320 * scale) + "px"; cv.style.height = (256 * scale) + "px";
+  const z = viewScale(smooth);
+  if (cv.width !== 320 * z.S) { cv.width = 320 * z.S; cv.height = 256 * z.S; }
+  cv.style.width = z.cssW + "px"; cv.style.height = z.cssH + "px";
+  const S = z.S;
   ctx.imageSmoothingEnabled = false;
   const top = Math.max(0, Math.min(g.mapH - 256, Math.floor(g.scroll)));
   if (!g.mapFrame)

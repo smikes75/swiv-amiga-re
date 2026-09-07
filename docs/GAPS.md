@@ -514,3 +514,35 @@ sjednoceni: obraz je za logikou o jeden tik (20 ms); klasicky rezim
 ukazuje aktualni tik hned. Na 120 Hz plynuly rezim odstrani
 nepravidelny rytmus 2-3-2-3 opakovanych snimku.
 
+## Velikost herniho pole (zoom, 2026-09-07)
+
+Hlaseno pri testu na 120Hz monitoru pod Windows: herni pole je moc velke
+a neslo nastavit. Zvetseni se pocitalo jen z okna (`fit`) a jeste se
+nasobilo **1,5**, takze na 1920x1080 vyslo 1440x1152 px - vic, nez se do
+okna vejde - a hlavne **neceločíselne**: cast hernich pixelu byla na
+obrazovce o bod sirsi nez zbytek a rolujici teren delal vlnky.
+
+Ted `viewScale()`:
+
+- nasobek se pocita ve **skutecnych bodech displeje** (`devicePixelRatio`;
+  na Windows se skalovanim 125 % je 1,25), ne v CSS pixelech, takze
+  vychazi cely i pri systemovem skalovani;
+- posuvnik `#zoombox` v testovaci liste: 0 = auto, dal 1x az na nejvetsi
+  nasobek, ktery se do okna vejde (max se prepocitava pri resize);
+  volba se uklada do `localStorage` (`swivZoom`);
+- vnitrni platno zustava 320*S (S = nadvzorkovani plynuleho rezimu), a S
+  se voli jako nejvetsi delitel nasobku do ctyr, aby `nasobek / S` bylo
+  cele cislo. U prvocisel (5, 7, 11) vyjde S = 1 - plynuly rezim pak jen
+  neopakuje snimky a nema subpixelove polohy; label to hlasi jako
+  "cele px" misto "1/S px". **Auto proto radeji o krok ustoupi**
+  (7 → 6, 5 → 4), aby S bylo aspon 2, a nezavisi na tom, jestli je
+  plynuly rezim zapnuty - prepnuti rezimu nemeni velikost obrazu.
+
+Zmereno na ctyrech kombinacich (dpr 1 / 1,25 / 1,5 / 2): pomer
+sirka v bodech displeje / sirka platna vyjde vzdy cele cislo. Klasicka
+cesta ma S = 1 vzdy, takze kontrakty `compare.py` a `smoothtest.py`
+(ktere ctou platno 320 px) plati dal.
+
+Vyrez zustava 320x256; zobrazeni vetsi casti mapy je samostatna vec
+(viz `docs/ZADANI-TURRICAN.md`, kde se resi pro jinou hru).
+
