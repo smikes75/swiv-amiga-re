@@ -5,7 +5,7 @@ adresu, na ktere se to da v `AMPROG.OBJ` docist — stejne pravidlo jako
 ve zbytku `docs/`: zadny odhad, jen misto v kodu.
 
 Zdroj hlaseni: hrani prepisu proti originalu, prubezne aktualizovano
-2026-09-01.
+2026-09-02.
 
 ## 1. Zvuky — TOWN ENGINE, GOOSE HIT A TOKEN FIFO PREPSANY; CALL-SITES ZBYVAJI
 
@@ -215,6 +215,10 @@ jednim prokladanym FIFO seznamem vsech continuation bodu. Geometrie,
 callback order a fresh-child fieldy jsou testovane, ale vzacna kombinace,
 kde callback jednoho tasku a nasledna continuation jineho tasku soutezi o
 RNG nebo audio hlas uvnitr stejneho VBL, zustava k porovnani s raw trace.
+EGGS#2 uz zachovava jiste fresh FIFO `ring16 -> explosion`, ale konkretni
+priority50 voice acceptance muze zmenit asynchronni CIAB IRQ mezi dvema
+tasky; browser do ziskani beam/IRQ trace pouziva deterministickou variantu
+bez mezilehleho IRQ.
 
 Konkretni dusledky, ktere zustavaji dalsim mechanickym blokem:
 

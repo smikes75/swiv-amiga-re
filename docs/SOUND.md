@@ -39,7 +39,7 @@ are:
 d4bfe278efb1b4f842b1c2e485c88563218716162c2c430e861c58589bf111bf
 ```
 
-## TOWN effects implemented locally
+## Gameplay effects implemented locally
 
 | event | native path | priority | implemented result |
 |---|---|---:|---|
@@ -49,7 +49,11 @@ d4bfe278efb1b4f842b1c2e485c88563218716162c2c430e861c58589bf111bf
 | each FLAME puff | `0xABD2 -> 0x50D0` | 40 | persistent-noise rise at period 500, then decay at period 1000; native pan input is zero |
 | HOMING launch | `0x8566 -> 0x528A` | 80 | 64 fresh-noise states, period 320..257, volume 64..1 |
 | cannon launch | `0x9606 -> 0x53BE` | 50 | 48 noise states, raw volume 96..2, changing sample length and signed period recurrence |
-| standard death/explosion | `0x894A -> 0x4C58` | 50 | two `BIGEXPL.SND` voices, each with its own `period=592+(RNG&31)` |
+| DESERT EGGS#2 lethal ring | `0x8510 -> 16x 0x95CA` | 50 | sixteen cannon requests at angles 0,16,…,240 in one fresh-task FIFO; ordinary non-lethal `0x852A` hit is deliberately silent |
+| DESERT BLACKJET activation | `0x7AD8 -> 0x52D8` | 70 | 203 64-byte fresh-noise states; 32-step volume rise at period 300, then 171-step decay while period rises 300..640; every state lasts two CIAB IRQs |
+| each DESERT EGGS pod shot | `0xA9A0 -> 0x5436` | 100 | two panned 8-byte square-wave layers, volume 48..1; second layer is delayed eight CIAB IRQs |
+| DESERT EGGS#12 root death | `0x8876 -> 0x4C3C` | 60 | two right-preferred `BIGEXPL.SND` layers at periods 768 and `769+(RNG&7)`; exactly one RNG even on rejection; callback clears the voice guard on IRQ 4 while DMA keeps playing |
+| standard death/explosion | `0x894A -> 0x4C58` | 50 | two `BIGEXPL.SND` voices, each with its own `period=592+(RNG&31)`; the same IRQ-4 callback releases both guards without truncating DMA |
 | player burst | `0x9306 -> 0x88FC -> 0x4C1C` | 100 | four fixed `BIGEXPL.SND` requests at periods 1024, 1032, 1152 and 1160 |
 | white/smart flash | `0x885A -> 0x4CB2` | 127 | four `SMART.SND` layers at periods 1040, 1025, 1010 and 996 |
 | bound MINE shield starts | `0x98F2 -> 0x4FFE` | 60 | one 48-state tone, volume 48..1, period cycle 150/150/154/158/162/162/158/154 |
@@ -61,6 +65,53 @@ The standard explosion's double execution is intentional. `BSR.W` at
 `0x4C5A` has `0x4C5E` as both target and return PC, so the body runs once as
 a subroutine and once again by fall-through. It advances global RNG exactly
 twice before allocation, including when muted or when all voices reject it.
+For each accepted layer callback `0x4C72` clears the allocator guard on IRQ4;
+the already-latched Paula DMA sample continues playing and is stopped only
+if that now-free channel is subsequently preempted.
+
+EGGS#2 queues all sixteen `0x95CA` children before it queues its standard
+explosion. Their fresh priority-100 starts therefore run shell0…shell15,
+then `0x894A`. All requests use priority 50, but their concrete acceptance is
+not a pure VBL property: asynchronous CIAB IRQs can lower a guard between two
+fresh-task starts and also perturb the global seed through VHPOSR. The browser
+keeps a deterministic no-intermediate-IRQ policy until a beam/IRQ trace is
+available; the exact request order and the explosion's two gameplay RNG calls
+are independent of that policy. If SMART is already pending, its older
+explosion child starts before the ring instead; the shared creation-ordinal
+FIFO preserves both cases.
+
+BLACKJET requests its sound only after its cost guard accepts the actor and
+after the same single RNG call that chooses x. Its callback first yields,
+then rewrites 16 scratch longs per state. State starts are IRQ 1, 3, 5…405
+and cleanup is IRQ 408. The priority-70 guard reaches zero at IRQ 280 while
+the callback can continue to completion; a later accepted request may
+therefore preempt that tail exactly as on the native four-voice scheduler.
+
+Each EGGS pod queues its projectile as a fresh priority-100 task. Existing
+left/right pod continuations therefore enqueue both shot tasks before either
+shot creates its one-field PLOP: BOB ordinal order is shot-L, shot-R,
+PLOP-L, PLOP-R, and the active-cost steps are 5, 10, 11, 12. Each PLOP
+releases its cost1 on its own N+1 priority-100 resume, before any younger
+spawn guard. `0x5436` reads the signed shooter x and submits two
+priority-100 voices. Its waveform is `7f 80 7f 80 7f 7f 80 80`; 48 states
+use volume 48..1 and alternating period `acc±20`, with
+`acc += ASR.W(acc,5)` from 200. The first periods are 220/186/232/198 and
+the last are 688/750/732/795/779. The first layer is audible on IRQ2 and
+cleans up on IRQ50; the second starts on IRQ10 and cleans up on IRQ58. No
+RNG is read. Simultaneous sides of the x95 root allocate
+AUD3,AUD0,AUD2,AUD1; the x261/x318 roots mirror that to AUD2,AUD1,AUD3,AUD0.
+
+The root's custom `0x8876` death is deliberately not `sfxBigExplosion`.
+Its first priority-60 request uses period768, its second period
+`769+(RNG&7)`; both ignore root x and prefer AUD2/AUD1. Only the second
+period reads RNG. Three visual puffs at t=0/15/30 each consume one further
+RNG but are silent, so the isolated root effect advances RNG exactly four
+times. Both accepted raw voices release their guards on IRQ4 without
+truncating DMA. The t15/t30 waits retain the root task's creation ordinal;
+if its EXPL2 main is culled, later puffs and their RNG reads are cancelled,
+while a cull first reached on an exact puff deadline happens after that puff.
+Orphaned pods subsequently run ordinary `0x894A` and each consume their own
+two RNG values.
 
 `SMART.SND` is the original 8,280-byte signed 8-bit mono sample, not a
 browser replacement. `0x4CB2` sends it through the right-preferred selector
@@ -154,6 +205,11 @@ an exact reuse pattern still needs scanline DMA-slot phase.
 - left allocation `[AUD3,AUD0,AUD2,AUD1,reject]` and the mirrored right order;
 - strict guard comparison, pair fallback and per-IRQ guard decay;
 - exact FIRE, HIT, opening, HOMING, cannon, FLAME and GOOSE state counts;
+- exact BLACKJET 203-state/two-IRQ volume-period sweep, scratch rewrite count,
+  guard/RNG activation gate and cleanup IRQ;
+- exact EGGS shot waveform, all 48 periods, IRQ50/58 lifetimes, signed-x
+  stereo allocation and shot/shot/PLOP/PLOP creation FIFO;
+- EGGS root periods/channels plus its one audio and three puff RNG advances;
 - all four SMART sample periods/channels, raw length, guard/tail and WebAudio
   pitch/start time;
 - the bound-shield 48-state tone and TOKEN four-note VBL scheduler, including
@@ -176,7 +232,8 @@ an exact reuse pattern still needs scanline DMA-slot phase.
   priority 120 and a stereo selector derived from the signed low score word;
   the threshold itself belongs to the following live-player resume, not to
   `awardScore()`.
-- Sounds belonging only to later levels are outside the current TOWN slice.
+- Sounds belonging only to later levels, apart from the transcribed DESERT
+  BLACKJET and EGGS routines, remain outside the current slice.
 - `AMHITUNE.MOD` is decoded and included in the effect-census tests, but no
   runtime scene currently starts it or switches to it. Its native
   high-score/post-game call site remains to be connected.

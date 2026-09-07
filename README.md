@@ -57,7 +57,18 @@ principal explosions, including four-layer `SMART.SND`, shield/TOKEN pickup
 effects and the IRQ-seeded custom GOOSE hit/death. The title module stops when
 TOWN starts; the absence of gameplay music is the original level-one policy,
 not a missing module.
-Other levels are still research previews, not complete ports.
+DESERT transcription has now started with its exact map/prefetch contract,
+all 48 AIRMINE instances (`0x75A8` fixed-point drift, depth bob, shadow,
+collision and death) and all seven BLACKJET roots (`0x7A98`, expanding to
+5–10 accelerating jets with their native procedural sound). The three
+compound EGGS#12 batteries now add their baked-underlay overlays, independently
+activated gun pods, 37-shot normal-scroll cadence, class-6 projectiles,
+orphan destruction and both native sound routines. All four EGGS#2 capsules
+now reproduce their five-stage hatch, 64-field rise, fixed-point flight,
+15-HP collision phase and sixteen-shell death ring. It is still an
+incomplete port; the remaining DESERT formations and seamless transition to
+GRASS are under active audit. Native visual ratchets now reach 81.8% for the
+TOWN start and 96.1% at a confirmed DESERT checkpoint.
 
 **Command line:**
 
@@ -96,6 +107,7 @@ Detailed write-ups live in [`docs/`](docs/):
 [MAPS](docs/MAPS.md) · [HUD](docs/HUD.md) ·
 [SOUND](docs/SOUND.md) ·
 [TOWN parity](docs/TOWN-PARITY.md) ·
+[DESERT audit](docs/DESERT-AUDIT.md) ·
 [Codex handoff](docs/CODEX-HANDOFF.md). Annotated disassembly of both boot-time
 decrunchers is in [`src-asm/`](src-asm/).
 

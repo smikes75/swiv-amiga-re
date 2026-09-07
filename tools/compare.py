@@ -15,8 +15,9 @@ Zname zbyvajici zdroje rozdilu: sumova textura terenu (nas LCG neni
 generator hry), zbytky profilu/capture (kryje tolerance) a faze animaci
 nepratel.
 
-    python3 tools/compare.py            # vsechny checkpointy
+    python3 tools/compare.py            # rychly vychozi TOWN checkpoint
     python3 tools/compare.py start      # jeden checkpoint
+    python3 tools/compare.py desert     # pozdni nativni capture (~310 s)
 """
 
 import base64
@@ -34,10 +35,17 @@ TOLERANCE = 24                   # na kanal; kryje zbytek capture profilu
 # name: cas snimku originalu v sekundach po fire, zmereny radek mapy
 # v img souradnicich prepisu a minimalni whole-frame shoda v %.
 CHECKPOINTS = {
-    # Po TOWN palete a kalibraci registrovych barev: 22.5 %. Dominantni
-    # zbytek je sumova textura terenu - LCG neni generator hry.
-    "start": {"t": 17, "row": 3229, "floor": 22.0},
+    # Cela zmerena vAmiga DAC/capture rada posunula shodu z 22.5 na 81.8 %.
+    # Dominantni zbytek je sumova textura terenu a aktivni nativni objekty.
+    "start": {"t": 17, "row": 3229, "level": 0,
+              "tick": 0, "floor": 81.0},
+    # True-DESERT checkpoint: _ONERIG v nativnim obrazu a jednoznacny
+    # terrain correlation peak row5426. Neni ve vychozim behu, protoze
+    # prvni baseline capture musi emulovat 310 sekund hry.
+    "desert": {"t": 310, "row": 5426, "level": 1,
+               "tick": 0, "floor": 95.5},
 }
+DEFAULT_CHECKPOINTS = ("start",)
 
 
 def original_frame(t):
@@ -63,7 +71,7 @@ def _decode_data_url(data):
         return image.convert("RGB")
 
 
-def remake_frames(row):
+def remake_frames(row, level=0, tick=0):
     """Return whole, HUD-free/player-free, and player-free frame variants."""
     from playwright.sync_api import sync_playwright
     with sync_playwright() as pw:
@@ -73,17 +81,21 @@ def remake_frames(row):
             page.goto("file://" + os.path.join(ROOT, "game.html"))
             page.set_input_files("#fpick", os.path.join(ROOT, "SWIVFIX.ADF"))
             page.wait_for_selector("#titlewrap", state="visible")
-            # Nativni attract fire spousti TOWN primo; level picker je pouze
-            # vyvojarska L zkratka. Wall-clock RAF zastavime jeste pred fire,
-            # aby checkpoint vznikl jen z rucne provedeneho renderu nize.
+            # Wall-clock RAF zastavime pred startem, aby checkpoint vznikl
+            # jen z rucne provedeneho renderu nize. TOWN pouzije skutecny
+            # attract-fire vstup, pozdejsi mapy vyvojarsky direct start.
             page.evaluate("window.requestAnimationFrame = () => 0")
-            page.keyboard.press(" ")
+            if level == 0:
+                page.keyboard.press(" ")
+            else:
+                page.evaluate("level => startGame(level)", level)
             page.wait_for_selector("#gamewrap", state="visible")
-            encoded = page.evaluate("""(row) => {
+            encoded = page.evaluate("""({row, tick}) => {
               const g = state.g, p = g.player;
               // Presny radek, zadni aktivni mapovi objekty, hrac ve spawn
               // stavu. Original ma HELI frame 0 na (160,192) se stinem.
-              g.scroll = row; g.fadeBlack = 0; g.fadeDir = 0;
+              g.scroll = row; g.tick = tick;
+              g.fadeBlack = 0; g.fadeDir = 0;
               g.fadeWhite = 0;
               g.spawns = []; g.air = []; g.hazards = []; g.shots = [];
               g.bullets = []; g.tokens = []; g.booms = []; g.effects = [];
@@ -120,7 +132,7 @@ def remake_frames(row):
               const terrain = render();
 
               return { whole, withoutHeli, terrain };
-            }""", row)
+            }""", {"row": row, "tick": tick})
         finally:
             browser.close()
     return {name: _decode_data_url(data) for name, data in encoded.items()}
@@ -186,7 +198,7 @@ def diff_image(a, b, path):
 
 def main():
     names = ([arg for arg in sys.argv[1:] if not arg.startswith("-")]
-             or list(CHECKPOINTS))
+             or list(DEFAULT_CHECKPOINTS))
     unknown = [name for name in names if name not in CHECKPOINTS]
     if unknown:
         choices = ", ".join(CHECKPOINTS)
@@ -197,7 +209,8 @@ def main():
     for name in names:
         checkpoint = CHECKPOINTS[name]
         original = original_frame(checkpoint["t"])
-        frames = remake_frames(checkpoint["row"])
+        frames = remake_frames(checkpoint["row"], checkpoint.get("level", 0),
+                               checkpoint.get("tick", 0))
         masks = region_masks(frames)
         scores = {
             "whole": match_percent(original, frames["whole"], masks["whole"]),
@@ -216,7 +229,8 @@ def main():
         floor = checkpoint["floor"]
         ok = floor is None or scores["whole"] >= floor
         status = "OK" if ok else "POD PRAHEM"
-        print(f"{name}: t={checkpoint['t']}, row={checkpoint['row']}")
+        print(f"{name}: level={checkpoint.get('level', 0)}, "
+              f"t={checkpoint['t']}, row={checkpoint['row']}")
         print(f"  whole:   {scores['whole']:6.1f} %  "
               f"ratchet >= {floor}  [{status}]")
         print(f"  terrain: {scores['terrain']:6.1f} %  "

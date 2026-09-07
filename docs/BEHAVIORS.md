@@ -33,6 +33,177 @@ Generation invalidace neni predcasny navrat: SMART smrt ani lethalni bit0
 nepotlaci ulozeny bit3. Resume zachovava `SMART -> bit0 -> bit3` (pak
 `4,1,2,5`) a fyzicky cleanup/cost release se provede pouze jednou.
 
+## AIRMINE — DESERT hovering mine (`0x0012` → `0x75A8`)
+
+Prvni prepsana DESERT-specificka korutina je vsech 48 mapovych AIRMINE:
+
+- `a2c6(AIRMINE#0, class=$22, margin=-48, HP=3, score=20, cost=7)`;
+  cost je prime zapocitany bez `0x8822` 160-guardu
+- `z=32`; telo a collision node zustavaji na raw `(x,y)`, zatimco stin
+  pouziva `(x+(zHi>>1), y+zHi)` a `zHi` urcuje BOB depth
+- inline animator `0x75C4` strida snimky 0/1 s periodou 7: frame0 fieldy
+  0–6, frame1 7–13, frame0 14–20
+- jediny `0x883C` vysledek urci konstantni vodorovny drift pres
+  `vxRaw = int32(int16(rng.low) >> 2)`. Napriklad low `$8000` dava
+  `-$2000`, tedy −0.125 px/field
+- `vzRaw` zacina `+$3000` (3/16 px/field) a pred fieldy 10, 20, 30… se
+  neguje. Vysledkem je presny trojuhelnikovy pohyb `z=32..33.875`, ne
+  sinusova nebo CSS animace
+- nema airborne bit4: je ukotvena ve world-y a normalne odscrolluje s
+  terenem. Ma stin a defaultni inclusive cull −64; cull je tichy a jeho
+  posledni field prezije do cleanupu pri N+1 resume
+- class `$22` instaluje stejny `0xA362` callback pro player bolt (bit0) i
+  HELI kontakt (bit3). Neletalni hit ubere HP, zahraje `0x5070` a na jeden
+  field zapne hit flash; tretí hit da 20 bodu
+- SMART pouzije default `0xA36A`. Death child `0x894A` zdedi pozici a
+  `z`, vynuluje zdedene rychlosti a publikuje explozi na `parent zHi+1`;
+  bez predchozi player attribution SMART body neprida
+
+`tools/uitest.py` hlida mapovy pocet 48, dispatch `0x75A8`, prvnich 22
+fixed-point fieldu, periodu animace, dynamicky stin/depth, HP/score/cost,
+SMART i dvoufazovy HELI kontakt.
+
+## BLACKJET — DESERT accelerating formation (`0x0020` → `0x7A98`)
+
+Kazdy ze sedmi mapovych rootu se jeste v prefetch fazi pres `0xA2A2`
+rozmnozi na `(difficulty >> 1) + 5` clenu, tedy 5–10 nepratel. Klony jsou
+od sebe presne 4 world pixely v ose y; puvodni nejstarsi map task je
+posledni clen formace a zachovava svou BOB ordinalitu.
+
+- `a2c6(BLACKJET#0, class=$22, margin=-48, HP=1, score=25, cost=15)` je
+  nasledovan `0x8822` 160-cost guardem. Odmitnuty clen nespotrebuje RNG ani
+  nezahraje zvuk
+- po prijeti se jednim RNG longem nastavi `x=32+(low&255)`, `z=32`,
+  `vyRaw=0` a `ayRaw=$1800`
+- activation margin porovnava samostatne signed high WORDy world-y a kamery,
+  ne floatovy rozdil. Pri quarter-pixel camera fazi proto muze byt BLACKJET
+  prijat az o tri browserove VBL drive nez pri naivnim `y-scroll >= -48`
+- kazdy publikovany field provede `vyRaw += $1800; yRaw += vyRaw` v presnem
+  16.16 formatu; BLACKJET nema airborne bit4 a jeho y proto zustava
+  ukotvene ve svete
+- telo pouziva staticky `BLACKJET.LIN#0`, standardni z=32 stin a class `$22`
+  hit/HELI kontakt. Frame header dodava inclusive collision half-extenty
+  18x19 (HELI ma 10x19), nikoli genericky ctverec 8x8. Jediny hit da 25
+  bodu, uvolni cost15 a zalozi standardni explozi v z=33; SMART bez player
+  attribution neboduje
+- po integraci se pouzije bezny inclusive cull −64. Pri normalnim scrollu
+  je field84 jeste na screen-y 315.65625, field85 na 323.96875 je prvni
+  cull field a stale se publikuje; i zde se odecitaji jednotlive high WORDy
+  a cost cleanup prijde az pri N+1 resume
+- activation vola `0x52D8`: priority 70, AUDLEN 32 words, 203 proceduralnich
+  noise stavu. Kazdy stav drzi dva CIAB IRQ; presny logical cleanup je IRQ
+  408, i kdyz priority guard vyprsi uz na IRQ 280
+
+`tools/uitest.py` hlida census sedmi rootu, obtiznostni pocet, clone poradi,
+cost/RNG/sound gate, vybrane 16.16 fieldy, absenci scroll locku, presnou
+18x19 kolizi a cull field, BOB/stin, death callback a cely 203stavovy
+zvukovy sweep.
+
+## EGGS#2 — DESERT hatch/fly capsule (`0x041D` → `0x8478`)
+
+Ctverice mapovych rootu je na `(ry,x) = (628,104), (686,44), (1045,160),
+(1126,264)`. Prime `a2c6` se spusti na marginu −16 bez cost guardu a zalozi
+`EGGS#2`, class `$20`, HP0, score200, cost13 a z=0. Zavrena kapsle sice
+spotrebuje prekryvajici se player bolt, nema ale povoleny bit0/bit3 callback
+a kontakt HELI je neskodny. Player attribution zustava v event wordu
+viditelna drivejsimu SMART callbacku, takze SMART soubezny s pre-arm boltem
+body pripise.
+
+Korutina `0x9AFA` kontroluje screen-y high WORD pred publikaci. Posledni
+zavreny field je proto `EGGS#2` pri y127; prvni resume s y>=128 uz bez mezery
+pripoji animaci a publikuje `EGGS#3`. Hatch ma presne pet desetifieldovych
+useku a pri zmene grafiky obnovuje collision half-extenty:
+
+| fieldy | frame | half-extenty |
+|---:|---:|---:|
+| 1–10 | 3 | 12x19 |
+| 11–20 | 4 | 11x19 |
+| 21–30 | 5 | 11x18 |
+| 31–40 | 6 | 11x19 |
+| 41–50 | 7 | 9x10 |
+
+Na dalsim fieldu nastavi `vz=$00008000`: 64 publikaci vede pres
+z=.5,1,…,32. Pri z-high-word 0 stin jeste neni, od z=1 pouziva standardni
+projekci `(z>>1,z)`. Frame7 zustane po animatorovem END pripojeny. Teprve
+resume po z=32 nastavi HP15, class `$22`, oba callbacky `0x8510` a rychlost
+raw `$0080` = .5 px/VBL. Jediny gameplay RNG urci cil
+`x=96+(R.low&127), y=cameraTopHi`; `0x65BE` s d2=0 na nej uhel okamzite
+nastavi a `0x65F2` vytvori presne 16.16 vx/vy. Objekt pak leti rovne a
+defaultni inclusive cull −64 jej tise uvolni az v N+1.
+
+Bit0 i lethal HELI kontakt volaji stejnou `0x8510`. Non-lethal zasah jen
+nastavi jednofieldovy bily BOB — obecny HIT zvuk se zde nevola. Lethal
+callback zalozi 16 neguardovanych `0x95CA` cannon childu v uhlech
+0,16,…,240 a az potom standardni `0x894A` explozi v z+1. Fresh scheduler
+spusti shell0…15 a explozi v creation FIFO. Vsechny requesty maji prioritu50;
+konkretni prijeti hlasu zavisi na asynchronni CIAB/beam fazi mezi tasky, ale
+`0x894A` vzdy spotrebuje dva RNG pred arbitrazi. SMART predchazi ulozene
+masce: SMART+bit0+bit3 vytvori FIFO
+`explosion, ring16, explosion, ring16, explosion`, muze pripsat 3x score200
+a spotrebuje sest explosion RNG. Kazdy `0x6178` shell zdedi plne rootovy
+16.16 x/y LONGy; muzzle meni jen jejich high WORD a prvni .5px krok tak
+zachovava subpixel fazi i pri projekci proti samostatnemu camera high WORDu.
+
+`tools/uitest.py` hlida census/dispatch, class/cost setup, presnou
+50+64fieldovou timeline a extenty, shadow/depth, launch RNG a raw rychlost,
+pre-arm attribution, tichy non-lethal hit, vsech 16 smeru, zvukovou
+arbitraz/FIFO a SMART/bit0/bit3 prekryv.
+
+## EGGS#12 — DESERT compound battery (`0x181D` → `0xA8E4`)
+
+Tri mapove triggery na `(ry,x) = (533,261), (698,318), (901,95)` sedi 14
+radku pod trvalou dlazdici `EGGS#8`. Ta nese tmavy podklad a konektory;
+korutina nad ni sklada ctyri staticke, beze-stinove BOB overlaye v z=0:
+
+- root `EGGS#12`: class `$24`, margin −32, HP18, score75, cost20,
+  collision half-extenty 23x28;
+- left `EGGS#9` na `(−51,−13)`: margin −20, HP8, score75, cost10,
+  extenty 14x19;
+- bottom `EGGS#10` na `(0,+65)`: stejne parametry, extenty 15x19;
+- right `EGGS#11` na `(+51,−13)`: stejne parametry, extenty 15x19.
+
+Root zalozi children uz pri map-reader prefetch v poradi left, bottom,
+right. Kazdy provede prime `a2c6` uctovani bez cost guardu az na vlastnim
+prahu, takze normalni staged cost je 10 → 30 → 50. Aktivace i cull pouzivaji
+rozdil samostatnych signed high WORDu. Bottom aktivuje pri root sy=−85,
+root pri −32 a sides pri −7. Zasah rootu na jeden field vybeli vsechny stale
+linkovane overlaye; zasah dilu pouze tento dil. Class `$24` spotrebuje
+hracsky bolt, ale kontakt s HELI je neskodny.
+
+Kazdy dil ceka na vlastni screen-y >= 8, okamzite vystreli a pak opakuje po
+100 VBL, maximalne sestnactkrat. Fresh child je `BULLET#56`, class `$0006`,
+HP0, cost5, z=1 bez stinu, collision extenty 2x11 a world rychlost +6 px/VBL.
+Vznikne na `part y+16` a v creation fieldu uz publikuje prvni BOB na y+22;
+jednofieldovy PLOP/BULLET#2 zustane na pre-move y+16 v z=33. Pri beznem
+scrollu se jeho cost1 uvolni na vlastnim N+1 priority100 resume, tedy pred kazdym
+mladsim spawn guardem; margin-0 cull pouzije stejnou taskovou pozici.
+Bottom stihne 13 a kazdy side 12 ran, celkem 37. HELI kontakt zabije
+hrace v N+1, ale class6 projectile pokracuje. Pri pruletu hracskym boltem
+pokracuji oba. SMART projectile odstrani pres default `0xA36A`, bez bodu,
+se standardni EXPL1 v z=2 a dvema RNG odběry zvuku.
+
+Lethalni dil pouzije standardni `0x894A`: score75 pri player attribution,
+EXPL1 v z=1 a dva BIGEXPL RNG. Root ma custom `0x8876`: EXPL2 period6 po
+presne 42 fieldu v z=0 a tiche EXPL1 puffy v z=1 na t=0/15/30. Custom zvuk
+ma priority60, periody 768 a `769+(RNG&7)`; kazdy puff spotrebuje dalsi RNG
+na offset `((low&63)-31,(high&63)-31)`, tedy cely root task ctyri RNG.
+Oba raw zvukove hlasy uvolni priority guard na IRQ4, zatimco DMA sample dal
+dohrava. Waity custom efektu zustavaji v puvodnim priority100 FIFO; cull
+hlavniho EXPL2 ukonci i zbytek sekvence, ale na presnem t15/t30 deadline
+vznikne puff jeste pred novym bounds testem. Smrt i tichy cull rootu pouze
+zrusi linky. Aktivni children pri dalsim resume orphan-exploduji bez bodu;
+spici child po pozdejsim a2c6 nejprve publikuje jeden field a orphan callback
+provede az v N+1. Pri soubehu s ulozenou player attribution, SMART a bit0 ale
+nativni chain po generation killu pokracuje: stejne body/exploze se mohou
+udelat dvakrat, pri HP1 podu dokonce trikrat. Stejny double-callback plati
+pro root s HP1 pod soucasnym SMART a bit0.
+
+`tools/uitest.py` hlida census/dispatch, task ordinaly, staged cost, presne
+BOB kotvy a flash, 16-shot izolovanou i 37-shot prirozenou kadenci,
+quarter-scroll cull fieldy 46/47, shot/shot/PLOP/PLOP cost FIFO, class6
+kolize, SMART, HP/score, overlap callbacky a custom death/cull/IRQ4/RNG
+kontrakt.
+
 ## FODDERA — the air wave (`0x8008` spawner, `0x8066` member)
 
 The wave generator we previously guessed is real, and works like

@@ -24,7 +24,7 @@ specialni audio call-sites.
 | priorita | oblast | dnesni stav | dukaz / otevrena prace | podminka uzavreni |
 |---|---|---|---|---|
 | P0 | deterministicky baseline | runtime pouziva port PRNG `0x883c`, CIAB-IRQ high-word perturbaci a rucni 50Hz tiky; `tools/baseline.sh` bootuje kanonicky ADF v headless vAmize a umi invulnerable capture | chybi zachyceny VHPOS/input trace a manifest vsech gameplay checkpointu | stejny vstup a HW trace vyrobi opakovane shodne snimky originalu i prepisu |
-| P1 | rasterova paleta | produkcni viewport sklada mapu i dynamicke BOBy v indexech a RGB12 aplikuje az po slozeni pro kazdy scanline; TOWN ma stabilni fitted COLOR00-09 a nativni VBL prepis COLOR07 | `.PAM` prikazy meni terrain barvy na presnem rasterovem radku; objektovy fit drzi vsech 13 checkpointu a GOOSE audity t100/t130 | fitted slova nejsou tvrzeni o nativnich HW registrech; zbyva rozsirit raw checkpoint ratchet |
+| P1 | rasterova paleta | produkcni viewport sklada mapu i dynamicke BOBy v indexech a RGB12 aplikuje az po slozeni pro kazdy scanline; TOWN..ICE sdili fitted COLOR00-09, COLOR10-15 prochazi checkpointem zmerenym capture profilem a COLOR07 ma globalni VBL writer | `.PAM` prikazy meni terrain barvy na presnem rasterovem radku; objektovy fit drzi checkpointy, TOWN a DESERT maji kvuli odlisnym baseline merenim samostatny nejtmavsi terrain fit | fitted slova ani rozdil profilu nejsou tvrzeni o nativnich HW registrech; dalsi levely musi potvrdit vlastni checkpointy/toggly |
 | P1 | HUD | runtime sklada embedded 7-row font do 352x8 masky; set bit dela zmereny opaque COLOR16 override nezavisly na lower4 | maska/anchory/Copper radky i nepruhlednost maji fixture; fyzicky OCS Denise trik zustava undocumented | raw checkpoint potvrdi gradient a sprite-over-HUD ve slozite scene |
 | P1 | poradi kresleni | jedna unsigned depth fronta podle `0x481a`, vcetne child ordinalu, equal-z stability a specialnich BOB operaci | regrese sklada prekryvajici se realne `.LIN` snimky a hlida poradi/hash | proti originalu zbyva checkpoint capture slozitych krizeni |
 | P1 | stiny | indexovy subtractive shadow s projekci `(x+z/2,y+z)` a skutecnym per-object z | `0x6364..0x638c`; zadna RGBA alpha aproximace v produkcni ceste | proti originalu zbyva checkpoint capture |
@@ -261,7 +261,8 @@ ne 4; bile blikani spawn ochrany 8/8 je na snimcich videt.
   proti snimkum (JEEPHELI#0 kotva presne (160,192), YELLOW#0 a MEDTANK;
   neshoda 0.000): `000 333 465 598 765 666 9a9 800 ed6 eee`. Uvodni
   davka PAM tyto barvy neurcuje (ma 5=888, 9=fff a zbytek 0). Aktualni
-  TOWN-only aplikace drzi fitted desitku ve vsech 13 checkpointech;
+  aplikace pro potvrzene levely TOWN..ICE drzi fitted desitku ve vsech
+  checkpointech;
   prvni implementace z `abc853e` nechavala pozdejsi PAM zapis stejneho
   indexu znovu vyhrat, coz je uz opraveno (podrobne vyse). V AMPROG
   tabulka techto slov neni; zrejme ji sklada kod nebo lezi v loaderu.
@@ -273,7 +274,9 @@ ne 4; bile blikani spawn ochrany 8/8 je na snimcich videt.
 - **`tools/compare.py`** — treti kontrakt: snimek originalu vs prepis
   na presne zmerenem radku mapy, tolerance 24/kanal a ratchet, ktery smi
   jen rust. Prvni verze mela na checkpointu `start` whole shodu 20.1 %;
-  po kalibraci palety a HUD je aktualni shoda 22.5 % a ratchet 22.0 %.
+  po kalibraci objektove palety/HUD byla 22.5 %. Doplneni cele zmerene
+  DAC/capture rady pro terrain COLOR10-15 ji zvedlo na 81.8 % a ratchet
+  na 81.0 %.
 - **dominantni zbytkovy rozdil**: sumova textura terenu. Roviny 0 a 2
   nesou predgenerovany sum, ktery se sklada i pres dlazdice (silnice:
   original index 14 = 10|sum2, prepis 11 = 10|sum1) — nas LCG neni
@@ -293,15 +296,21 @@ Jejich rozdily tvori navzajem disjunktni masky:
 - `terrain` = zbytek bez HUD/HELI; `whole` obsahuje vsech 320x256 pixelu.
 
 Aktualni checkpoint `start` (`t=17`, `row=3229`, tolerance 24 na kanal)
-dava **whole 22.5 %, terrain 21.3 %, HUD 100.0 %, HELI 99.7 %**. HELI tak
+dava **whole 81.8 %, terrain 81.5 %, HUD 100.0 %, HELI 99.7 %**. HELI tak
 ma v tomto kontrolovanem stavu presny anchor, fitted barvy i stin; nepatrny
 zbytek je dynamicky COLOR07/capture profil. HUD se po kalibraci skutecnych
 COLOR16 slov na zmereny headless-vAmiga vystup shoduje ve vsech 639
 pixelech masky. Opaque COLOR16 reseni zaroven zustava oddelene od
 blikajicich COLOR17-31 a je kryte samostatnou fixture.
-Nizkou whole/terrain shodu stale dominantne tvori jina sumova textura
-terenu; regionalni vypis zabranuje, aby tento znamy rozdil zakryl regresi
-hrace nebo HUD.
+Zbyvajici whole/terrain rozdil dominantne tvori jina sumova textura terenu
+a aktivni nativni objekty, ktere je cisty renderer checkpoint zamerne
+odebira; regionalni vypis zabranuje, aby zakryly regresi hrace nebo HUD.
+
+Volitelny checkpoint `desert` (`t=310`, `row=5426`) je mimo vychozi rychly
+beh, protoze prvni native baseline musi emulovat 310 sekund. Dava
+**whole 96.1 %, terrain 96.2 %, HUD 90.8 %, HELI 94.1 %** a drzi ratchet
+95.5 %. Jeho nativni scena obsahuje dalsi objekty, zatimco remake maskuje
+objekty pro cistou kontrolu terenu/HUD/HELI.
 
 Plan jednoho checkpointu:
 

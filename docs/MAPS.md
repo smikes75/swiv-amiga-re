@@ -10,7 +10,14 @@ renderer is `tools/map.py`, and the same code in JS powers the
 
 7 entries of 6 B: `word` map file ID (90–96 = TOWN…FINAL in the order
 of the internal name table at `0x0004`), `word` tile-dictionary offset
-(relative to `0x384C`), `word` scroll speed.
+(relative to `0x384C`), `word` map-join/rebase offset.
+
+The third word is **not scroll speed**. `0x381C` stores it in `fp+144`;
+when the current PAM ends, `0x35D4` adds it to the map cursor immediately
+before `0x35E4` advances the level index and loads the next PAM. DESERT and
+GRASS both use 96 px, for example. It is therefore part of the continuous
+map join. The actual gameplay scroll is set independently at `0x1DA6` to
+`$4000` in 16.16, i.e. 0.25 px/VBL.
 
 The **tile dictionary** is an array of words; the map addresses tiles
 with an 8-bit local ID and the dictionary translates it to a
@@ -147,6 +154,15 @@ od viditelnych paletovych indexu.
 
 (height = net map height; the renders add a 300 px margin for
 overhangs; FINAL is short because the final arena loops at runtime)
+
+The seven PAMs are not seven paused browser stages in the native game.
+The map builder consumes the join word and continues into the next PAM;
+TOWN → DESERT and DESERT → GRASS are seamless. Player state, projectiles,
+active object tasks, RNG, score and equipment remain live across the join.
+The development level picker in `game.html` is consequently only a direct
+test entry: for levels after TOWN it arms the initial preloaded window so
+that objects which would already have been created by the preceding PAM are
+not silently discarded.
 
 ## Verification against real gameplay
 

@@ -296,6 +296,11 @@ function scanBehaviorDispatch(prog, order) {
 /* Implementace jsou svazane s presnou dvojici gfx + adresa korutiny.
    Pri neshode zustane objekt fail-closed jako neprelozeny. */
 const IMPLEMENTED_BEHAVIORS = new Map([
+  [0x0012, { coroutine: 0x75A8, id: "airmine" }],
+  [0x0020, { coroutine: 0x7A98, id: "blackjet" }],
+  [0x0026, { coroutine: 0x7DE8, id: "tilt" }],
+  [0x041D, { coroutine: 0x8478, id: "eggs2" }],
+  [0x181D, { coroutine: 0xA8E4, id: "eggs12" }],
   [0x0404, { coroutine: 0x8048, id: "wave" }],
   [0x0014, { coroutine: 0x86BC, id: "yellow" }],
   [0x0015, { coroutine: 0x862E, id: "bird" }],
@@ -344,9 +349,10 @@ function parsePam(pam, dico) {
 }
 
 /* COLOR00-09 jsou sdilene barvy objektu, nikoli terrain checkpointy PAM.
+   Nativni capture potvrzuje stejnou HW radu v TOWN..ICE (levely 0..4).
    Tohle jsou canvas RGB12 kompenzace z pixel-fitu JEEPHELI/YELLOW/
    MEDTANK/GOOSE proti vystupu emulatoru, ne tvrzeni o HW registrech.
-   Musi zustat stejne pres vsechny checkpointy;
+   Musi zustat stejne pres vsechny checkpointy podporovanych levelu;
    kdybychom prijali zdanne zmeny PAM od y=104, GOOSE dostane prokazatelne
    chybnou smisenou paletu 555/687/7ba/987/bcb/b30. */
 const TOWN_OBJECT_COLORS = [0x000, 0x333, 0x465, 0x598, 0x765,
@@ -357,6 +363,9 @@ function applyTownObjectPalette(checks) {
       check.pal[i] = TOWN_OBJECT_COLORS[i];
   return checks;
 }
+function levelUsesTownObjectPalette(lv) {
+  return Number.isInteger(lv) && lv >= 0 && lv <= 4;
+}
 
 /* 0x2b3e..0x2b5a: pri aktivnim levelu CPU kazdy VBL prepise COLOR07
    cervenym trojuhelnikem 8..15..8, kazda hodnota drzi ctyri VBL.
@@ -365,6 +374,10 @@ function townObjectColor07Word(vbl) {
   let phase = (Math.trunc(vbl || 0) >>> 2) & 15;
   if (phase & 8) phase = ~phase;
   return (8 + (phase & 7)) << 8;
+}
+function activeObjectColor07Word(g) {
+  return g && g.townColor07Enabled !== false && !g.fadeBlack
+    ? townObjectColor07Word(g.tick) : undefined;
 }
 
 /* Presne RGB12 skalovace z 0x4a48/0x4a40. Uroven 0 je beze zmeny,
@@ -399,6 +412,27 @@ function capturedRgb12(word) {
   };
   return [channel(8), channel(4), channel(0)];
 }
+// TOWN a DESERT baseline nevysly pro nejtmavsi terrain stupen stejne:
+// TOWN ratchet potrebuje fitted nibble2=14, zatimco true-DESERT t310
+// meri EGGS index15 s raw $332 jako (28,28,0). Drzime proto oba zmerene
+// capture profily oddelene; neni to tvrzeni, ze se fyzicky DAC meni levelem.
+const VAMIGA_TERRAIN_NIBBLE = [
+  0, 0, 14, 28, 43, 56, 72, 89,
+  ...VAMIGA_HIGH_NIBBLE,
+];
+const VAMIGA_DESERT_TERRAIN_NIBBLE = [
+  0, 0, 0, 28, 43, 56, 72, 89,
+  ...VAMIGA_HIGH_NIBBLE,
+];
+function terrainCaptureNibblesForLevel(level) {
+  return level === 1 ? VAMIGA_DESERT_TERRAIN_NIBBLE
+                     : VAMIGA_TERRAIN_NIBBLE;
+}
+function capturedTerrainRgb12(word, terrainNibbles = VAMIGA_TERRAIN_NIBBLE) {
+  return [terrainNibbles[(word >> 8) & 15],
+          terrainNibbles[(word >> 4) & 15],
+          terrainNibbles[word & 15]];
+}
 
 /* Sestavi plochou tabulku rows x 16 RGB12 barev pro viditelne scanline.
    Vstupni checkpointy zustavaji syrove (jak je vratil parsePam); ry klesa
@@ -424,11 +458,24 @@ function compileCopperPaletteLines(checks, mapHeight, margin, top, rows,
   return out;
 }
 
+function canvasRgbForPaletteWord(color, word, directRegister = false,
+                                 terrainNibbles = VAMIGA_TERRAIN_NIBBLE) {
+  // COLOR00-09 jsou zmereny canvas fit. Terrain COLOR10-15 zustava
+  // skutecnym HW slovem a musi projit stejnym capture profilem jako HUD a
+  // dynamicky COLOR07; linearni nibble*17 delalo DESERT prilis svetly.
+  return directRegister ? capturedRgb12(word)
+    : color >= 10 ? capturedTerrainRgb12(word, terrainNibbles)
+    : [((word >> 8) & 15) * 17,
+       ((word >> 4) & 15) * 17,
+       (word & 15) * 17];
+}
+
 /* Prevede platny vyrez indexove mapy na RGBA pres Copper paletu kazdeho
    scanline; volitelny black/white fade se aplikuje na RGB12 jeste pred
    expanzi nibblu stejne jako v Copper compileru originalu. */
 function colorizeIndexedRows(mapIndex, width, mapHeight, margin, top, rows,
-                             checks, out, blackLevel, whiteLevel) {
+                             checks, out, blackLevel, whiteLevel,
+                             terrainNibbles = VAMIGA_TERRAIN_NIBBLE) {
   const mapRows = width > 0 ? mapIndex.length / width : 0;
   if (!Number.isInteger(width) || width <= 0 ||
       !Number.isInteger(mapRows) || !Number.isInteger(top) ||
@@ -444,11 +491,14 @@ function colorizeIndexedRows(mapIndex, width, mapHeight, margin, top, rows,
   for (let sy = 0; sy < rows; sy++) {
     const src = (top + sy) * width, pal = sy * 16;
     for (let x = 0; x < width; x++) {
-      const word = palettes[pal + mapIndex[src + x]];
+      const color = mapIndex[src + x];
+      const word = palettes[pal + color];
+      const capture = canvasRgbForPaletteWord(
+        color, word, false, terrainNibbles);
       const o = (sy * width + x) * 4;
-      out[o] = ((word >> 8) & 15) * 17;
-      out[o + 1] = ((word >> 4) & 15) * 17;
-      out[o + 2] = (word & 15) * 17;
+      out[o] = capture[0];
+      out[o + 1] = capture[1];
+      out[o + 2] = capture[2];
       out[o + 3] = 255;
     }
   }
@@ -459,7 +509,8 @@ function colorizeIndexedRows(mapIndex, width, mapHeight, margin, top, rows,
    ale Copper paleta se stale pocita z absolutniho mapoveho paletteTop. */
 function colorizeIndexedField(fieldIndex, width, rows, mapHeight, margin,
                               paletteTop, checks, out,
-                              blackLevel, whiteLevel, color07Word) {
+                              blackLevel, whiteLevel, color07Word,
+                              terrainNibbles = VAMIGA_TERRAIN_NIBBLE) {
   if (!Number.isInteger(width) || width <= 0 ||
       !Number.isInteger(rows) || rows < 0 || fieldIndex.length !== width * rows)
     throw new RangeError("indexed field has a wrong size");
@@ -478,11 +529,12 @@ function colorizeIndexedField(fieldIndex, width, rows, mapHeight, margin,
       // zapis COLOR07 prijde primo do HW a neprochazi ani white fadem.
       const direct = color === 7 && color07Word !== undefined;
       const word = direct ? color07Word : palettes[pal + color];
-      const capture = direct ? capturedRgb12(word) : null;
+      const capture = canvasRgbForPaletteWord(
+        color, word, direct, terrainNibbles);
       const o = (sy * width + x) * 4;
-      out[o] = direct ? capture[0] : ((word >> 8) & 15) * 17;
-      out[o + 1] = direct ? capture[1] : ((word >> 4) & 15) * 17;
-      out[o + 2] = direct ? capture[2] : (word & 15) * 17;
+      out[o] = capture[0];
+      out[o + 1] = capture[1];
+      out[o + 2] = capture[2];
       out[o + 3] = 255;
     }
   }
@@ -495,8 +547,8 @@ function renderMap(state, lv, withObjects) {
   const pamName = order[fid];
   const pam = unpackFile(state.adf, state.files.find(f => f.name === pamName));
   const parsed = parsePam(pam, dico);
-  // Zmerena objektova paleta je zatim prokazana pouze pro level 1/TOWN.
-  if (lv === 0) applyTownObjectPalette(parsed.checks);
+  if (levelUsesTownObjectPalette(lv))
+    applyTownObjectPalette(parsed.checks);
   const { tiles, objs, checks, height } = parsed;
   // viditelne okno hry = hriste x 0..320: pointer bez posunu, fetch
   // 40 B, modulo 4 na konci radky -> skryty okraj je cely vpravo
@@ -1713,7 +1765,8 @@ function composeTownBobs(g, top) {
   // turret se vlozi driv, a proto pri stejnem klici skonci navrchu.
   for (const s of g.spawns) {
     if (!s.born) continue;
-    const sy = s.y - top;
+    const sy = (s.beh === "eggs12" || s.beh === "eggs2")
+      ? worldScreenPositionWord(s.y, top) : s.y - top;
     if (sy < -96 || sy > 352) continue;
     if (s.beh === "boss") {
       if (s.alive && !s.bodyHidden) {
@@ -1750,9 +1803,14 @@ function composeTownBobs(g, top) {
     const idx = s.fr >= 0 ? s.fr
       : (s.anim ? s.anim.frames[s.apos].frame : s.idx);
     const file = s.fr >= 0 || !s.anim ? s.file : s.anim.frames[s.apos].file;
-    if (s.beh === "mill") {
+    if (s.beh === "airmine" || s.beh === "eggs2") {
+      bob(s.beh, file, idx, s.x, sy, positionWord(s.z), {
+        ordinal: s.bobOrdinal,
+        primaryOp: s.hitFlash ? BOB_FILL_INDEX9 : null,
+      });
+    } else if (s.beh === "mill" || s.beh === "tilt") {
       const secondaryVisible = (s.rotorTick & 1) === 0;
-      bob("mill", file, idx, s.x, sy, 32, {
+      bob(s.beh, file, idx, s.x, sy, 32, {
         ordinal: s.bobOrdinal,
         secondaryFile: secondaryVisible ? "JEEPHELI.LIN" : undefined,
         secondaryFrame: 5 + ((s.rotorTick >> 1) & 3),
@@ -1776,13 +1834,16 @@ function composeTownBobs(g, top) {
           ordinal: h.bobOrdinal,
           priority: h.bobPriority,
           objectFlags: h.kind === "minecore" || h.kind === "proxfrag" ? 1 : 0,
-          primaryOp: h.hitFlash ? BOB_FILL_INDEX9 : null });
+          primaryOp: (h.hitFlash ||
+            (h.kind === "eggpart" && h.parent && h.parent.hitFlash))
+              ? BOB_FILL_INDEX9 : null });
   }
 
   for (const a of g.air || []) {
     if (!a.alive) continue;
     const file = a.kind === "fod" ? "FODDERA.LIN"
-      : a.kind === "yel" ? "YELLOW.LIN" : "BIRD.LIN";
+      : a.kind === "yel" ? "YELLOW.LIN"
+      : a.kind === "blackjet" ? "BLACKJET.LIN" : "BIRD.LIN";
     bob("air-" + a.kind, file, a.seq[a.apos], a.x, a.y - top, 32,
         { ordinal: a.bobOrdinal,
           primaryOp: a.hitFlash ? BOB_FILL_INDEX9 : null });
@@ -1808,6 +1869,10 @@ function composeTownBobs(g, top) {
   for (const sh of g.shots || [])
     if (sh.kind === "hom")
       bob("homing", "HOMING.LIN", dir16(sh.ang), sh.x, sh.y, 32,
+          { ordinal: sh.bobOrdinal, castShadow: false, objectFlags: 1 });
+    else if (sh.kind === "egg")
+      bob("egg-shot", "BULLET.LIN", 56, sh.x,
+          worldScreenPositionWord(sh.y, top), 1,
           { ordinal: sh.bobOrdinal, castShadow: false, objectFlags: 1 });
 
   for (const k of g.tokens || [])
@@ -2165,6 +2230,22 @@ function sfxBossDeathTimeline(base) {
   }
   return states;
 }
+const SFX_EGG_SHOT_WAVE = new Int8Array([
+  127, -128, 127, -128, 127, 127, -128, -128,
+]);
+function sfxEggShotTimeline() {                // 0x5436
+  // 48 jednotikovych stavu: hlasitost 48..1, zaklad periody roste
+  // signed ASR #5 a vystup stridave prida/ubere 20.
+  const states = [];
+  let base = 200;
+  for (let volume = 48, phase = 0; volume > 0; volume--, phase ^= 1) {
+    states.push({ wave: SFX_EGG_SHOT_WAVE, volume,
+                  period: signedWord(base + (phase ? -20 : 20)),
+                  length: 8, ticks: 1 });
+    base = signedWord(base + (signedWord(base) >> 5));
+  }
+  return states;
+}
 function sfxGooseHitTimeline(scratch) {
   // 0x4e7c..0x4e9e: globalni seed je do scratch[0] zapsan pouze pred
   // vstupem. Kratky skok 66dc se vraci na 0x4e7c, ne na RNG v 0x4e76.
@@ -2227,6 +2308,21 @@ function sfxNoiseTimeline(voice, kind) {
       noise(8, volume, 500, 32);
     for (let volume = 64; volume > 0; volume--)
       noise(8, volume, 1000, 32, 2);
+  } else if (kind === "blackjet") {
+    // 0x52e8: AUDLEN=32 words, 16 fresh noise longs per state. Dvojite
+    // 0x4ae0 volani v 0x4ab8 drzi kazdy stav dva CIAB IRQ. Prvni cast
+    // drzi periodu300 a zveda raw volume o16; druha jej snizuje o3 a
+    // soucasne periodu zveda po2.
+    let rawVolume = 0, period = 300;
+    while (rawVolume < 512) {
+      noise(16, rawVolume >> 3, period, 64, 2);
+      rawVolume = signedWord(rawVolume + 16);
+    }
+    while (rawVolume >= 0) {
+      noise(16, rawVolume >> 3, period, 64, 2);
+      period = signedWord(period + 2);
+      rawVolume = signedWord(rawVolume - 3);
+    }
   }
   // Po poslednim audible waitu prijde jeste resume do cleanupu 0x4bf2.
   return { states, logical: { tick: 0, end: tick + 1, ops } };
@@ -2437,6 +2533,42 @@ function sfxNoise(g, x, priority, kind) {
   return submitTownSfx(g, x, priority, kind, voice =>
     sfxNoiseTimeline(voice, kind));
 }
+function sfxBlackJet(g, x) {                   // 0x7ad8 -> 0x52d8
+  return sfxNoise(g, x, 70, "blackjet");
+}
+function sfxEggShot(g, x) {                    // 0xa9a0 -> 0x5436
+  // Dve priority100 vetve obe panuji podle signed x strelce. Druha
+  // pred vlastnim zvukem vykona dva ctverice-IRQ waity, tedy zazni o 8 IRQ
+  // pozdeji. Rutina necte RNG; x strelce urcuje preferovanou stereo dvojici.
+  const states = sfxEggShotTimeline(), voices = [];
+  for (const delay of [0, 8])
+    voices.push(submitTownSfx(g, x, 100, "egg-shot", () => ({
+      states, period: states[0].period,
+      logical: { tick: 0, end: 50 + delay,
+                 ops: [{ tick: 1 + delay,
+                         bytes: SFX_EGG_SHOT_WAVE.slice() }] },
+      cacheKey: "egg-shot-5436",
+      startDelay: delay / SFX_CIA_HZ,
+    })));
+  return voices;
+}
+function sfxEggRootExplosion(g) {              // 0x8876 -> custom 0x4c3c
+  // Prvni vrstva je pevna. Druha spotrebuje jediny globalni RNG i pri
+  // rejectu; oba selectory ignoruji x objektu a preferuji prave hlasy.
+  // Callback 0x4c72 po ctvrtem IRQ smaze guard, ale Paula DMA sample
+  // necha dohrat. Logical task proto konci na IRQ4, ne priority*4.
+  const voices = [];
+  voices.push(submitTownSfx(g, 320, 60, "egg-root-explosion", () => ({
+    sample: "BIGEXPL.SND", period: 768,
+    logical: { tick: 0, end: 4, ops: [] },
+  })));
+  const period = 769 + (random32(g) & 7);
+  voices.push(submitTownSfx(g, 320, 60, "egg-root-explosion", () => ({
+    sample: "BIGEXPL.SND", period,
+    logical: { tick: 0, end: 4, ops: [] },
+  })));
+  return voices;
+}
 function sfxBigExplosion(g, x, startDelay = 0) {
   // 0x4c58 vola 0x4c5e jako podprogram a jeho return PC je opet 0x4c5e:
   // dve vrstvy, dve RNG hodnoty, obe pred arbitrazi i pri mute/rejectu.
@@ -2445,6 +2577,7 @@ function sfxBigExplosion(g, x, startDelay = 0) {
     const period = 592 + (random32(g) & 31);
     last = submitTownSfx(g, x, 50, "bigexpl", () => ({
       sample: "BIGEXPL.SND", period, startDelay,
+      logical: { tick: 0, end: 4, ops: [] },
     }));
   }
   return last;
@@ -2718,8 +2851,9 @@ function hwSpriteCandidate(g, source, kind, file, frame, fixedDepth) {
   const spr = indexedFrameFor(state, file, frame);
   if (!spr) return null;
   const anchorX = positionWord(source.x);
-  const worldY = positionWord(source.y + g.scroll);
-  const anchorY = positionWord(worldY - positionWord(g.scroll));
+  const worldY = source.worldSpace
+    ? positionWord(source.y) : positionWord(source.y + g.scroll);
+  const anchorY = signedWord(worldY - positionWord(g.scroll));
   const depth = fixedDepth === undefined
     ? ((worldY & 0xffff) >>> 1) : fixedDepth;
   return { kind, source, file, frame, anchorX, anchorY,
@@ -3039,19 +3173,40 @@ function normalizePlayerBulletSlots(g) {
     if (slot >= 0) used[slot] = 1;
   }
 }
-function spawnPlop(g, x, y, parentVx = 0, parentVy = 0) {
+function spawnPlop(g, x, y, parentVx = 0, parentVy = 0, ordinal = null,
+                   rawMotion = null) {
   // 0x617a zdedi parentovy +332/+336; prvni same-VBL 0x62d2 je pricte
   // jeste pred animatorem a publikaci BULLET#2.
-  const p = { x: x + parentVx, y: y + parentVy,
-              vx: parentVx, vy: parentVy,
-              t: 1, bornTick: g.tick | 0,
-              cost: 1, budgeted: true, dead: false };
+  let p;
+  if (rawMotion && Number.isInteger(rawMotion.xRaw) &&
+      Number.isInteger(rawMotion.yRaw)) {
+    // 0x6178 kopiruje cely 16.16 pohybovy blok. TILT tak do PLOPu
+    // prenese i ay a pri obratu ax; prvni 0x62d2 nejprve udela v+=a.
+    const axRaw = rawMotion.axRaw | 0, ayRaw = rawMotion.ayRaw | 0;
+    const vxRaw = ((rawMotion.vxRaw | 0) + axRaw) | 0;
+    const vyRaw = ((rawMotion.vyRaw | 0) + ayRaw) | 0;
+    const xRaw = ((rawMotion.xRaw | 0) + vxRaw) | 0;
+    const yRaw = ((rawMotion.yRaw | 0) + vyRaw) | 0;
+    p = { xRaw, yRaw, vxRaw, vyRaw, axRaw, ayRaw,
+          x: xRaw / 65536, y: yRaw / 65536, worldSpace: true,
+          t: 1, bornTick: g.tick | 0,
+          cost: 1, budgeted: true, dead: false };
+  } else {
+    p = { x: x + parentVx, y: y + parentVy,
+          vx: parentVx, vy: parentVy,
+          t: 1, bornTick: g.tick | 0,
+          cost: 1, budgeted: true, dead: false };
+  }
   g.activeCost = (g.activeCost || 0) + p.cost;  // bez 0x8822 guardu
-  assignBobOrdinal(g, p); g.plops.push(p);
+  if (Number.isFinite(ordinal)) p.bobOrdinal = ordinal;
+  else assignBobOrdinal(g, p);
+  g.plops.push(p);
   // 0x85f0 -> 0x861e -> 0x62d2/0x6480: child dobehne prvni
   // same-VBL publikaci BULLET#2 i tehdy, kdyz je uz za marginem 0.
   // Loader jej pouze oznaci; cost/task se uvolni az pri resume N+1.
-  if (outsideCullMargin(p.x, p.y, 0)) p.retireAfterField = true;
+  const sy = p.worldSpace
+    ? worldScreenPositionWord(p.y, g.scroll) : p.y;
+  if (outsideCullMargin(p.x, sy, 0)) p.retireAfterField = true;
 }
 function deferTownCleanup(o) {
   if (!o || !o.townResumeActive) return false;
@@ -3092,10 +3247,12 @@ function cannonFrameFor(s) {
   return (s.phase ? 40 : 24) + dir16(s.ang);
 }
 
-function invalidateEnemyShotIfOutside(s) {
+function invalidateEnemyShotIfOutside(s, g = null) {
   // 0x6480 bezi uvnitr kazdeho 0x62d2, tedy i v prvni same-VBL
   // aktivaci childa zalozeneho az za centralnim updaterem.
-  if (outsideCullMargin(s.x, s.y, 0)) {
+  const sy = s.worldSpace && g
+    ? worldScreenPositionWord(s.y, g.scroll) : s.y;
+  if (outsideCullMargin(s.x, sy, 0)) {
     s.retireAfterField = true;
     return true;
   }
@@ -3103,18 +3260,40 @@ function invalidateEnemyShotIfOutside(s) {
 }
 
 function advanceCannonShot(g, s, scrollDelta = 0, initial = false) {
-  if (!initial) {
+  if (!initial && !s.worldSpace) {
     s.y -= scrollDelta;                         // world-space camera projection
     s.phase ^= 1;                               // druhy resume ukaze #40+
+  } else if (!initial) {
+    s.phase ^= 1;
   }
   // 0x96aa je pred 0x96c2 -> 0x62d2: depth je pre-move, pozice post-move.
-  s.hwDepth = ((positionWord(s.y + g.scroll) & 0xffff) >>> 1);
-  const v = angVel(s.ang, s.spd);
-  s.x += v.vx; s.y += v.vy;
+  const worldY = s.worldSpace ? positionWord(s.y)
+                              : positionWord(s.y + g.scroll);
+  s.hwDepth = ((worldY & 0xffff) >>> 1);
+  if (s.worldSpace) {
+    // 0x62d2: nejprve v+=a, potom p+=v. Bezny parent ma a=0;
+    // TILT ale pres 0x6178 prenasi ay a pri obratu take ax.
+    s.vxRaw = ((s.vxRaw | 0) + (s.axRaw | 0)) | 0;
+    s.vyRaw = ((s.vyRaw | 0) + (s.ayRaw | 0)) | 0;
+    s.xRaw = (s.xRaw + s.vxRaw) | 0;
+    s.yRaw = (s.yRaw + s.vyRaw) | 0;
+    s.x = s.xRaw / 65536; s.y = s.yRaw / 65536;
+  } else {
+    const v = angVel(s.ang, s.spd);
+    s.x += v.vx; s.y += v.vy;
+  }
   s.st = (s.st | 0) + 1;
-  if (s.accel !== false && s.st % 5 === 0 && s.spd < 10.5)
+  if (s.accel !== false && s.st % 5 === 0 && s.spd < 10.5) {
     s.spd += 0.5;                               // nova rychlost az dalsi krok
-  invalidateEnemyShotIfOutside(s);
+    if (s.worldSpace) {
+      // 0x65f2 znovu prepise velocity slozky; zdedene acceleration
+      // se k nove bazi pricte az v nasledujicim 0x62d2 fieldu.
+      const speedRaw = Math.trunc(s.spd * 256);
+      s.vxRaw = (COS256[s.ang & 255] * speedRaw) | 0;
+      s.vyRaw = (SIN256[s.ang & 255] * speedRaw) | 0;
+    }
+  }
+  invalidateEnemyShotIfOutside(s, g);
 }
 
 function advanceHomingShot(g, s) {
@@ -3134,7 +3313,8 @@ function advanceHomingShot(g, s) {
    pres signed high word po ose, pak start 0.5 px/t, +0.5 kazdych 5 tiku,
    strop 10.5. Sprite BULLET#24+smer.
    fp@(206) zacina na 4, spawn jej po kontrole zaporu snizi: max. 5 kusu. */
-function fireCannon(g, x, y, a, accel = true, checkBudget = true) {
+function fireCannon(g, x, y, a, accel = true, checkBudget = true,
+                    ordinal = null, rawOrigin = null) {
   let n = 0; for (const s of g.shots) if (s.kind === "can") n++;
   if (checkBudget && n >= 5) return false;
   const v = angVel(a, 16);
@@ -3144,9 +3324,25 @@ function fireCannon(g, x, y, a, accel = true, checkBudget = true) {
                  x: x + positionWord(v.vx), y: y + positionWord(v.vy),
                  bornTick: g.tick | 0,
                  ang: a, spd: accel ? 0.5 : 5, st: 0, accel, phase: 0 };
+  if (rawOrigin && Number.isInteger(rawOrigin.xRaw) &&
+      Number.isInteger(rawOrigin.yRaw)) {
+    // 0x6178 kopiruje plne parentovy 16.16 LONGy; 0x961e/0x9626 pak
+    // pricte muzzle jen do high WORDu a zachova obe subpixel faze.
+    shot.worldSpace = true;
+    shot.xRaw = (rawOrigin.xRaw + (positionWord(v.vx) << 16)) | 0;
+    shot.yRaw = (rawOrigin.yRaw + (positionWord(v.vy) << 16)) | 0;
+    shot.axRaw = rawOrigin.axRaw | 0;
+    shot.ayRaw = rawOrigin.ayRaw | 0;
+    const speedRaw = Math.trunc(shot.spd * 256);
+    shot.vxRaw = (COS256[shot.ang & 255] * speedRaw) | 0;
+    shot.vyRaw = (SIN256[shot.ang & 255] * speedRaw) | 0;
+    shot.x = shot.xRaw / 65536; shot.y = shot.yRaw / 65536;
+  }
   // Cannon je priority100 object task. Ordinal se musi pridělit pri spawnu,
   // aby HW sprite queue zachovala skutecne creation order.
-  assignBobOrdinal(g, shot); g.shots.push(shot);
+  if (Number.isFinite(ordinal)) shot.bobOrdinal = ordinal;
+  else assignBobOrdinal(g, shot);
+  g.shots.push(shot);
   // 0x9606 vola 0x53be jen po uspesnem zalozeni childa; D0 stale nese
   // puvodni x hlavne pred muzzle posunem.
   sfxNoise(g, x, 50, "cannon");
@@ -3157,15 +3353,26 @@ function fireCannon(g, x, y, a, accel = true, checkBudget = true) {
 }
 /* 0x95c2 -> 0x95ec: bez kontroly budgetu, bez mireni a bez akcelerace. */
 function fireCannonStraight(g, x, y, a) {
-  fireCannon(g, x, y, a, false, false);
+  return queueCannonStartTask(
+    g, x, y, a, "straight-cannon", null, { accel: false });
 }
 /* Mirena varianta (0x95d2): zamiri na hrace v okamziku vystrelu. */
-function fireCannonAimed(g, x, y, parentVx = 0, parentVy = 0) {
+function fireCannonAimed(g, x, y, parentVx = 0, parentVy = 0,
+                         rawMotion = null, source = "aimed-cannon") {
   // 0x95d2 drzi ukazatel na player slot a miri na posledni ulozenou
   // pozici i behem death/respawn tasku; alive flag zde nekontroluje.
-  const p = g.player; if (!p) return;
-  if (fireCannon(g, x, y, angTo(x, y, p.x, p.y - 8)))
-    spawnPlop(g, x, y, parentVx, parentVy);
+  // Guard vidi jen uz spustene childy. Vice parentu ve stejnem sweepu
+  // proto muze projit pri stejne fp@(206), nez prvni fresh child citac snizi.
+  const p = g.player; if (!p) return false;
+  let active = 0;
+  for (const shot of g.shots || [])
+    if (!shot.dead && shot.kind === "can") active++;
+  if (active >= 5) return false;
+  queueCannonStartTask(
+    g, x, y, 0, source, rawMotion, { accel: true, aimed: true });
+  queuePlopStartTask(
+    g, x, y, parentVx, parentVy, rawMotion, source + "-plop");
+  return true;
 }
 /* Navadena strela (0x8530/0x8566): HOMING.LIN 16 smeru, 3 px/t, kazdych
    8 tiku otocka k hraci max 14 jednotek, 12 korekci, pak rovne.
@@ -3708,18 +3915,246 @@ function spawnBirdFormation(g, s) {            // 0x862e + a2a2(32,-4,4,0)
     g.air.push(a);
   }
 }
+function spawnBlackJetFormation(g, s) {        // 0x7a98 + a2a2(0,-4,D/2+5,0)
+  assignBobOrdinal(g, s);
+  const count = ((g.difficulty || 0) >> 1) + 5;
+  for (let i = 0; i < count; i++) {
+    const a = { kind: "blackjet", x: s.x, y: s.y - i * 4, typ: s.typ,
+                 alive: false, pending: true, dead: false,
+                 scrollLocked: false,
+                 cost: 15, budgeted: false, hp: 1, scoreValue: 25,
+                 colHalfX: 18, colHalfY: 19,
+                 seq: [0], per: 1, apos: 0, at: 0, animFresh: true };
+    // a2a2 zalozi klony v y=0,-4,...; puvodni, nejstarsi map task
+    // pokracuje jako posledni clen na y=-(count-1)*4.
+    if (i === count - 1) a.bobOrdinal = s.bobOrdinal;
+    else assignBobOrdinal(g, a);
+    g.air.push(a);
+  }
+}
+
+/* DESERT EGGS#12 0xa8e4. EGGS#8 je uz trvalou soucasti mapy; mapovy
+   trigger vytvori ctyri staticke BOB overlaye: root #12 a tri priority100
+   childy #9/#10/#11. Child tasky existuji od prefetch, ale vlastni a2c6
+   a cost provedou az pri svem samostatnem marginu -20. */
+const EGG_PART_SPECS = [
+  { id: "left",   frame: 9,  dx: -51, dy: -13, halfX: 14, halfY: 19 },
+  { id: "bottom", frame: 10, dx:   0, dy:  65, halfX: 15, halfY: 19 },
+  { id: "right",  frame: 11, dx:  51, dy: -13, halfX: 15, halfY: 19 },
+];
+function spawnEggParts(g, root) {               // 0xa8f2: 614a x3
+  if (Array.isArray(root.eggParts)) return root.eggParts;
+  if (!Array.isArray(g.hazards)) g.hazards = [];
+  root.eggParts = EGG_PART_SPECS.map(spec => {
+    const h = {
+      kind: "eggpart", eggId: spec.id,
+      file: "EGGS.LIN", frame: spec.frame, seq: [spec.frame],
+      x: root.x + spec.dx, y: root.y + spec.dy,
+      parent: root, pending: true, alive: false, dead: false,
+      cost: 10, budgeted: false, hp: 8, scoreValue: 75,
+      collisionClass: 0x24,
+      colHalfX: spec.halfX, colHalfY: spec.halfY,
+      apos: 0, at: 0, per: 1, animFresh: true,
+      eggShotsFired: 0, eggShotWait: 0, eggFiring: false,
+    };
+    assignBobOrdinal(g, h); g.hazards.push(h);
+    return h;
+  });
+  return root.eggParts;
+}
+function initEggRoot(g, s) {
+  s.cost = 20; s.hp = 18; s.scoreValue = 75;
+  s.collisionClass = 0x24; s.colHalfX = 23; s.colHalfY = 28;
+  s.fr = 12; s.z = 0;
+  accountCost(g, s);                           // prime a2c6, bez guardu
+  return s;
+}
+function activateEggPart(g, h) {
+  if (!h.pending || !worldHighWordAtMargin(h.y, g.scroll, -20))
+    return false;
+  h.pending = false; h.alive = true; h.dead = false;
+  h.hp = 8; h.cost = 10; h.scoreValue = 75;
+  h.collisionClass = 0x24;
+  accountCost(g, h);                           // prime a2c6, bez guardu
+  // Spici child po unlinku stale dokonci a2c6 a publikuje jeden field;
+  // orphan callback se smi spustit az pri jeho N+1 resume.
+  h.eggOrphanAfterFirstField = !h.parent || !h.parent.alive;
+  return true;
+}
+function advanceEggShot(g, shot) {              // BULLET#56, vy = +6.0
+  shot.y += 6;
+  if (outsideCullMargin(
+        shot.x, worldScreenPositionWord(shot.y, g.scroll), -64))
+    shot.retireAfterField = true;
+}
+function ensureEggShotStartTasks(g) {
+  if (!Array.isArray(g.eggShotStartTasks)) g.eggShotStartTasks = [];
+  return g.eggShotStartTasks;
+}
+function ensurePlopStartTasks(g) {
+  if (!Array.isArray(g.plopStartTasks)) g.plopStartTasks = [];
+  return g.plopStartTasks;
+}
+function queuePlopStartTask(g, x, y, parentVx = 0, parentVy = 0,
+                            rawMotion = null, source = "plop") {
+  const task = { x, y, parentVx, parentVy, source, started: false };
+  if (rawMotion) task.rawMotion = {
+    xRaw: rawMotion.xRaw | 0, yRaw: rawMotion.yRaw | 0,
+    vxRaw: rawMotion.vxRaw | 0, vyRaw: rawMotion.vyRaw | 0,
+    axRaw: rawMotion.axRaw | 0, ayRaw: rawMotion.ayRaw | 0,
+  };
+  assignBobOrdinal(g, task); ensurePlopStartTasks(g).push(task);
+  return task;
+}
+function queueEggPlopStartTask(g, x, y) {
+  return queuePlopStartTask(g, x, y, 0, 0, null, "egg-shot-plop");
+}
+function startPlopTask(g, task) {
+  if (!task || task.started) return null;
+  task.started = true;
+  return spawnPlop(g, task.x, task.y, task.parentVx || 0,
+                   task.parentVy || 0, task.bobOrdinal, task.rawMotion);
+}
+function fireEggShot(g, h) {                   // 0xa9a0 queue child task
+  const task = { x: h.x, y: h.y + 16, started: false };
+  assignBobOrdinal(g, task); ensureEggShotStartTasks(g).push(task);
+  return task;
+}
+function startEggShotTask(g, task) {
+  if (!task || task.started) return null;
+  task.started = true;
+  if (!Array.isArray(g.shots)) g.shots = [];
+  const shot = {
+    kind: "egg", file: "BULLET.LIN", frame: 56,
+    x: task.x, y: task.y, z: 1, vy: 6,
+    bornTick: g.tick | 0, dead: false,
+    cost: 5, budgeted: false, hp: 0, scoreValue: 0,
+    collisionClass: 0x0006, colHalfX: 2, colHalfY: 11,
+    bobOrdinal: task.bobOrdinal,
+  };
+  sfxEggShot(g, task.x);                       // bez RNG
+  accountCost(g, shot); g.shots.push(shot);
+  // 0x6178 pouze alokuje dalsi priority100 task. Jeho a2c6/cost1 a prvni
+  // field prijdou az za vsemi uz existujicimi fresh tasky tohoto passu.
+  queueEggPlopStartTask(
+    g, task.x, worldScreenPositionWord(task.y, g.scroll));
+  // Teprve po PLOP alokaci nastavi parent vy=6 a udela prvni 0x62d2.
+  advanceEggShot(g, shot);                     // prvni anchor je y + 22
+  return shot;
+}
+function stepEggPart(g, h) {
+  const activated = activateEggPart(g, h);
+  if (!h.alive) return false;
+  const sy = worldScreenPositionWord(h.y, g.scroll);
+  if (h.eggShotsFired < 16) {
+    let fire = false;
+    if (!h.eggFiring) {
+      if (sy >= 8) { h.eggFiring = true; fire = true; }
+    } else if (--h.eggShotWait <= 0) fire = true;
+    if (fire) {
+      fireEggShot(g, h); h.eggShotsFired++; h.eggShotWait = 100;
+    }
+  } else if (h.eggShotWait > 0) {
+    // Nativni WORD smycka i po 16. rane dokonci posledni wait100.
+    h.eggShotWait--;
+  }
+  if (outsideCullMargin(h.x, sy, -64)) h.retireAfterField = true;
+  h.animFresh = false;
+  return activated;
+}
+
+/* DESERT EGGS#2 0x8478. Zavrena kapsle je nejprve pozemni class $20
+   objekt bez damage callbacku. Od screen-y 128 otevre pet 10field
+   snimku, 64 fieldu stoupa po 0.5 px do z=32 a az pote se vyzbroji jako
+   class $22 letoun. X/Y/Z zustavaji v puvodnim signed 16.16 formatu. */
+function setEgg2Frame(s, frame) {
+  s.fr = frame;
+  // 0x6d80 po zmene grafiky znovu kopiruje half-extenty z frame headeru.
+  const extents = {
+    2: [11, 19], 3: [12, 19], 4: [11, 19],
+    5: [11, 18], 6: [11, 19], 7: [9, 10],
+  }[frame] || [11, 19];
+  [s.colHalfX, s.colHalfY] = extents;
+}
+function initEgg2(g, s) {
+  s.cost = 13; s.hp = 0; s.scoreValue = 200;
+  s.collisionClass = 0x20; s.egg2Armed = false;
+  s.xRaw = (Math.trunc(s.x * 65536)) | 0;
+  s.yRaw = (Math.trunc(s.y * 65536)) | 0;
+  s.zRaw = 0; s.z = 0;
+  s.vxRaw = 0; s.vyRaw = 0; s.vzRaw = 0;
+  s.egg2Phase = "closed"; s.egg2HatchField = 0;
+  s.egg2TargetX = null; s.egg2TargetY = null;
+  setEgg2Frame(s, 2);
+  accountCost(g, s);                           // prime a2c6, bez 0x8822
+}
+function launchEgg2(g, s) {                   // 0x84cc..0x8508
+  s.vzRaw = 0;
+  s.hp = 15; s.egg2Armed = true;
+  s.collisionClass = 0x22;
+  const targetX = 96 + (random32(g) & 127);
+  const targetY = positionWord(g.scroll);
+  s.egg2TargetX = targetX; s.egg2TargetY = targetY;
+  // d2=0 je v 0x65be specialni "nastav presny uhel", nikoli nulovy turn.
+  s.ang = angTo(s.x, s.y, targetX, targetY);
+  s.vxRaw = (COS256[s.ang & 255] * 128) | 0;
+  s.vyRaw = (SIN256[s.ang & 255] * 128) | 0;
+  s.egg2Phase = "fly";
+}
+function advanceEgg2Flight(s) {
+  s.xRaw = (s.xRaw + s.vxRaw) | 0;
+  s.yRaw = (s.yRaw + s.vyRaw) | 0;
+  s.x = s.xRaw / 65536;
+  s.y = s.yRaw / 65536;
+}
+function stepEgg2(g, s) {
+  if (s.egg2Phase === "closed") {
+    // 0x9afa kontroluje high WORD pred dalsim 0x62d2. Jakmile dosahne
+    // 128, animator se pripoji a #3 se publikuje jeste v tomto fieldu.
+    if (worldScreenPositionWord(s.y, g.scroll) < 128) return;
+    s.egg2Phase = "hatch"; s.egg2HatchField = 0;
+  }
+  if (s.egg2Phase === "hatch") {
+    setEgg2Frame(s, 3 + Math.min(4, Math.floor(s.egg2HatchField / 10)));
+    if (++s.egg2HatchField >= 50) s.egg2Phase = "rise";
+    return;
+  }
+  if (s.egg2Phase === "rise") {
+    s.vzRaw = 0x8000;
+    s.zRaw = (s.zRaw + s.vzRaw) | 0;
+    s.z = s.zRaw / 65536;
+    // z=32 je jeste posledni rise BOB. Vyzbrojeni a prvni horizontalni
+    // 0x62cc pohyb patri az nasledujicimu scheduler resume.
+    if (positionWord(s.z) >= 32) s.egg2Phase = "launch";
+    return;
+  }
+  if (s.egg2Phase === "launch") launchEgg2(g, s);
+  if (s.egg2Phase === "fly") advanceEgg2Flight(s);
+}
+
 /* 0x365e map reader vytvari object task uz zhruba 256 px pred hornim
    okrajem. Kod pred a2c6 (clone formace a RNG prahy) proto musi probehnout
    zde, nikoli teprve na viditelnem activation marginu. */
 function startMapObjectTask(g, s) {
   if (s.taskStarted) return;
   s.taskStarted = true; assignBobOrdinal(g, s);
+  // Globalni COLOR07 writer nema level gate. Tyto dve pozdejsi rutiny
+  // meni flag synchronne uz pri map-reader prefetch vstupu (~sy=-256),
+  // i kdyz jejich zbytek zatim zustava fail-closed.
+  if (s.gfx === 0x1C3C && s.coroutine === 0x7970)
+    g.townColor07Enabled = false;               // _AIRPORT#14 0x7990
+  else if (s.gfx === 0x001E && s.coroutine === 0xB1A8)
+    g.townColor07Enabled = true;                // FISH#0 0xb1b4
   if (s.beh === "wave") {
     spawnFodderFormation(g, s); s.born = true; s.alive = false;
   } else if (s.beh === "yellow") {
     spawnYellowFormation(g, s); s.born = true; s.alive = false;
   } else if (s.beh === "bird") {
     spawnBirdFormation(g, s); s.born = true; s.alive = false;
+  } else if (s.beh === "blackjet") {
+    spawnBlackJetFormation(g, s); s.born = true; s.alive = false;
+  } else if (s.beh === "eggs12") {
+    spawnEggParts(g, s);
   } else if (s.beh === "popup") {
     s.activationMargin = 64 + (random32(g) & 63); // 0xa6ae pred a2c6
   } else if (s.beh === "proxmine") {
@@ -3733,10 +4168,19 @@ function yellowTarget(g, playerOverride) {     // 0x72a6
   const n = b < 128 ? b : 255 - b;
   return { x: 96 + n, y: 128 + n };
 }
+function worldScreenPositionWord(worldY, cameraY) {
+  return signedWord(positionWord(worldY) - positionWord(cameraY));
+}
+function worldHighWordAtMargin(worldY, cameraY, margin) {
+  return worldScreenPositionWord(worldY, cameraY) >= margin;
+}
 function activateAirMember(g, a, p) {
-  if (!a.pending || a.y - g.scroll < -48) return false;
+  // 0x9ad6 porovnava samostatne high WORDy objektu a kamery. Floatovy
+  // rozdil by pri quarter-pixel scroll fazi aktivoval task az o 1–3 VBL
+  // pozdeji.
+  if (!a.pending || !worldHighWordAtMargin(a.y, g.scroll, -48)) return false;
   a.pending = false;
-  // BIRD po a2c6 nevola guard 0x8822; ostatni dve formace ano.
+  // BIRD po a2c6 nevola guard 0x8822; ostatni podporovane formace ano.
   if (a.kind === "bird") {
     g.activeCost = (g.activeCost || 0) + a.cost;
     a.budgeted = true;
@@ -3759,6 +4203,12 @@ function activateAirMember(g, a, p) {
     a.ang = 64; a.spd = 2; a.ct = 0;
   } else if (a.kind === "bird") {              // 0x8658..0x8668
     a.vy = 1 + (random32(g) & 0x7FFF) / 65536;
+  } else if (a.kind === "blackjet") {          // 0x7ac2..0x7adc
+    a.x = 32 + (random32(g) & 255);
+    a.xRaw = (Math.trunc(a.x * 65536)) | 0;
+    a.yRaw = (Math.trunc(a.y * 65536)) | 0;
+    a.vyRaw = 0; a.ayRaw = 0x1800;
+    sfxBlackJet(g, a.x);
   }
   return true;
 }
@@ -3774,11 +4224,48 @@ function stepFodderMotion(a) {                 // 0x80f4..0x8130 + 0x62d2
   a.vx += a.ax; a.vy += a.ay;
   a.x += a.vx; a.y += a.vy;
 }
+function stepBlackJetMotion(a) {               // 0x7adc + 0x62d2
+  a.vyRaw = (a.vyRaw + a.ayRaw) | 0;
+  a.yRaw = (a.yRaw + a.vyRaw) | 0;
+  a.y = a.yRaw / 65536;
+}
 function advanceAirAnim(a) {
   if (a.animFresh) { a.animFresh = false; return; }
   if (++a.at >= a.per) {
     a.at = 0; a.apos = (a.apos + 1) % a.seq.length;
   }
+}
+
+/* DESERT AIRMINE 0x75a8. X/Z zustavaji v presnem 16.16 formatu:
+   low word RNG se po ASR.W #2 sign-extenduje do vx, zatimco vz=$3000
+   se obraci po kazdych deseti publikovanych 0x62d2 fieldech. Obrat se
+   provede az pri dalsim resume, proto pending flag zachovava i stav
+   viditelny presne na konci 10. fieldu. */
+function initAirMine(g, s) {
+  s.cost = 7; s.hp = 3; s.scoreValue = 20;
+  s.collisionClass = 0x22;
+  s.xRaw = (Math.trunc(s.x * 65536)) | 0;
+  s.zRaw = 32 << 16; s.z = 32;
+  s.vxRaw = signedWord(random32(g)) >> 2;
+  s.vzRaw = 0x3000;
+  s.airmineWait = 10; s.airmineTurnPending = false;
+  s.seq = [0, 1]; s.per = 7; s.apos = 0; s.at = 0;
+  s.animFresh = true; s.fr = 0;
+  accountCost(g, s);                           // prime a2c6, bez 0x8822
+}
+function stepAirMine(s) {
+  if (s.airmineTurnPending) {
+    s.vzRaw = (-s.vzRaw) | 0;
+    s.airmineWait = 10;
+    s.airmineTurnPending = false;
+  }
+  s.xRaw = (s.xRaw + s.vxRaw) | 0;
+  s.zRaw = (s.zRaw + s.vzRaw) | 0;
+  s.x = s.xRaw / 65536;
+  s.z = s.zRaw / 65536;
+  advanceAirAnim(s);
+  s.fr = s.seq[s.apos];
+  if (--s.airmineWait === 0) s.airmineTurnPending = true;
 }
 
 /* ---- pohyblive casti min a plamenometu ---- */
@@ -3802,19 +4289,26 @@ function awardScore(g, points) {
       g.player.rank = signedWord((g.player.rank || 0) + 6000);// 0x7116
   }
 }
-/* Resident collision sweep 0x6ee2 nepouziva rozmery obrazku. Porovnava
-   integerove strety uzlu s inclusive half-extent 8; udalosti stejneho
-   bitu se pak za jeden VBL pouze ORnou. */
-function collisionNodeHit(ax, ay, bx, by) {
-  return Math.abs(Math.floor(ax) - Math.floor(bx)) <= 8 &&
-         Math.abs(Math.floor(ay) - Math.floor(by)) <= 8;
+/* Resident collision sweep 0x6ee2 pouziva half-extenty z frame headeru,
+   ktere a2c6 kopiruje do collision recordu. Vetsina prelozenych objektu
+   zustava na defaultu8; BLACKJET.LIN#0 ma presne 18x19. Kontakt muze byt
+   nalezen v outer passu kterehokoli z obou uzlu, proto prijimame extenty
+   obou stran a jejich inclusive sjednoceni. */
+function collisionNodeHit(ax, ay, bx, by,
+                          bHalfX = 8, bHalfY = 8,
+                          aHalfX = 8, aHalfY = 8) {
+  const dx = Math.abs(Math.floor(ax) - Math.floor(bx));
+  const dy = Math.abs(Math.floor(ay) - Math.floor(by));
+  return (dx <= bHalfX && dy <= bHalfY) ||
+         (dx <= aHalfX && dy <= aHalfY);
 }
 /* Bit15 projectile node sam nesweepuje. Kladny target porovnava obe
    poloviny inclusive: defaultni extent8 tedy dx/dy -8..+8. */
-function projectileNodeHit(px, py, tx, ty) {
+function projectileNodeHit(px, py, tx, ty, halfX = 8, halfY = 8) {
   const dx = Math.floor(px) - Math.floor(tx);
   const dy = Math.floor(py) - Math.floor(ty);
-  return dx >= -8 && dx <= 8 && dy >= -8 && dy <= 8;
+  return dx >= -halfX && dx <= halfX &&
+         dy >= -halfY && dy <= halfY;
 }
 function outsideCullMargin(x, y, margin) {       // 0x6480, inclusive
   const ix = Math.floor(x), iy = Math.floor(y);
@@ -3826,17 +4320,113 @@ function releaseSpawnTask(g, s) {
   if (deferTownCleanup(s)) return;
   s.alive = false; releaseCost(g, s);
 }
+function spawnExplosionDepth(s) {
+  if ((s.beh === "airmine" || s.beh === "eggs2") && Number.isFinite(s.z))
+    return signedWord(positionWord(s.z) + 1);  // 0x894a zdedi z a ADDQ #1
+  return s.beh === "mill" || s.beh === "tilt" ? 33 : 1;
+}
+function unlinkEggParts(root) {
+  for (const h of root.eggParts || [])
+    if (h.parent === root) h.parent = null;
+}
+function killEggRoot(g, s, credited) {         // 0xa8e4 -> 0x8876
+  if (!s.alive && !s.townResumeActive) return;
+  // Fresh 8876 task se vytvori drive, nez pozdejsi child resumes zalozi
+  // sve orphan 894a tasky. Linky se ale zrusi okamzite v callbacku.
+  queueEggRootExplosionTask(g, s.x, s.y);
+  unlinkEggParts(s);
+  releaseSpawnTask(g, s);
+  if (credited) awardScore(g, s.scoreValue ?? 75);
+}
+function damageEggRoot(g, s) {
+  if ((!s.alive || s.hp <= 0) && !s.townResumeActive) return false;
+  if (--s.hp > 0) {
+    s.hitFlash = true;
+    sfxGenericHit(g, s.x);
+    return false;
+  }
+  killEggRoot(g, s, true); return true;
+}
+function killEggPartOrphan(g, h, credited = false) {
+  if (!h.alive && !h.townResumeActive) return false;
+  releaseHazard(g, h);
+  if (credited) awardScore(g, h.scoreValue ?? 75);
+  queueTownExplosionTask(g, h.x, h.y, 1, "orphan-eggpart");
+  return true;
+}
 function killSpawnCredited(g, s) {             // 0xa36a z player eventu
   if (!s.alive && !s.townResumeActive) return;
   releaseSpawnTask(g, s);
   awardScore(g, s.scoreValue ?? 100);
-  queueTownExplosionTask(g, s.x, s.y, s.beh === "mill" ? 33 : 1,
+  queueTownExplosionTask(g, s.x, s.y, spawnExplosionDepth(s),
                          "death-" + s.beh);
   if (["tank", "popup", "flame", "proxmine"].includes(s.beh))
     addDecal(g, "EXPL1.LIN", 0, s.x, s.y);
 }
+function ensureCannonStartTasks(g) {
+  if (!Array.isArray(g.cannonStartTasks)) g.cannonStartTasks = [];
+  return g.cannonStartTasks;
+}
+function queueCannonStartTask(g, x, y, angle, source = "cannon",
+                              rawOrigin = null, options = null) {
+  options = options || {};
+  const task = { x, y, angle: angle & 255, source,
+                 accel: options.accel !== false,
+                 aimed: !!options.aimed, started: false };
+  if (rawOrigin) task.rawOrigin = {
+    xRaw: rawOrigin.xRaw | 0, yRaw: rawOrigin.yRaw | 0,
+    vxRaw: rawOrigin.vxRaw | 0, vyRaw: rawOrigin.vyRaw | 0,
+    axRaw: rawOrigin.axRaw | 0, ayRaw: rawOrigin.ayRaw | 0,
+  };
+  assignBobOrdinal(g, task); ensureCannonStartTasks(g).push(task);
+  return task;
+}
+function startCannonTask(g, task) {
+  if (!task || task.started) return false;
+  task.started = true;
+  let angle = task.angle & 255;
+  if (task.aimed) {
+    const p = g.player;
+    if (!p) return false;
+    const x = task.rawOrigin
+      ? task.rawOrigin.xRaw / 65536 : task.x;
+    const y = task.rawOrigin
+      ? worldScreenPositionWord(task.rawOrigin.yRaw / 65536, g.scroll)
+      : task.y;
+    angle = angTo(x, y, p.x, p.y - 8);
+    task.angle = angle;
+  }
+  return fireCannon(g, task.x, task.y, angle, task.accel, false,
+                    task.bobOrdinal, task.rawOrigin);
+}
+function fireEgg2DeathRing(g, s) {             // 0x8516: 16x 0x95ca
+  s.ang = 0;
+  const sy = worldScreenPositionWord(s.y, g.scroll);
+  const rawOrigin = { xRaw: s.xRaw | 0, yRaw: s.yRaw | 0 };
+  for (let i = 0; i < 16; i++) {
+    // 0x95ca pouze zalozi fresh priority100 child. Zvuk a prvni pohyb
+    // prijdou az v loader FIFO, takze starsi SMART exploze muze byt prvni.
+    queueCannonStartTask(
+      g, s.x, sy, s.ang, "death-eggs2-ring", rawOrigin);
+    s.ang = (s.ang + 16) & 255;
+  }
+}
+function damageEgg2(g, s) {                   // bit0 i bit3 -> 0x8510
+  if (!s.egg2Armed ||
+      ((!s.alive || s.hp <= 0) && !s.townResumeActive)) return false;
+  if (--s.hp > 0) {
+    // 0x852a vola pouze A35A: jeden bily BOB, bez obecneho HIT zvuku.
+    s.hitFlash = true;
+    return false;
+  }
+  fireEgg2DeathRing(g, s);
+  killSpawnCredited(g, s);
+  return true;
+}
 function damageSpawn(g, s) {
   if ((!s.alive || s.hp <= 0) && !s.townResumeActive) return false;
+  if (s.beh === "eggs12") return damageEggRoot(g, s);
+  if (s.beh === "eggs2") return damageEgg2(g, s);
   if (--s.hp > 0) {
     s.hitFlash = true; sfxGenericHit(g, s.x); return false;
   }
@@ -3860,7 +4450,8 @@ function damageBirdEvent(g, a) {               // 0x8696, +510 i +514
   if ((!a.alive || a.hp <= 0) && !a.townResumeActive) return false;
   if (--a.hp > 0) {
     a.y -= 6;
-    fireCannon(g, a.x, ay - 6, 56 + (random32(g) & 15), true, false);
+    queueCannonStartTask(
+      g, a.x, ay - 6, 56 + (random32(g) & 15), "bird-hit-cannon");
     // 0x8696 konci pres 0xa35a az po vlastnim posunu/RNG/palbe.
     a.hitFlash = true; sfxGenericHit(g, a.x);
     return false;
@@ -3935,13 +4526,63 @@ function queueTownExplosionTask(g, x, y, z, source, sfxDelay = 0) {
   ensureTownExplosionTasks(g).push(task);
   return task;
 }
+function queueEggRootExplosionTask(g, x, y, source = "death-eggs12") {
+  const task = { x, y, z: 0, source, kind: "egg-root", started: false };
+  assignBobOrdinal(g, task);
+  ensureTownExplosionTasks(g).push(task);
+  return task;
+}
+function ensureEggRootEffects(g) {
+  if (!Array.isArray(g.eggRootEffects)) g.eggRootEffects = [];
+  return g.eggRootEffects;
+}
+function spawnEggRootPuff(g, effect) {
+  const r = random32(g);
+  const x = effect.x + ((r & 63) - 31);
+  const y = effect.y + (((r >>> 16) & 63) - 31);
+  const puff = spawnBoom(g, x, y, "small", 1);
+  puff.source = "egg-root-puff";
+  effect.puffTicks.push(g.tick | 0);
+  effect.puffOffsets.push([x - effect.x, y - effect.y]);
+  return puff;
+}
+function startEggRootExplosionTask(g, task) {
+  task.started = true;
+  const main = spawnBoom(g, task.x, task.y, "big", 0, task.bobOrdinal);
+  main.source = task.source;
+  sfxEggRootExplosion(g);                      // presne jeden RNG
+  const effect = { x: task.x, y: task.y, wait: 15, left: 2,
+                   bobOrdinal: task.bobOrdinal, main, done: false,
+                   puffTicks: [], puffOffsets: [] };
+  ensureEggRootEffects(g).push(effect);
+  spawnEggRootPuff(g, effect);                 // t=0, druhy RNG celeho tasku
+  return true;
+}
 function startTownExplosionTask(g, task) {
   if (!task || task.started) return false;
+  if (task.kind === "egg-root") return startEggRootExplosionTask(g, task);
   task.started = true;
   const boom = spawnBoom(g, task.x, task.y, "small", task.z,
                          task.bobOrdinal);
   boom.source = task.source;
   sfxBigExplosion(g, task.x, task.sfxDelay || 0);
+  return true;
+}
+function resumeEggRootEffect(g, effect) {
+  if (!effect || effect.done) return false;
+  // 0x8876 dela cekaci fieldy pres 0x62d2. Invalidace z predchoziho fieldu
+  // task ukonci; na presnem t15/t30 deadline ale puff/RNG predchazi novemu
+  // 0x62d2, takze aktualni bounds se znovu testuji az na konci fieldu.
+  const main = effect.main;
+  if (!main || main.dead || main.retireAfterField) {
+    effect.done = true;
+    return false;
+  }
+  if (--effect.wait > 0) return true;
+  spawnEggRootPuff(g, effect);
+  effect.left--;
+  if (effect.left <= 0) effect.done = true;
+  else effect.wait = 15;
   return true;
 }
 function runFreshTownExplosionTasks(g) {
@@ -3952,32 +4593,58 @@ function runFreshTownExplosionTasks(g) {
   g.townExplosionTasks = tasks.filter(t => !t.started);
 }
 /* Fresh priority100 childy vznikle behem existujicich continuations musi
-   dobehnout v jednom spolecnem creation FIFO. TOKEN 0x564c a exploze
-   0x894a proto nelze spoustet ve dvou nesouvisejicich JS smyckach. */
+   dobehnout v jednom spolecnem creation FIFO. TOKEN 0x564c, exploze
+   0x894a, EGGS shot a jeho mladsi PLOP proto nelze spoustet oddelene. */
 function runFreshTownPriorityTasks(g) {
-  const fresh = [];
-  for (const task of ensureTokenSfxTasks(g))
-    if (!task.started && !task.done)
-      fresh.push({ kind: "tokenSfx", task });
-  for (const task of ensureSmartStartTasks(g))
-    if (!task.started)
-      fresh.push({ kind: "smartStart", task });
-  for (const task of ensureTownExplosionTasks(g))
-    if (!task.started)
-      fresh.push({ kind: "explosion", task });
-  fresh.sort((a, b) => a.task.bobOrdinal - b.task.bobOrdinal);
-  for (const item of fresh) {
-    if (item.kind === "tokenSfx") {
-      item.task.started = true;
-      resumeTokenSfxTask(g, item.task);          // prvni nota v creation VBL
-    } else if (item.kind === "smartStart") {
-      startSmartPulseTask(g, item.task);
-    } else startTownExplosionTask(g, item.task);
+  // Po startu loader znovu uvidi childy, ktere tento start prave zalozil.
+  // Opakovany drain tak udela shotL,shotR a az potom PLOPL,PLOPR.
+  for (;;) {
+    const fresh = [];
+    for (const task of ensureTokenSfxTasks(g))
+      if (!task.started && !task.done)
+        fresh.push({ kind: "tokenSfx", task });
+    for (const task of ensureSmartStartTasks(g))
+      if (!task.started)
+        fresh.push({ kind: "smartStart", task });
+    for (const task of ensureTownExplosionTasks(g))
+      if (!task.started)
+        fresh.push({ kind: "explosion", task });
+    for (const task of ensureCannonStartTasks(g))
+      if (!task.started)
+        fresh.push({ kind: "cannon", task });
+    for (const task of ensureEggShotStartTasks(g))
+      if (!task.started)
+        fresh.push({ kind: "eggShot", task });
+    for (const task of ensurePlopStartTasks(g))
+      if (!task.started)
+        fresh.push({ kind: "plop", task });
+    if (!fresh.length) break;
+    fresh.sort((a, b) => a.task.bobOrdinal - b.task.bobOrdinal);
+    for (const item of fresh) {
+      if (item.kind === "tokenSfx") {
+        item.task.started = true;
+        resumeTokenSfxTask(g, item.task);        // prvni nota v creation VBL
+      } else if (item.kind === "smartStart") {
+        startSmartPulseTask(g, item.task);
+      } else if (item.kind === "cannon") {
+        startCannonTask(g, item.task);
+      } else if (item.kind === "eggShot") {
+        startEggShotTask(g, item.task);
+      } else if (item.kind === "plop") {
+        startPlopTask(g, item.task);
+      } else startTownExplosionTask(g, item.task);
+    }
   }
   compactTokenSfxTasks(g);
   g.smartStartTasks = ensureSmartStartTasks(g)
     .filter(task => !task.started);
   g.townExplosionTasks = ensureTownExplosionTasks(g)
+    .filter(task => !task.started);
+  g.cannonStartTasks = ensureCannonStartTasks(g)
+    .filter(task => !task.started);
+  g.eggShotStartTasks = ensureEggShotStartTasks(g)
+    .filter(task => !task.started);
+  g.plopStartTasks = ensurePlopStartTasks(g)
     .filter(task => !task.started);
 }
 function boomLife(bm) {
@@ -4134,6 +4801,10 @@ function decayTrainVelocity(h) {
    v creation VBL udelat prvni pohyb/animaci/cull a publikovat BOB/node.
    Bit4 compensation se na takovy fresh child poprve pouzije az v N+1. */
 function advanceTownHazardField(g, h) {
+  if (h.kind === "eggpart") {
+    stepEggPart(g, h);
+    return;
+  }
   if (!h.alive) return;
   const freshField = !!h.animFresh;
   if (h.kind === "minecore" && h.consumed > 0) {
@@ -4239,7 +4910,8 @@ function stepTankTurret(g, s) {
     } else finishTankTurn(g, s, s.turretPurpose);
   } else if (s.turretPhase === "prefire") {
     if (--s.turretWait <= 0) {
-      fireCannon(g, s.x, s.y - g.scroll, s.tang, true, false);
+      queueCannonStartTask(
+        g, s.x, s.y - g.scroll, s.tang, "tank-turret-cannon");
       s.turretPhase = "postfire"; s.turretWait = 8;
     }
   } else if (s.turretPhase === "postfire" && --s.turretWait <= 0) {
@@ -4252,6 +4924,115 @@ function initMill(g, s) {                      // 0x79d4 po a2c6
   s.rotorTick = 0; s.rotorFresh = true;
   // Bez 0x8822: cost muze docasne prekrocit 160, stejne jako BIRD.
   g.activeCost = (g.activeCost || 0) + s.cost; s.budgeted = true;
+}
+
+/* DESERT TILT 0x7de8. Vsechny pohybove LONGy zustavaji signed 16.16:
+   po 112 ingress fieldech -47..64 se okamzite prepne do flight smycky,
+   ktera integruje v+=a, p+=v a pri hranach pousti aimed cannon+PLOP. */
+const TILT_HALF_EXTENTS = [
+  [14, 19], [11, 21], [9, 23], [6, 21],
+  [8, 21], [10, 29], [13, 21],
+];
+function setTiltFrame(s, frame) {
+  s.fr = frame;
+  const extents = TILT_HALF_EXTENTS[frame] || TILT_HALF_EXTENTS[3];
+  s.colHalfX = extents[0]; s.colHalfY = extents[1];
+}
+function attachTiltAnim(s, frames) {
+  s.tiltAnim = { frames, pos: 0, at: 0, fresh: true, done: false };
+}
+function advanceTiltAnim(s) {
+  const a = s.tiltAnim;
+  if (!a || a.done) return;
+  if (a.fresh) {
+    a.fresh = false;
+    setTiltFrame(s, a.frames[0]);
+    return;
+  }
+  if (++a.at < 6) return;
+  a.at = 0;
+  if (++a.pos >= a.frames.length) {
+    a.pos = a.frames.length - 1; a.done = true;
+  } else setTiltFrame(s, a.frames[a.pos]);
+}
+function advanceTiltRotor(s) {
+  if (s.rotorFresh) s.rotorFresh = false;
+  else s.rotorTick = (s.rotorTick + 1) & 7;
+}
+function tiltRawMotion(s) {
+  return { xRaw: s.xRaw | 0, yRaw: s.yRaw | 0,
+           vxRaw: s.vxRaw | 0, vyRaw: s.vyRaw | 0,
+           axRaw: s.axRaw | 0, ayRaw: s.ayRaw | 0 };
+}
+function fireTiltAimed(g, s, source) {
+  const motion = tiltRawMotion(s);
+  return fireCannonAimed(
+    g, s.x, worldScreenPositionWord(s.y, g.scroll),
+    s.vxRaw / 65536, s.vyRaw / 65536, motion, source);
+}
+function initTilt(g, s) {
+  s.cost = 12; s.hp = 2; s.scoreValue = 40;
+  s.collisionClass = 0x22; s.scrollLocked = true;
+  s.xRaw = (Math.trunc(s.x * 65536)) | 0;
+  s.yRaw = (Math.trunc(s.y * 65536)) | 0;
+  s.vxRaw = 0; s.vyRaw = 0x10000;
+  s.axRaw = 0; s.ayRaw = 0;
+  s.x = s.xRaw / 65536; s.y = s.yRaw / 65536;
+  s.z = 32; s.tiltPhase = "ingress"; s.tiltFacingLeft = false;
+  s.tiltAnim = null; s.rotorTick = 0; s.rotorFresh = true;
+  setTiltFrame(s, 3);
+  accountCost(g, s);                           // prime a2c6, bez 0x8822
+}
+function beginTiltFlight(g, s) {
+  s.vyRaw = 0; s.ayRaw = 0x0800;
+  s.vxRaw = 0x00040000; s.axRaw = 0;
+  s.tiltFacingLeft = positionWord(s.x) >= 160;
+  if (s.tiltFacingLeft) {
+    s.vxRaw = -s.vxRaw;
+    attachTiltAnim(s, [4, 5, 6]);              // 0x7e56
+  } else attachTiltAnim(s, [2, 1, 0]);         // 0x7e38
+  fireTiltAimed(g, s, "tilt-initial-cannon"); // pred prvnim flight fieldem
+  s.tiltPhase = "flight";
+}
+function stepTilt(g, s) {
+  if (s.tiltPhase === "ingress" &&
+      worldScreenPositionWord(s.y, g.scroll) >= 64)
+    beginTiltFlight(g, s);
+
+  if (s.tiltPhase === "flight") {
+    s.axRaw = 0;
+    const xWord = positionWord(s.x);
+    if (xWord > 256) {
+      s.axRaw = -0x3000;
+      if (!s.tiltFacingLeft) {
+        s.tiltFacingLeft = true;
+        attachTiltAnim(s, [1, 2, 3, 4, 5, 6]); // 0x7e8e
+        fireTiltAimed(g, s, "tilt-right-turn-cannon");
+      }
+    } else if (xWord < 64) {
+      s.axRaw = 0x3000;
+      if (s.tiltFacingLeft) {
+        s.tiltFacingLeft = false;
+        attachTiltAnim(s, [5, 4, 3, 2, 1, 0]); // 0x7eba
+        fireTiltAimed(g, s, "tilt-left-turn-cannon");
+      }
+    }
+    s.vxRaw = (s.vxRaw + s.axRaw) | 0;
+    s.vyRaw = (s.vyRaw + s.ayRaw) | 0;
+    s.xRaw = (s.xRaw + s.vxRaw) | 0;
+    s.yRaw = (s.yRaw + s.vyRaw) | 0;
+    advanceTiltAnim(s);
+  } else {
+    s.vxRaw = (s.vxRaw + s.axRaw) | 0;
+    s.vyRaw = (s.vyRaw + s.ayRaw) | 0;
+    s.xRaw = (s.xRaw + s.vxRaw) | 0;
+    s.yRaw = (s.yRaw + s.vyRaw) | 0;
+  }
+  s.x = s.xRaw / 65536; s.y = s.yRaw / 65536;
+  advanceTiltRotor(s);
+  if (outsideCullMargin(
+        s.x, worldScreenPositionWord(s.y, g.scroll), -64))
+    s.retireAfterField = true;
 }
 function detonateMine(g, s, credited) {
   if (!s.alive && !s.townResumeActive) return;
@@ -4279,9 +5060,13 @@ function detonateProx(g, s) {
    cleanup. Custom MINE/PROX callbacks se nevolaji, tedy zadny core/strepy. */
 function pulseKillSpawn(g, s, credited) {
   if (!s.born || (!s.alive && !s.townResumeActive) || s.beh === "boss") return;
+  if (s.beh === "eggs12") {
+    killEggRoot(g, s, credited);
+    return;
+  }
   releaseSpawnTask(g, s);
   if (credited) awardScore(g, s.scoreValue ?? 100);
-  queueTownExplosionTask(g, s.x, s.y, s.beh === "mill" ? 33 : 1,
+  queueTownExplosionTask(g, s.x, s.y, spawnExplosionDepth(s),
                          "death-" + s.beh);
   if (["mine", "tank", "popup", "flame", "proxmine"].includes(s.beh))
     addDecal(g, s.beh === "mine" ? "MINE.LIN" : "EXPL1.LIN",
@@ -4307,6 +5092,10 @@ function pulseKillEnemyShot(g, sh, credited) {
     if (credited) awardScore(g, 7);
     queueTownExplosionTask(g, sh.x, sh.y + g.scroll, 33,
                            "death-homing");
+  } else if (sh.kind === "egg") {
+    // HP0 class6 presto dostane default +534=a36a: bez bodu, ale se
+    // standardnim 894a zvukem (2 RNG) a small EXPL1 v z+1 = 2.
+    queueTownExplosionTask(g, sh.x, sh.y, 2, "death-egg-shot");
   }
   releaseEnemyShot(g, sh);                    // cannon konci bez exploze
 }
@@ -4480,6 +5269,11 @@ function townCollisionResumeTasks(g) {
   for (const s of g.spawns || []) if (s.born && s.alive) add("spawn", s);
   for (const k of g.tokens || []) if (!k.dead) add("token", k);
   for (const pl of g.plops || []) if (!pl.dead) add("plop", pl);
+  // Custom 0x8876 root explosion zustava puvodnim priority100 taskem.
+  // Jeho wait15 continuations proto musi bezet v creation poradi, aby
+  // t15/t30 RNG a child exploze nepredbehly mladsi tasky.
+  for (const effect of ensureEggRootEffects(g))
+    if (!effect.done) add("eggRootEffect", effect);
   // 0x564c po wait5 znovu vstupuje jako puvodni priority100 task. Wait
   // odecteme jednou za VBL, ale splatnou notu provedeme az na jejim miste
   // podle creation ordinalu mezi ostatnimi continuations.
@@ -4554,7 +5348,11 @@ function dispatchTownContactEvent(g, task) {
     if (o.kind === "hom") {
       releaseEnemyShot(g, o); awardScore(g, 7);
       queueTownExplosionTask(g, o.x, o.y + g.scroll, 33, "death-homing");
-    } else releaseEnemyShot(g, o);              // default +514=0x6db4
+    } else if (o.kind !== "egg") {
+      releaseEnemyShot(g, o);                  // cannon +514=0x6db4
+    }
+    // EGGS class6 ma HP0 a vsechny contact callbacky jsou 0x6288 no-op:
+    // HELI zemre pres vlastni event, projectile ale pokracuje.
   } else if (kind === "air") {
     if (!o.alive) return;
     if (o.kind === "bird") damageBirdEvent(g, o);
@@ -4562,7 +5360,9 @@ function dispatchTownContactEvent(g, task) {
   } else if (kind === "spawn") {
     if (!o.alive) return;
     if (o.beh === "boss") damageBoss(g, o);
-    else if (o.beh === "mill") damageSpawn(g, o);
+    else if (o.beh === "mill" || o.beh === "tilt" ||
+             o.beh === "airmine" ||
+             o.beh === "eggs2") damageSpawn(g, o);
   } else if (kind === "hazard") {
     if (!o.alive) return;
     if (o.kind === "minecore" && !o.consumed) pickupMineCore(g, o);
@@ -4572,6 +5372,18 @@ function dispatchTownContactEvent(g, task) {
 
 function resumeTownObjectHousekeeping(g, task) {
   const o = task.o;
+  if (task.kind === "eggRootEffect") {
+    resumeEggRootEffect(g, o);
+    return;
+  }
+  // PLOP animator po jedinem publikovanem BULLET#2 skonci na vlastnim
+  // N+1 priority100 resume. Cost1 se proto musi uvolnit zde, jeste pred
+  // mladsi taskovou continuation/guardem, ne v pozdejsim skupinovem passu.
+  // Margin-0 invalidace zustava na type-specific retire ceste nize.
+  if (task.kind === "plop" && !o.retireAfterField) {
+    releaseCost(g, o); o.dead = true;
+    return;
+  }
   if (task.kind === "tokenSfx") {
     resumeTokenSfxTask(g, o);
     return;
@@ -4606,8 +5418,13 @@ function resumeTownObjectHousekeeping(g, task) {
   // 0x6452 maze predchozi jednopolickovy hit flag jeste pred orphan/smart.
   if (task.kind === "spawn" && o.beh === "boss") o.hitSpread = false;
   else if ("hitFlash" in o) o.hitFlash = false;
-  // 0x6458 orphan callback je pro podporovane TOWN skupiny obslouzen jejich
-  // vlastnim state machine. 0x6468 smart musi predchazet 0x64b6 eventum.
+  // 0x6458 orphan predchazi SMART i cele 0x64b6 masce. Generation kill
+  // uvnitr a36a callback chain nezastavi: stejne attribution bity proto
+  // mohou ohodnotit orphan, SMART i nasledny lethal bit0 kazdy zvlast.
+  if (task.kind === "hazard" && o.kind === "eggpart" &&
+      o.alive && (!o.parent || !o.parent.alive))
+    killEggPartOrphan(g, o, credited);
+  // 0x6468 smart musi predchazet 0x64b6 eventum.
   smartResumeTownTask(g, task, credited);
   if (mask & TOWN_EVENT_PLAYER_SHOT) dispatchTownShotEvent(g, task);
   if (mask & TOWN_EVENT_PLAYER_CONTACT) dispatchTownContactEvent(g, task);
@@ -4625,9 +5442,14 @@ function resumeTownObjectHousekeeping(g, task) {
    nedostane. Cannon/HOMING drzi v JS screen-space projekci vlastni cestou. */
 function compensateTownTaskScrollOnResume(task, scrollDelta) {
   const { kind, o } = task;
-  if (kind === "air" || kind === "token") o.y += scrollDelta;
-  else if ((kind === "hazard" || kind === "spawn") && o.scrollLocked)
-    o.y += scrollDelta;
+  const locked = (kind === "air" && o.scrollLocked !== false) ||
+    kind === "token" ||
+    ((kind === "hazard" || kind === "spawn") && o.scrollLocked);
+  if (!locked) return;
+  if (Number.isInteger(o.yRaw)) {
+    o.yRaw = (o.yRaw + Math.trunc(scrollDelta * 65536)) | 0;
+    o.y = o.yRaw / 65536;
+  } else o.y += scrollDelta;
 }
 
 /* 0x6480 nevola destructor uprostred publikovaneho fieldu. Nastavi
@@ -4652,6 +5474,9 @@ function retireTownTaskAfterField(g, task) {
   } else if (kind === "spawn" && o.beh === "boss") {
     // 0xc930 -> 0x62cc/0x6480: pouze unikajici GOOSE pouziva bounds.
     beginBossRetirement(g, o);
+  } else if (kind === "spawn" && o.beh === "eggs12") {
+    // Bezny bounds cull rootu je tichy, pouze odpoji child tasky.
+    unlinkEggParts(o); o.alive = false; releaseCost(g, o);
   } else if (kind === "spawn") {
     o.alive = false; releaseCost(g, o);
   }
@@ -4667,6 +5492,9 @@ function resumePlayerCollision(g) {
 }
 
 /* ---- start urovne ---- */
+function mapObjectArmedAtStart(lv, screenY) {
+  return lv > 0 || screenY < -32;
+}
 function startGame(lv) {
   stopAttract();
   $("#titlewrap").style.display = "none";
@@ -4678,7 +5506,8 @@ function startGame(lv) {
   const { fid, dico } = levelInfo(state.prog, lv);
   const pam = unpackFile(state.adf, state.files.find(f => f.name === state.order[fid]));
   const parsed = parsePam(pam, dico);
-  if (lv === 0) applyTownObjectPalette(parsed.checks);
+  if (levelUsesTownObjectPalette(lv))
+    applyTownObjectPalette(parsed.checks);
   // paleta pro sprity: prvni kompletni checkpoint
   const rgb = v => [((v >> 8) & 15) * 17, ((v >> 4) & 15) * 17, (v & 15) * 17];
   state.copperChecks = parsed.checks;
@@ -4729,6 +5558,8 @@ function startGame(lv) {
     // Hracsky struct fp@(11176): +98 prodleva, +100 sila (0x6fde: start 2),
     // +102 citac pickupu, +104 rezim, +106 stit, +108 ochrana (0x9424: 200).
     player: { x: 160, y: 192, ang: 192, alive: true, inv: 200,
+              // JEEPHELI.LIN primary frames 0..4: loader half-extenty 10x19.
+              colHalfX: 10, colHalfY: 19,
               bubbleTimer: 0, bubbleFrame: 9, bubbleZ: 0, bubblePhase: 0,
               bubbleBound: null,
               bank: 0, cool: 0,
@@ -4749,7 +5580,9 @@ function startGame(lv) {
     continues: 2, playerPhase: "active", playerPhaseT: 0,
     joinClosed: false,
     jeepLives: 1, jeepScore: 0, jeepTokenCount: 0,
-    townColor07Enabled: lv === 0,
+    // Level init 0x1d48 nastavuje globalni COLOR07 writer pro vsechny mapy.
+    // Pozdejsi objektove rutiny jej mohou docasne vypnout/zapnout.
+    townColor07Enabled: true,
     // AMPROG stav zacina v BSS; skutecny hardware jej pred kazdym během
     // scheduleru meni VHPOSR. Bez zachyceneho beam trace pouzivame nulu,
     // takze gameplay je deterministicky a samotny 0x883c zustava bitove presny.
@@ -4768,6 +5601,8 @@ function startGame(lv) {
     smartPulseTaskOrdinals: [],
     tokenSfxTasks: [],
     townExplosionTasks: [],
+    cannonStartTasks: [],
+    eggShotStartTasks: [], plopStartTasks: [], eggRootEffects: [],
     tokensPickedUp: 0,
   };
   g.player.bobOrdinal = 0;                    // player task existuje pred spawnery
@@ -4775,7 +5610,12 @@ function startGame(lv) {
   g.player.x = startPos.x; g.player.y = startPos.y;
   g.player.weaponX = startPos.x; g.player.weaponY = startPos.y;
   applyWeaponTable(g.player);                 // 0x70c8: start = power2/reload11
-  for (const s of g.spawns) s.armed = (s.y - g.scroll) < -32;
+  // TOWN je skutecny cold start a zaznamy uvnitr uvodniho okna uz mapovy
+  // reader minul. Pozdejsi levely jsou nativne plynule prednactene z
+  // predchozi PAM; samostatny level picker proto musi jejich uvodni okno
+  // povazovat za armed, jinak DESERT zahodi prvni GOOSE a deset dalsich.
+  for (const s of g.spawns)
+    s.armed = mapObjectArmedAtStart(lv, s.y - g.scroll);
   if (state.titleMod) { state.titleMod.stop(); state.titleMod = null; }
   $("#levelpick").style.display = "none";
   $("#gamewrap").style.display = "";
@@ -4792,7 +5632,7 @@ document.getElementById("livesbox").onchange = e => {
     g.over = false; g.player.alive = true; g.player.inv = 200;
     g.player.x = 160; g.player.y = 192; g.player.respawnT = 0;
     g.playerPhase = "active"; g.playerPhaseT = 0; g.joinClosed = false;
-    g.townColor07Enabled = g.lv === 0; g.fadeBlack = 0; g.fadeDir = 0;
+    g.townColor07Enabled = true; g.fadeBlack = 0; g.fadeDir = 0;
     resetPlayerHeliAnim(g.player);
   }
 };
@@ -4829,6 +5669,7 @@ function step(g) {
   const p = g.player;
   ensureSmartPulseTasks(g);
   const collisionResumeTasks = townCollisionResumeTasks(g);
+  const continuedSpawnsThisField = new Set();
   // Strely, ktere uz cekaly na resume na zacatku scheduler passu. Child
   // zalozeny pozdeji collision callbackem dostane prvni 0x62d2 uvnitr
   // fireCannon/fireHoming a nesmi pak projit timto continuation loopem znovu.
@@ -4937,14 +5778,28 @@ function step(g) {
     resumeTownObjectHousekeeping(g, task);
     // Callbacky z fieldu N jsou zamerne drive nez invalidacni cleanup.
     // Flagged task uz ale nesmi provest continuation/motion fieldu N+1.
-    retireTownTaskAfterField(g, task);
+    const retired = retireTownTaskAfterField(g, task);
+    if (!retired && task.kind === "spawn" && task.o.alive) {
+      // Native task po vlastnim 0x643a/0x64b6 housekeepingu okamzite
+      // pokracuje svou korutinou. Pro RNG-sensitive EGGS launch a TILT
+      // (ktery navic queueuje 95D2) nesmi mladsi callback vstoupit mezi.
+      if (task.o.beh === "tilt") {
+        stepTilt(g, task.o); continuedSpawnsThisField.add(task.o);
+      } else if (task.o.beh === "eggs2" &&
+                 task.o.egg2Phase === "launch") {
+        stepEgg2(g, task.o); continuedSpawnsThisField.add(task.o);
+      }
+    }
   }
   compactTokenSfxTasks(g);
   compactSmartPulseTasks(g);
+  g.eggRootEffects = ensureEggRootEffects(g)
+    .filter(effect => !effect.done);
   stepRetiredBossParts(g, scrollDelta);
   g.shots = (g.shots || []).filter(s => !s.dead);
   g.air = (g.air || []).filter(a => !a.dead && (a.pending || a.alive));
-  g.hazards = (g.hazards || []).filter(h => !h.dead && h.alive);
+  g.hazards = (g.hazards || []).filter(
+    h => !h.dead && (h.pending || h.alive));
   g.tokens = (g.tokens || []).filter(k => !k.dead);
   g.plops = (g.plops || []).filter(pl => !pl.dead);
 
@@ -4954,6 +5809,8 @@ function step(g) {
     if (s.kind === "can") {
       const cameraDelta = s.bornTick === g.tick ? 0 : scrollDelta;
       advanceCannonShot(g, s, cameraDelta, false);
+    } else if (s.kind === "egg") {
+      advanceEggShot(g, s);
     } else {
       // 0x72ee drzi pointer na player slot; po smrti se miri na posledni
       // znamou pozici, neprepina se na primy let kvuli alive flagu.
@@ -5003,6 +5860,8 @@ function step(g) {
       }
       const v = angVel(a.ang, a.spd);
       a.x += v.vx; a.y += v.vy;
+    } else if (a.kind === "blackjet") {         // BLACKJET 0x7a98
+      stepBlackJetMotion(a);
     } else {                                    // BIRD 0x862e
       a.x += a.vx; a.y += a.vy;
     }
@@ -5010,7 +5869,8 @@ function step(g) {
   }
   for (const a of g.air) {
     if (!a.alive) continue;
-    const sy = a.y - g.scroll;
+    // 0x6486 take odcita jednotlive high WORDy, ne floatove 16.16 longy.
+    const sy = worldScreenPositionWord(a.y, g.scroll);
     // FODDERA 0x80c8 / YELLOW 0x8716 / BIRD 0x868a -> 0x6480:
     // posledni BOB+node zustane ve fieldu N, release prijde az v N+1.
     if (outsideCullMargin(a.x, sy, -64)) a.retireAfterField = true;
@@ -5026,11 +5886,12 @@ function step(g) {
     // +367 bit4 compensation existujiciho tasku uz probehla v resume loopu.
     advanceTownHazardField(g, h);
   }
-  g.hazards = g.hazards.filter(h => !h.dead && h.alive);
+  g.hazards = g.hazards.filter(h => !h.dead && (h.pending || h.alive));
 
   // mapove objekty -> prelozene korutiny (dispatch 0x7462)
   for (const s of g.spawns) {
-    const esy = s.y - g.scroll;
+    const esy = (s.beh === "eggs12" || s.beh === "eggs2")
+      ? worldScreenPositionWord(s.y, g.scroll) : s.y - g.scroll;
     if (!s.taskStarted && s.armed && esy >= -256)
       startMapObjectTask(g, s);                 // map-reader prefetch
     // radek "vystrelil" trigger jen pri prekroceni vstupniho marginu
@@ -5042,10 +5903,11 @@ function step(g) {
       if (s.taskStarted) {
         let margin = -32;
         if (s.beh === "wave" || s.beh === "yellow" || s.beh === "bird" ||
-            s.beh === "mill")
+            s.beh === "airmine" || s.beh === "mill" || s.beh === "tilt")
           margin = -48;
         else if (s.beh === "mine" || s.beh === "camogun" ||
-                 s.beh === "tank" || s.beh === "roto") margin = -16;
+                 s.beh === "tank" || s.beh === "roto" ||
+                 s.beh === "eggs2") margin = -16;
         else if (s.beh === "flame") margin = 128;
         else if (s.beh === "train") margin = 100;
         else if (s.beh === "boss") margin = 0;   // 0xc7ae: a2c6 d2 = 0
@@ -5079,6 +5941,15 @@ function step(g) {
         // 0x862e: ctyri clenove P+(32,-4)*i, kazdy vlastni a2c6 -48.
         spawnBirdFormation(g, s);
         s.alive = false;
+      } else if (s.beh === "airmine") {
+        // 0x75a8: jedna world-space mina; z=32, HP3, score20, cost7.
+        initAirMine(g, s);
+      } else if (s.beh === "eggs12") {
+        // 0xa8e4 root: staticky EGGS#12 overlay nad baked EGGS#8 mapou.
+        initEggRoot(g, s);
+      } else if (s.beh === "eggs2") {
+        // 0x8478: pozemni kapsle, otevreni od y128, vzlet a death ring.
+        initEgg2(g, s);
       } else if (s.beh === "mine") {
         // 0x9b16: staticka rotujici mina, one-hit/contact detonation.
         s.cost = 7; s.hp = 10; s.scoreValue = 25;
@@ -5104,6 +5975,9 @@ function step(g) {
       } else if (s.beh === "mill") {
         // 0x79d4: pomaly letici osm smeru strilejici objekt.
         initMill(g, s);
+      } else if (s.beh === "tilt") {
+        // 0x7de8: rotorovy letoun, 112field ingress a hranove otocky.
+        initTilt(g, s);
       } else if (s.beh === "popup") {
         // a2c6(POPUP#0,0x24,random 64..127,HP3,score70,cost14).
         // Po navratu se opening pripoji ihned a soubezne zacne wait50.
@@ -5178,9 +6052,17 @@ function step(g) {
       }
     }
     if (!s.born || !s.alive) continue;
-    s.sy = s.y - g.scroll;
+    if (continuedSpawnsThisField.has(s)) continue;
+    s.sy = (s.beh === "eggs12" || s.beh === "eggs2")
+      ? worldScreenPositionWord(s.y, g.scroll) : s.y - g.scroll;
 
-    if (s.beh === "mine") {
+    if (s.beh === "airmine") {
+      stepAirMine(s);
+    } else if (s.beh === "tilt") {
+      stepTilt(g, s);
+    } else if (s.beh === "eggs2") {
+      stepEgg2(g, s);
+    } else if (s.beh === "mine") {
       if (++s.at >= 2) {                        // 0x9b44: 0..7 / 2 t
         s.at = 0; s.fr = (s.fr + 1) & 7;
       }
@@ -5214,7 +6096,8 @@ function step(g) {
         random32(g);                            // testuje se high word seedu
         const base = (g.rngState & 0x00100000) ? 16 : 0;
         for (let k = 0; k < 8; k++)
-          fireCannon(g, s.x, shotSy, (base + 32 * k) & 255, true, false);
+          queueCannonStartTask(
+            g, s.x, shotSy, (base + 32 * k) & 255, "mill-ring-cannon");
       }
     } else if (s.beh === "train") {
       s.x += s.vx;
@@ -5388,7 +6271,8 @@ function step(g) {
       if (--s.t <= 0) {                         // wait bezi i mimo viewport
         const base = s.salvoAngle & 255;        // RNG z pocatku tohoto cyklu
         for (let k = 0; k < 4; k++)
-          fireCannon(g, s.x, s.sy, (base + k * 64) & 255, true, false);
+          queueCannonStartTask(
+            g, s.x, s.sy, (base + k * 64) & 255, "roto-ring-cannon");
         const r = random32(g);                  // jediny RNG pro dalsi cyklus
         s.salvoAngle = r & 255; s.t = 200 + (r & 127);
       }
@@ -5397,9 +6281,11 @@ function step(g) {
     }
     // 0x6480: bezny +364=-64, pouze FLAME parent jej meni na -8.
     // TRAIN ma +538 vypnute a MILL/GOOSE culluji ve svych vetvich.
-    if (s.alive && !["train", "mill", "boss"].includes(s.beh)) {
+    if (s.alive && !["train", "mill", "tilt", "boss"].includes(s.beh)) {
       const cullMargin = s.beh === "flame" ? -8 : -64;
-      if (outsideCullMargin(s.x, s.y - g.scroll, cullMargin))
+      const cullY = (s.beh === "eggs12" || s.beh === "eggs2")
+        ? worldScreenPositionWord(s.y, g.scroll) : s.y - g.scroll;
+      if (outsideCullMargin(s.x, cullY, cullMargin))
         s.retireAfterField = true;
     }
   }
@@ -5420,7 +6306,7 @@ function step(g) {
     advancedHazardsThisField.add(h);
     advanceTownHazardField(g, h);
   }
-  g.hazards = g.hazards.filter(h => !h.dead && h.alive);
+  g.hazards = g.hazards.filter(h => !h.dead && (h.pending || h.alive));
 
   stepTokens(g, scrollDelta);
   // animace dosud neprelozenych objektu podle vytezenych skriptu
@@ -5458,10 +6344,14 @@ function step(g) {
      prekryvajicich se targetu; nesmime jej odstranit po prvnim z nich. */
   const collisionBullets = g.bullets.filter(b => !b.dead);
   const consumedBullets = new Set();
-  function collectBulletEvent(x, y) {
+  function collectBulletEvent(x, y, target) {
     let event = false;
+    const halfX = Number.isFinite(target && target.colHalfX)
+      ? target.colHalfX : 8;
+    const halfY = Number.isFinite(target && target.colHalfY)
+      ? target.colHalfY : 8;
     for (const b of collisionBullets) {
-      if (!projectileNodeHit(b.x, b.y, x, y)) continue;
+      if (!projectileNodeHit(b.x, b.y, x, y, halfX, halfY)) continue;
       consumedBullets.add(b); event = true;
     }
     return event;
@@ -5473,24 +6363,28 @@ function step(g) {
     const ky = k.y - g.scroll;
     // Burst vypina callback bit v +508, ne class32 node ani pending +506:
     // event word se zapise a bolt zanikne, ale 0x64b6 callback neprovede.
-    if (collectBulletEvent(k.x, ky)) tokenShotEvents.add(k);
-    if (p.alive && k.interactive && collisionNodeHit(p.x, p.y, k.x, ky))
+    if (collectBulletEvent(k.x, ky, k)) tokenShotEvents.add(k);
+    if (p.alive && k.interactive && collisionNodeHit(
+          p.x, p.y, k.x, ky,
+          k.colHalfX ?? 8, k.colHalfY ?? 8,
+          p.colHalfX ?? 8, p.colHalfY ?? 8))
       tokenPickupEvents.add(k);
   }
 
-  const spawnShotEvents = new Set(), bossShotEvents = new Set();
+  const spawnShotEvents = new Set(), spawnShotCredit = new Set();
+  const bossShotEvents = new Set();
   for (const s of g.spawns) {
     if (!s.born || s.beh === "unimplemented" ||
         s.beh === "missing-dispatch") continue;
     if (s.beh === "boss") {
       const sy = s.y - g.scroll;
-      if (s.alive && s.hp > 0 && collectBulletEvent(s.x, sy))
+      if (s.alive && s.hp > 0 && collectBulletEvent(s.x, sy, s))
         bossShotEvents.add(s);
       // HP0 deti nemaji damage callback, class34 ale spotrebuje bullet.
       for (const q of s.parts || []) {
         if (!q.entered || q.alive === false) continue;
         const qp = bossPartPosition(s, q, g.scroll);
-        collectBulletEvent(qp.x, qp.y);
+        collectBulletEvent(qp.x, qp.y, q);
       }
       continue;
     }
@@ -5499,15 +6393,24 @@ function step(g) {
     // jeste nevydal prvni 0x62d2 BOB/collision node. Skryty parent proto
     // nesmi na sve budouci world pozici pohltit player bolt.
     if (s.beh === "tank" && !s.tankSetup) continue;
-    const sy = s.y - g.scroll;
-    if (s.hp > 0 && collectBulletEvent(s.x, sy)) {
+    const sy = (s.beh === "eggs12" || s.beh === "eggs2")
+      ? worldScreenPositionWord(s.y, g.scroll) : s.y - g.scroll;
+    if (s.beh === "eggs2") {
+      // Zavrena/rising class20 kapsle stale koliduje s boltem a spotrebuje
+      // jej, bit0 callback je ale povolen az po vyzbrojeni na z=32. Cely
+      // event word stale nese player attribution pro drivejsi SMART A36A.
+      if (collectBulletEvent(s.x, sy, s)) {
+        spawnShotCredit.add(s);
+        if (s.egg2Armed && s.hp > 0) spawnShotEvents.add(s);
+      }
+    } else if (s.hp > 0 && collectBulletEvent(s.x, sy, s)) {
       spawnShotEvents.add(s);
     }
   }
 
   const airShotEvents = new Set();
   for (const a of g.air)
-    if (a.alive && collectBulletEvent(a.x, a.y - g.scroll))
+    if (a.alive && collectBulletEvent(a.x, a.y - g.scroll, a))
       airShotEvents.add(a);
 
   const hazardShotEvents = new Set();
@@ -5516,13 +6419,15 @@ function step(g) {
     // Consumed core a FLAME emitter stale maji shootable node, ale callback ne.
     const blocks = h.hp > 0 || h.kind === "flameEmitter" ||
                    (h.kind === "minecore" && h.consumed);
-    if (!blocks || !collectBulletEvent(h.x, h.y - g.scroll)) continue;
+    const hy = h.kind === "eggpart"
+      ? worldScreenPositionWord(h.y, g.scroll) : h.y - g.scroll;
+    if (!blocks || !collectBulletEvent(h.x, hy, h)) continue;
     if (h.hp > 0 && !h.consumed) hazardShotEvents.add(h);
   }
 
   const homingShotEvents = new Set();
   for (const sh of g.shots)
-    if (!sh.dead && sh.kind === "hom" && collectBulletEvent(sh.x, sh.y))
+    if (!sh.dead && sh.kind === "hom" && collectBulletEvent(sh.x, sh.y, sh))
       homingShotEvents.add(sh);
 
   // Player eventy se berou ze stejneho pred-callback snapshotu. Target,
@@ -5530,20 +6435,29 @@ function step(g) {
   // 0x9306 je navazan jen na tridy s bitem1 (34/38/6: letci, MILL,
   // GOOSE, PROXMINE strepy a strely); pozemni tridy 36/32 nejsou lethal.
   const contactShots = [], contactAir = new Set(), contactBoss = new Set();
-  const contactMill = new Set(), contactFrag = new Set(), contactCore = new Set();
+  const contactFlyingSpawn = new Set();
+  const contactFrag = new Set(), contactCore = new Set();
   const playerAttribution = new Set();
   let lethalContact = false;
   if (p.alive) {
     for (const sh of g.shots) {
+      const shy = (sh.kind === "egg" || sh.worldSpace)
+        ? worldScreenPositionWord(sh.y, g.scroll) : sh.y;
       const overlaps = sh.kind === "can"
-        ? projectileNodeHit(sh.x, sh.y, p.x, p.y)
-        : collisionNodeHit(p.x, p.y, sh.x, sh.y);
+        ? projectileNodeHit(sh.x, shy, p.x, p.y,
+                            p.colHalfX ?? 8, p.colHalfY ?? 8)
+        : collisionNodeHit(p.x, p.y, sh.x, shy,
+                           sh.colHalfX ?? 8, sh.colHalfY ?? 8,
+                           p.colHalfX ?? 8, p.colHalfY ?? 8);
       if (!sh.dead && overlaps) {
         contactShots.push(sh); playerAttribution.add(sh); lethalContact = true;
       }
     }
     for (const a of g.air) {
-      if (a.alive && collisionNodeHit(p.x, p.y, a.x, a.y - g.scroll)) {
+      if (a.alive && collisionNodeHit(
+            p.x, p.y, a.x, a.y - g.scroll,
+            a.colHalfX ?? 8, a.colHalfY ?? 8,
+            p.colHalfX ?? 8, p.colHalfY ?? 8)) {
         contactAir.add(a); playerAttribution.add(a); lethalContact = true;
       }
     }
@@ -5551,27 +6465,45 @@ function step(g) {
       if (!s.born) continue;
       if (s.beh === "boss") {
         const sy = s.y - g.scroll;
-        if (s.alive && s.hp > 0 && collisionNodeHit(p.x, p.y, s.x, sy)) {
+        if (s.alive && s.hp > 0 && collisionNodeHit(
+              p.x, p.y, s.x, sy,
+              s.colHalfX ?? 8, s.colHalfY ?? 8,
+              p.colHalfX ?? 8, p.colHalfY ?? 8)) {
           contactBoss.add(s); lethalContact = true;
         }
         for (const q of s.parts || []) {
           if (!q.entered || q.alive === false) continue;
           const qp = bossPartPosition(s, q, g.scroll);
-          if (collisionNodeHit(p.x, p.y, qp.x, qp.y)) lethalContact = true;
+          if (collisionNodeHit(
+                p.x, p.y, qp.x, qp.y,
+                q.colHalfX ?? 8, q.colHalfY ?? 8,
+                p.colHalfX ?? 8, p.colHalfY ?? 8)) lethalContact = true;
         }
         continue;
       }
       if (!s.alive) continue;
       if (s.beh === "tank" && !s.tankSetup) continue;
-      const overlap = collisionNodeHit(p.x, p.y, s.x, s.y - g.scroll);
+      const spawnY = (s.beh === "eggs12" || s.beh === "eggs2")
+        ? worldScreenPositionWord(s.y, g.scroll) : s.y - g.scroll;
+      const overlap = collisionNodeHit(
+        p.x, p.y, s.x, spawnY,
+        s.colHalfX ?? 8, s.colHalfY ?? 8,
+        p.colHalfX ?? 8, p.colHalfY ?? 8);
       if (overlap) playerAttribution.add(s);
-      if (s.beh === "mill" && overlap) {
-        contactMill.add(s); lethalContact = true;
+      if ((s.beh === "mill" || s.beh === "tilt" ||
+           s.beh === "airmine" ||
+           (s.beh === "eggs2" && s.egg2Armed)) && overlap) {
+        contactFlyingSpawn.add(s); lethalContact = true;
       }
     }
     for (const h of g.hazards) {
       if (!h.alive) continue;
-      const overlap = collisionNodeHit(p.x, p.y, h.x, h.y - g.scroll);
+      const hazardY = h.kind === "eggpart"
+        ? worldScreenPositionWord(h.y, g.scroll) : h.y - g.scroll;
+      const overlap = collisionNodeHit(
+        p.x, p.y, h.x, hazardY,
+        h.colHalfX ?? 8, h.colHalfY ?? 8,
+        p.colHalfX ?? 8, p.colHalfY ?? 8);
       if (overlap) playerAttribution.add(h);
       if (h.kind === "proxfrag" && overlap) {
         contactFrag.add(h); lethalContact = true;
@@ -5607,7 +6539,7 @@ function step(g) {
     queueTownCollisionEvent(a, TOWN_EVENT_PLAYER_CONTACT);
   for (const s of contactBoss)
     queueTownCollisionEvent(s, TOWN_EVENT_PLAYER_CONTACT);
-  for (const s of contactMill)
+  for (const s of contactFlyingSpawn)
     queueTownCollisionEvent(s, TOWN_EVENT_PLAYER_CONTACT);
   for (const h of contactFrag)
     queueTownCollisionEvent(h, TOWN_EVENT_PLAYER_CONTACT);
@@ -5615,7 +6547,8 @@ function step(g) {
   // a36a pri smart callbacku pripise body jen kdyz event word z predchoziho
   // sweepu uz nese player attribution. Priznak se smaze spolu s +506.
   const smartCredited = new Set([
-    ...spawnShotEvents, ...airShotEvents, ...hazardShotEvents,
+    ...spawnShotEvents, ...spawnShotCredit,
+    ...airShotEvents, ...hazardShotEvents,
     ...homingShotEvents, ...playerAttribution,
   ]);
   for (const o of smartCredited) o.collisionPlayerCredit = true;
@@ -5628,8 +6561,16 @@ function step(g) {
     p.collisionLethal = true;
   }
 
-  for (const bm of g.booms) bm.t++;
-  g.booms = g.booms.filter(bm => bm.t < boomLife(bm));
+  for (const bm of g.booms) {
+    if (bm.retireAfterField) { bm.dead = true; continue; }
+    bm.t++;
+    // 8876/8952 i bezny 894a jsou stale 62cc tasky: edge exploze sdili
+    // inclusive defaultni margin -64 a po poslednim fieldu uklidi v N+1.
+    if (bm.t >= 0 && Number.isFinite(g.scroll) && outsideCullMargin(
+          bm.x, worldScreenPositionWord(bm.y, g.scroll), -64))
+      bm.retireAfterField = true;
+  }
+  g.booms = g.booms.filter(bm => !bm.dead && bm.t < boomLife(bm));
   for (const ef of g.effects) ef.t++;
   g.effects = g.effects.filter(ef => ef.t < ef.life);
   if (g.flash > 0) g.flash--;
@@ -5659,9 +6600,8 @@ function frame(now) {
   colorizeIndexedField(composed.index, 320, 256, state.mapMeta.height,
                        state.mapMeta.margin, top, state.copperChecks,
                        g.mapFrame.data, g.fadeBlack, g.fadeWhite,
-                       g.lv === 0 && g.townColor07Enabled !== false &&
-                         !g.fadeBlack
-                         ? townObjectColor07Word(g.tick) : undefined);
+                       activeObjectColor07Word(g),
+                       terrainCaptureNibblesForLevel(g.lv));
   const hudPlane = hudPlaneForGame(g);
   const highColors = updateRetainedHighColors(g);
   compositeHudPlane(composed.index, 320, g.mapFrame.data, hudPlane.bytes,
@@ -5676,7 +6616,8 @@ function frame(now) {
   // mapove objekty
   for (const s of g.spawns) {
     if (!s.born || !s.alive) continue;
-    const sy = s.y - top;
+    const sy = (s.beh === "eggs12" || s.beh === "eggs2")
+      ? worldScreenPositionWord(s.y, top) : s.y - top;
     if (sy < -60 || sy > 320) continue;
     const pc = wpc;   // sprite barvy = aktualni copper paleta obrazovky
     if (s.beh === "boss") {
@@ -5726,7 +6667,13 @@ function frame(now) {
     const spr = fr ? sprite(fr.file, fr.frame, pc.pal, pc.ci)
                    : sprite(s.file, s.idx, pc.pal, pc.ci);
     if (!spr) continue;
-    if (s.beh === "mill") {
+    if (s.beh === "airmine" || s.beh === "eggs2") {
+      const dz = positionWord(s.z), sh = shadowOf(spr);
+      ctx.globalAlpha = 0.45;
+      ctx.drawImage(sh.cv, Math.round(s.x + sh.ox + (dz >> 1)),
+                    Math.round(sy + sh.oy + dz));
+      ctx.globalAlpha = 1;
+    } else if (s.beh === "mill" || s.beh === "tilt") {
       const sh = shadowOf(spr);
       ctx.globalAlpha = 0.45;
       ctx.drawImage(sh.cv, Math.round(s.x + sh.ox + 16),
@@ -5738,7 +6685,7 @@ function frame(now) {
           ctx.drawImage(rotor.cv, Math.round(s.x + rotor.ox), Math.round(sy + rotor.oy));
       }
     }
-    // 0x79d4: MILL base je nad rotorovou vrstvou, ne pod ni.
+    // MILL/TILT primary je nad subtractive rotorovou vrstvou, ne pod ni.
     const simg = s.hitFlash ? whiteOf(spr) : spr;     // 0x63a4: hit flash
     ctx.drawImage(simg.cv, Math.round(s.x + spr.ox), Math.round(sy + spr.oy));
   }
@@ -5810,6 +6757,13 @@ function frame(now) {
     const spr = sprite("BIRD.LIN", a.seq[a.apos], wpc.pal, wpc.ci);
     if (!spr) continue;
     drawAirBob(ctx, a, spr, ay);
+  }
+  // BLACKJET je staticky frame0 se z=32; jeho world-y nema airborne bit4.
+  for (const a of g.air) {
+    if (!a.alive || a.kind !== "blackjet") continue;
+    const ay = a.y - top;
+    const spr = sprite("BLACKJET.LIN", 0, wpc.pal, wpc.ci);
+    if (spr) drawAirBob(ctx, a, spr, ay);
   }
   // bonusy: strida se ikona typu (tabulka 0x97bc) a TOKEN#0, tedy blika
   for (const k of g.tokens) {

@@ -325,8 +325,13 @@ Also read along the way:
   independent of lower4; conventional `16|lower4` is the AGA failure.
   Projectile sprite colours come separately from `0x2afc` (COLOR17–19).
   Canvas prevod skutecnych COLOR16–31 slov pouziva z headless-vAmiga
-  baseline zmerenou radu high nibblu `106,123,141,159,178,197,216,236`;
-  fitted mapova paleta je od teto registrove cesty zamerne oddelena.
+  baseline zmerenou radu high nibblu `106,123,141,159,178,197,216,236`.
+  True-DESERT checkpoint doplnil vlastni fitted terrain low-nibble radu
+  `0,0,0,28,43,56,72,89`; EGGS pixel index15 primo potvrzuje, ze raw
+  `$332` v tomto baseline vystupuje jako `(28,28,0)`. TOWN ratchet ale pro
+  stejny stupen zachovava zmerenych 14, proto renderer voli capture fit podle
+  levelu. Neni to tvrzeni o fyzicke zmene DAC. COLOR10–15 prochazi celym
+  zvolenym profilem, zatimco fitted objektova COLOR00–09 zustava oddelena.
 - A level-select cheat handler reads raw keys at `0x20e4`.
 - The normal attract dispatcher starts at `0x0d64`. The browser follows its
   COVER -> Sales Curve -> HELI blueprint/scores -> JEEP blueprint/scores ->

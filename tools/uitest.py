@@ -428,6 +428,17 @@ def main():
               const pamName = state.order[fid];
               const file = state.files.find(f => f.name === pamName);
               const parsed = parsePam(unpackFile(state.adf, file), dico);
+              const desertInfo = levelInfo(state.prog, 1);
+              const desertFile = state.files.find(
+                f => f.name === state.order[desertInfo.fid]);
+              const desertParsed = parsePam(
+                unpackFile(state.adf, desertFile), desertInfo.dico);
+              const desertRawObjectColors =
+                desertParsed.checks[0].pal.slice(0, 10);
+              if (levelUsesTownObjectPalette(1))
+                applyTownObjectPalette(desertParsed.checks);
+              const desertObjectColors =
+                desertParsed.checks[0].pal.slice(0, 10);
               const margin = 160, top = parsed.height + margin - 256;
               const lines = compileCopperPaletteLines(
                 parsed.checks, parsed.height, margin, top, 256, 0, 0);
@@ -625,6 +636,32 @@ def main():
                   ],
                   fadedTop13: faded[13]
                 },
+                sharedPalette: {
+                  levels: [0, 1, 2, 3, 4, 5, 6].map(
+                    levelUsesTownObjectPalette),
+                  desertRawObjectColors,
+                  desertObjectColors,
+                  desertAllObjectColors: desertParsed.checks.every(c =>
+                    c.pal.slice(0, 10).every((word, i) =>
+                      word === TOWN_OBJECT_COLORS[i])),
+                  desertColor07: [
+                    activeObjectColor07Word({lv: 1, tick: 28,
+                                             fadeBlack: 0,
+                                             townColor07Enabled: true}),
+                    activeObjectColor07Word({lv: 1, tick: 28,
+                                             fadeBlack: 1,
+                                             townColor07Enabled: true}) ?? null,
+                    activeObjectColor07Word({lv: 1, tick: 28,
+                                             fadeBlack: 0,
+                                             townColor07Enabled: false}) ?? null
+                  ],
+                  desertTerrainCapture: [
+                    0xA85, 0x974, 0x864, 0x664, 0x443, 0x332
+                  ].map(word => capturedTerrainRgb12(
+                    word, VAMIGA_DESERT_TERRAIN_NIBBLE)),
+                  terrainNibble2ByLevel: [0, 1].map(level =>
+                    terrainCaptureNibblesForLevel(level)[2])
+                },
                 fade: {
                   black: levels.map(level => fadeRgb12Black(sample, level)),
                   white: levels.map(level => fadeRgb12White(sample, level)),
@@ -694,6 +731,24 @@ def main():
                    [68, 0, 0, 255],
                    "TOWN COLOR07 nema nativni 8..15..8 trojuhelnik/fade: %s" %
                    renderer_core["town"])
+            expect(renderer_core["sharedPalette"] == {
+                     "levels": [True, True, True, True, True, False, False],
+                     "desertRawObjectColors":
+                       [0x000, 0x555, 0x687, 0x7BA, 0x000,
+                        0x000, 0x000, 0x000, 0xFE8, 0xFFF],
+                     "desertObjectColors":
+                       [0x000, 0x333, 0x465, 0x598, 0x765,
+                        0x666, 0x9A9, 0x800, 0xED6, 0xEEE],
+                     "desertAllObjectColors": True,
+                     "desertColor07": [0xF00, None, None],
+                     "desertTerrainCapture":
+                       [[141, 106, 56], [123, 89, 43],
+                        [106, 72, 43], [72, 72, 43],
+                        [43, 43, 28], [28, 28, 0]],
+                     "terrainNibble2ByLevel": [14, 0]
+                   },
+                   "DESERT nema sdileny TOWN..ICE objektovy fit/globalni COLOR07: %s" %
+                   renderer_core["sharedPalette"])
             expect(renderer_core["town"]["checks"] ==
                    [96, 104, 191, 383, 578, 734, 929, 1272, 1352,
                     1621, 2127, 2601, 2769],
@@ -735,18 +790,18 @@ def main():
                    },
                    "BOB depth/shadow/clear fixture nesedi s 0x481a/0x6364: %s" %
                    renderer_core["bob"])
-            # RGB hodnoty zahrnuji zmerene COLOR00-09 drzené pres vsechny
-            # TOWN checkpointy. Legacy varianta naopak propusti pozdejsi PAM
-            # prepis indexu a na kontrolnich 21 radcich se lisi 21 pixely.
+            # RGB hodnoty zahrnuji zmerene COLOR00-09 a nelinearni vAmiga
+            # DAC/capture radu pro terrain COLOR10-15. Legacy varianta navic
+            # propusti pozdejsi PAM prepis objektoveho indexu.
             expect(renderer_core["mapIndex"] == {
                      "size": [320, 3761],
                      "full": "3d426f35", "initial": "5870b220",
-                     "initialRgb": "d0f33b44",
+                     "initialRgb": "022138be",
                      "legacyRgba": "ccfec5ff",
                      "differing": {
                        "top": 1454, "rows": 21,
-                       "correct": "9390eae6", "legacy": "ef98f632",
-                       "pixels": 21
+                       "correct": "4e305e10", "legacy": "ef98f632",
+                       "pixels": 5201
                      }
                    },
                    "TOWN mapIndex/Copper RGB nema presny obsah: %s" %
@@ -757,7 +812,7 @@ def main():
                    colorizer["rejected"] == 3,
                    "indexovy colorizer nema bezpecne horni/dolni hranice: %s" %
                    colorizer)
-            expect(colorizer["runtime"] == "9390eae6" and
+            expect(colorizer["runtime"] == "4e305e10" and
                    colorizer["runtimeMismatches"] == 0,
                    "viditelny runtime nepouziva presnou scanline paletu: %s" %
                    colorizer)
@@ -1927,7 +1982,7 @@ def main():
                    scheduler_callbacks["tokenBoth"])
             expect(scheduler_callbacks["birdHit"] == {
                      "hp": 1, "sy": 94, "shots": [["can", 56]],
-                     "kinds": ["cannon", "generic-hit"], "score": 0,
+                     "kinds": ["generic-hit", "cannon"], "score": 0,
                      "alive": True, "cost": 10},
                    "BIRD nonlethal callback nema -6y/cannon/generic-hit: %s" %
                    scheduler_callbacks["birdHit"])
@@ -2001,14 +2056,16 @@ def main():
                 resumeTownObjectHousekeeping(og, task);
                 queuedA36a = {
                   birdHp: orderBird.hp,
-                  cannonAngle: og.shots[0] ? og.shots[0].ang : null,
+                  cannonAngle: og.cannonStartTasks[0]
+                    ? og.cannonStartTasks[0].angle : null,
                   rng: rngTrace.slice(), kinds: kinds(og),
                   booms: og.booms.length,
                   queued: og.townExplosionTasks.length,
+                  cannonQueued: og.cannonStartTasks.length,
                   invalidated: !!orderBird.retireAfterField
                 };
                 retireTownTaskAfterField(og, task);
-                runFreshTownExplosionTasks(og);
+                runFreshTownPriorityTasks(og);
                 queuedA36a.after = {
                   rng: rngTrace.slice(), kinds: kinds(og),
                   booms: og.booms.length,
@@ -2208,12 +2265,13 @@ def main():
             }""")
             expect(fifo_scheduler_edges["queuedA36a"] == {
                      "birdHp": 1, "cannonAngle": 61,
-                     "rng": [5], "kinds": ["cannon", "generic-hit"],
-                     "booms": 0, "queued": 1, "invalidated": True,
+                     "rng": [5], "kinds": ["generic-hit"],
+                     "booms": 0, "queued": 1, "cannonQueued": 1,
+                     "invalidated": True,
                      "after": {
                        "rng": [5, 11, 22],
-                       "kinds": ["cannon", "generic-hit",
-                                 "bigexpl", "bigexpl"],
+                       "kinds": ["generic-hit", "bigexpl", "bigexpl",
+                                 "cannon"],
                        "booms": 1, "queued": 0,
                        "alive": False, "cost": 0}},
                    "SMART a36a se spustil inline nebo predběhl BIRD RNG: %s"
@@ -2259,8 +2317,8 @@ def main():
                    % fifo_scheduler_edges["contactResolved"])
             expect(fifo_scheduler_edges["checksumPriority"] == {
                      "releaseMoment": {
-                       "earlyHp": 1, "lateHp": 2, "shots": 1,
-                       "kinds": ["cannon", "generic-hit"]},
+                       "earlyHp": 1, "lateHp": 2, "shots": 0,
+                       "kinds": ["generic-hit"]},
                      "final": {
                        "earlyHp": 1, "lateHp": 1, "shots": 2,
                        "cost": 20, "parentBudgeted": False,
@@ -4549,9 +4607,9 @@ def main():
             expect(exact_anim["cannon"] ==
                    [[[24, 0, True]],
                     [[40, 1, True]],
-                    [[40, 1, True], [24, 0, False]],
-                    [[24, 0, True], [40, 1, False]],
-                    [[40, 1, True], [24, 0, False]]],
+                    [[40, 1, True]],
+                    [[24, 0, True], [24, 0, False]],
+                    [[40, 1, True], [40, 1, False]]],
                    "granaty nemaji vlastni fazi 24/40 pro accel i straight: %s"
                    % exact_anim["cannon"])
             expect(exact_anim["accel"] ==
@@ -4665,6 +4723,7 @@ def main():
                 turretTask: { alive: true }, turretPhase: 'prefire',
                 turretWait: 1 };
               stepTankTurret(six, gunTank);
+              runFreshTownPriorityTasks(six);
 
               const type4 = { born: false, taskStarted: true, armed: true,
                 alive: true, beh: 'tank', file: 'MEDTANK.LIN', idx: 0,
@@ -5027,6 +5086,11 @@ def main():
                 sfxBigExplosion(big, 40);
                 const bigEvents = big.sfx.events.map(e =>
                   [e.accepted, e.channel, e.period]);
+                const bigEnds = big.sfx.voices
+                  .filter(v => v.effect).map(v => [v.channel, v.effect.end]);
+                for (let i = 0; i < 4; i++) advanceTownSfxIrq(big);
+                const bigIrq4 = big.sfx.voices.map(v =>
+                  [v.channel, v.guard, v.effect !== null]);
                 const rejected = fresh();
                 for (const voice of rejected.sfx.voices) voice.guard = 1000;
                 sfxBigExplosion(rejected, 40);
@@ -5331,6 +5395,7 @@ def main():
                     token: [tokenIrq1, tokenIrq2, tokenIrq4, tokenIrq130] },
                   clock: [clockTicks, clock.sfx.irq, clock.sfx.phase, perFrame],
                   big: [bigEvents, big.rngState >>> 0,
+                    bigEnds, bigIrq4,
                     rejected.sfx.events.map(e => e.accepted),
                     rejected.rngState >>> 0],
                   burst: burst.sfx.events.map(e => [e.channel, e.period]),
@@ -5516,6 +5581,8 @@ def main():
                    audio_exact["pickupIrqs"])
             expect(audio_exact["big"] == [
                      [[True, 3, 599], [True, 0, 594]], 0x3B0E5682,
+                     [[3,4],[0,4]],
+                     [[3,0,False],[2,0,False],[1,0,False],[0,0,False]],
                      [False, False], 0x3B0E5682] and
                    audio_exact["burst"] ==
                    [[2, 1024], [1, 1032], [3, 1152], [0, 1160]],
@@ -5916,12 +5983,1180 @@ def main():
             expect(cam["hit2"] == {"hp": 0, "alive": False, "score": 40},
                    "CAMOGUN po druhem zasahu nepridal 40 bodu")
 
+            # Prvni DESERT blok: presna 0x75a8 AIRMINE korutina, jeji
+            # fixed-point pohyb/animace/stin, oba damage vstupy a mapovy
+            # kontrakt vcetne prefetchovaneho uvodniho okna levelu 2.
+            desert = page.evaluate("""() => {
+              const { fid, dico } = levelInfo(state.prog, 1);
+              const pam = unpackFile(state.adf, state.files.find(
+                f => f.name === state.order[fid]));
+              const parsed = parsePam(pam, dico);
+              const airmineRoute = state.behaviorDispatch.get(0x0012);
+              const airmineImpl = IMPLEMENTED_BEHAVIORS.get(0x0012);
+              const mapH = parsed.height + 320;
+              const startScroll = mapH - 160 - 256 - parsed.lead;
+              const opening = parsed.objs.filter(o => {
+                const worldY = parsed.height + 160 - o.y;
+                return worldY - startScroll >= -32;
+              });
+
+              const savedRandom = window.random32;
+              window.random32 = () => 0x12348000;
+              try {
+                const mine = { born: true, alive: true, beh: 'airmine',
+                  file: 'AIRMINE.LIN', idx: 0, x: 100, y: 500,
+                  bobOrdinal: 1 };
+                const mg = { activeCost: 0, nextBobOrdinal: 2 };
+                initAirMine(mg, mine);
+                const initialized = {
+                  hp: mine.hp, score: mine.scoreValue, cost: mine.cost,
+                  activeCost: mg.activeCost, vxRaw: mine.vxRaw,
+                  zRaw: mine.zRaw, vzRaw: mine.vzRaw,
+                  frame: mine.fr, collisionClass: mine.collisionClass
+                };
+                const overCapMine = { born: true, alive: true,
+                  beh: 'airmine', file: 'AIRMINE.LIN', idx: 0,
+                  x: 100, y: 500, bobOrdinal: 2 };
+                const overCapGame = { activeCost: 160, nextBobOrdinal: 3 };
+                initAirMine(overCapGame, overCapMine);
+                const overCapCost = [overCapGame.activeCost,
+                  overCapMine.budgeted, overCapMine.cost];
+                const fields = [];
+                for (let i = 0; i < 22; i++) {
+                  stepAirMine(mine);
+                  fields.push([mine.xRaw, mine.zRaw, mine.vzRaw,
+                    mine.airmineTurnPending, mine.fr]);
+                }
+
+                const renderMine = Object.assign({}, mine, {
+                  x: 100, y: 100, z: 33.875, fr: 1,
+                  born: true, alive: true, bobOrdinal: 1
+                });
+                const renderGame = {
+                  mapH: 256, mapIndex: new Uint8Array(320 * 256),
+                  effects: [], spawns: [renderMine], hazards: [], air: [],
+                  booms: [], plops: [], shots: [], tokens: [], player: null
+                };
+                const bob = Object.fromEntries(composeTownBobs(renderGame, 0)
+                  .ordered.filter(r => r.id.startsWith('airmine-'))
+                  .map(r => [r.id, {
+                    kind: r.kind, key: r.key, x: r.x, y: r.y, op: r.op
+                  }]));
+
+                const enemyGame = () => ({
+                  activeCost: 0, score: 0, nextLife: 10000, lives: 4,
+                  player: { rank: 0 }, nextBobOrdinal: 1,
+                  booms: [], effects: [], townExplosionTasks: [],
+                  sfx: createTownSfxState()
+                });
+                const deathGame = enemyGame();
+                const deathMine = { born: true, alive: true,
+                  beh: 'airmine', file: 'AIRMINE.LIN', idx: 0,
+                  x: 120, y: 300 };
+                initAirMine(deathGame, deathMine);
+                const hits = [];
+                for (let i = 0; i < 3; i++) {
+                  damageSpawn(deathGame, deathMine);
+                  hits.push([deathMine.hp, deathMine.alive,
+                    deathGame.score, deathGame.activeCost]);
+                }
+                const deathExplosion = deathGame.townExplosionTasks.map(t =>
+                  [t.z, t.source]);
+
+                const smartGame = enemyGame();
+                const smartMine = { born: true, alive: true,
+                  beh: 'airmine', file: 'AIRMINE.LIN', idx: 0,
+                  x: 140, y: 320 };
+                initAirMine(smartGame, smartMine);
+                pulseKillSpawn(smartGame, smartMine, false);
+                const smart = [smartMine.alive, smartGame.score,
+                  smartGame.activeCost,
+                  smartGame.townExplosionTasks[0]?.z,
+                  smartGame.townExplosionTasks[0]?.source];
+
+                function makeContactGame() {
+                  const p = { x: 100, y: 100, ang: 0, alive: true, inv: 0,
+                    bubbleTimer: 0, bubbleBound: null, bubbleFrame: 9,
+                    bubbleZ: 0, bubblePhase: 0, bank: 0, cool: 0,
+                    weapon: 2, tokenCount: 0, mode: 0, reload: 11,
+                    rank: 0, respawnT: 0, heliAnimPos: 0,
+                    heliAnimFresh: true, weaponX: 100, weaponY: 100,
+                    bobOrdinal: 0 };
+                  return {
+                    tick: 0, scroll: 1000, scrollMul: .000001,
+                    over: false, won: false, keys: {}, player: p,
+                    nextBobOrdinal: 1, bullets: [], shots: [], plops: [],
+                    spawns: [], booms: [], effects: [], tokens: [], air: [],
+                    hazards: [], activeCost: 0, score: 0,
+                    nextLife: 10000, lives: 4, players: 1, difficulty: 0,
+                    levelPhase: 1, continues: 2, playerPhase: 'active',
+                    playerPhaseT: 0, joinClosed: false, jeepLives: 1,
+                    jeepScore: 0, jeepTokenCount: 0,
+                    townColor07Enabled: true, rotoDirectionWord: 0,
+                    fadeBlack: 0, fadeWhite: 0, fadeDir: 0,
+                    fadeWhiteStep: 0, smartPulse: 0, smartPulseEpoch: 0,
+                    sfx: createTownSfxState()
+                  };
+                }
+                const contactGame = makeContactGame();
+                const contactMine = { born: true, taskStarted: true,
+                  armed: true, alive: true, beh: 'airmine',
+                  file: 'AIRMINE.LIN', idx: 0, x: 100,
+                  y: contactGame.scroll + 100, bobOrdinal: 1 };
+                initAirMine(contactGame, contactMine);
+                contactMine.vxRaw = 0;
+                contactGame.spawns = [contactMine];
+                step(contactGame);
+                const contactQueued = [contactGame.player.alive,
+                  contactMine.hp, contactMine.collisionEventWord | 0,
+                  contactGame.player.collisionEventWord | 0,
+                  contactGame.activeCost];
+                step(contactGame);
+                const contactResolved = [contactGame.player.alive,
+                  contactMine.hp, contactMine.alive,
+                  contactGame.activeCost];
+
+                return {
+                  map: { name: state.order[fid], tiles: parsed.tiles.length,
+                    objects: parsed.objs.length, checks: parsed.checks.length,
+                    height: parsed.height, lead: parsed.lead,
+                    airmineCount: parsed.objs.filter(
+                      o => o.gfx === 0x0012).length,
+                    openingCount: opening.length,
+                    openingGoose: opening.filter(
+                      o => o.gfx === 0x0017).length,
+                    openingAllArmed: opening.every(o => {
+                      const sy = parsed.height + 160 - o.y - startScroll;
+                      return mapObjectArmedAtStart(1, sy);
+                    }) },
+                  route: [airmineRoute?.coroutine, airmineImpl?.coroutine,
+                          airmineImpl?.id],
+                  coldArm: [mapObjectArmedAtStart(0, 242),
+                            mapObjectArmedAtStart(1, 242)],
+                  initialized, overCapCost, fields, bob, hits, deathExplosion,
+                  smart, contactQueued, contactResolved
+                };
+              } finally { window.random32 = savedRandom; }
+            }""")
+            expect(desert["map"] == {
+                       "name": "DESERT.PAM", "tiles": 965, "objects": 274,
+                       "checks": 22, "height": 5872, "lead": 96,
+                       "airmineCount": 48, "openingCount": 11,
+                       "openingGoose": 1, "openingAllArmed": True},
+                   "DESERT mapa/prefetch nema overeny kontrakt: %s" % desert["map"])
+            expect(desert["route"] == [0x75A8, 0x75A8, "airmine"] and
+                   desert["coldArm"] == [False, True],
+                   "AIRMINE dispatch nebo standalone DESERT armed politika nesedi")
+            expect(desert["initialized"] == {
+                       "hp": 3, "score": 20, "cost": 7, "activeCost": 7,
+                       "vxRaw": -8192, "zRaw": 2097152, "vzRaw": 12288,
+                       "frame": 0, "collisionClass": 0x22},
+                   "AIRMINE nema presny a2c6/RNG/fixed-point setup: %s" %
+                   desert["initialized"])
+            expect(desert["overCapCost"] == [167, True, 7],
+                   "AIRMINE chybne pouziva 160-cost guard: %s" %
+                   desert["overCapCost"])
+            selected_fields = [desert["fields"][i] for i in [0, 9, 10, 19, 20, 21]]
+            expect(selected_fields == [
+                       [6545408, 2109440, 12288, False, 0],
+                       [6471680, 2220032, 12288, True, 1],
+                       [6463488, 2207744, -12288, False, 1],
+                       [6389760, 2097152, -12288, True, 0],
+                       [6381568, 2109440, 12288, False, 0],
+                       [6373376, 2121728, 12288, False, 1]],
+                   "AIRMINE nema 10field trojuhelnikovy z pohyb: %s" %
+                   selected_fields)
+            expect([row[4] for row in desert["fields"]] ==
+                   [0] * 7 + [1] * 7 + [0] * 7 + [1],
+                   "AIRMINE nema nativni period7 animaci 0/1")
+            expect(desert["bob"] == {
+                       "airmine-shadow": {"kind": "shadow", "key": 65535,
+                         "x": 116, "y": 133, "op": "clear"},
+                       "airmine-main": {"kind": "main", "key": 32734,
+                         "x": 100, "y": 100, "op": "cookie"}},
+                   "AIRMINE nema dynamicky z=33 stin/BOB depth: %s" % desert["bob"])
+            expect(desert["hits"] == [
+                       [2, True, 0, 7], [1, True, 0, 7], [0, False, 20, 0]] and
+                   desert["deathExplosion"] == [[33, "death-airmine"]],
+                   "AIRMINE nema 3 HP/20 bodu/cost cleanup/death depth: %s" %
+                   desert["hits"])
+            expect(desert["smart"] == [False, 0, 0, 33, "death-airmine"],
+                   "SMART neodstranil AIRMINE bez bodu a se spravnym z")
+            expect(desert["contactQueued"] == [True, 3, 8, 8, 7] and
+                   desert["contactResolved"] == [False, 2, True, 7],
+                   "AIRMINE kontakt nema N/N+1 damage a lethal HELI callback: %s / %s" %
+                   (desert["contactQueued"], desert["contactResolved"]))
+
+            blackjet = page.evaluate("""() => {
+              const { fid, dico } = levelInfo(state.prog, 1);
+              const pam = unpackFile(state.adf, state.files.find(
+                f => f.name === state.order[fid]));
+              const parsed = parsePam(pam, dico);
+              const route = state.behaviorDispatch.get(0x0020);
+              const impl = IMPLEMENTED_BEHAVIORS.get(0x0020);
+              const airportRoute = state.behaviorDispatch.get(0x1C3C);
+              const fishRoute = state.behaviorDispatch.get(0x001E);
+
+              const color07Game = { townColor07Enabled: true,
+                                    nextBobOrdinal: 1 };
+              startMapObjectTask(color07Game, {
+                gfx: 0x1C3C, coroutine: airportRoute?.coroutine,
+                beh: 'unimplemented', taskStarted: false
+              });
+              const afterAirport = color07Game.townColor07Enabled;
+              startMapObjectTask(color07Game, {
+                gfx: 0x001E, coroutine: fishRoute?.coroutine,
+                beh: 'unimplemented', taskStarted: false
+              });
+              const afterFish = color07Game.townColor07Enabled;
+
+              const base = { air: [], difficulty: 0, nextBobOrdinal: 10 };
+              const source = { y: 500, typ: 1, bobOrdinal: 3 };
+              spawnBlackJetFormation(base, source);
+              const hard = { air: [], difficulty: 10, nextBobOrdinal: 20 };
+              spawnBlackJetFormation(hard, { y: 700, bobOrdinal: 4 });
+
+              const triggerGame = { air: [], difficulty: 0,
+                nextBobOrdinal: 30 };
+              const trigger = { beh: 'blackjet', y: 600, alive: true };
+              startMapObjectTask(triggerGame, trigger);
+
+              const savedRandom = window.random32;
+              let rngCalls = 0;
+              window.random32 = () => { rngCalls++; return 0xABCDEF42; };
+              try {
+                const activeGame = { activeCost: 145, tick: 7,
+                  scroll: 148, spawns: [], nextBobOrdinal: 1,
+                  sfx: createTownSfxState() };
+                const jet = { kind: 'blackjet', x: 12, y: 100,
+                  alive: false, pending: true, dead: false,
+                  scrollLocked: false, cost: 15, budgeted: false,
+                  hp: 1, scoreValue: 25, seq: [0], per: 1,
+                  apos: 0, at: 0, animFresh: true, bobOrdinal: 1 };
+                const activated = activateAirMember(activeGame, jet,
+                  { x: 160, y: 192, alive: true });
+                const activation = {
+                  activated, rngCalls, x: jet.x, xRaw: jet.xRaw,
+                  yRaw: jet.yRaw, vyRaw: jet.vyRaw, ayRaw: jet.ayRaw,
+                  hp: jet.hp, score: jet.scoreValue, cost: jet.cost,
+                  activeCost: activeGame.activeCost,
+                  sound: activeGame.sfx.events.map(e =>
+                    [e.kind, e.accepted, e.priority, e.x])
+                };
+
+                const yBeforeCompensation = jet.y;
+                compensateTownTaskScrollOnResume(
+                  { kind: 'air', o: jet }, -0.25);
+                const freeScreenY = jet.y;
+                const locked = { y: 100 };
+                compensateTownTaskScrollOnResume(
+                  { kind: 'air', o: locked }, -0.25);
+
+                const motion = { y: 200, yRaw: 200 << 16,
+                  vyRaw: 0, ayRaw: 0x1800 };
+                const fields = [];
+                for (let i = 0; i < 40; i++) {
+                  stepBlackJetMotion(motion);
+                  fields.push([motion.yRaw, motion.vyRaw]);
+                }
+                const cullMotion = { y: 0, yRaw: 0,
+                  vyRaw: 0, ayRaw: 0x1800 };
+                const cullFields = [];
+                for (let i = 0; i < 86; i++) {
+                  stepBlackJetMotion(cullMotion);
+                  const sy = -48 + cullMotion.y + i * 0.25;
+                  if (i === 84 || i === 85)
+                    cullFields.push([i, sy,
+                      outsideCullMargin(98, sy, -64)]);
+                }
+
+                const hitbox = {
+                  projectile: [
+                    projectileNodeHit(118, 119, 100, 100, 18, 19),
+                    projectileNodeHit(119, 119, 100, 100, 18, 19),
+                    projectileNodeHit(118, 120, 100, 100, 18, 19)
+                  ],
+                  heli: [
+                    collisionNodeHit(118, 119, 100, 100, 18, 19, 10, 19),
+                    collisionNodeHit(119, 119, 100, 100, 18, 19, 10, 19),
+                    collisionNodeHit(118, 120, 100, 100, 18, 19, 10, 19)
+                  ]
+                };
+                const highWordGate = [
+                  worldScreenPositionWord(100, 148.75),
+                  worldHighWordAtMargin(100, 148.75, -48),
+                  100 - 148.75 >= -48
+                ];
+
+                const blockedGame = { activeCost: 150, scroll: 148,
+                  spawns: [], nextBobOrdinal: 2,
+                  sfx: createTownSfxState() };
+                const blocked = { kind: 'blackjet', y: 100,
+                  pending: true, alive: false, dead: false, cost: 15,
+                  budgeted: false, hp: 1, scoreValue: 25,
+                  seq: [0], per: 1, apos: 0, at: 0, animFresh: true,
+                  bobOrdinal: 1, scrollLocked: false };
+                const callsBeforeBlock = rngCalls;
+                const acceptedOverCap = activateAirMember(blockedGame,
+                  blocked, { alive: true, x: 160, y: 192 });
+
+                const voice = createTownSfxState().voices[0];
+                const timeline = sfxNoiseTimeline(voice, 'blackjet');
+                const sound = {
+                  count: timeline.states.length,
+                  end: timeline.logical.end,
+                  ops: timeline.logical.ops.length,
+                  samples: [0, 31, 32, 202].map(i => {
+                    const s = timeline.states[i];
+                    return [s.volume, s.period, s.length,
+                      timeline.logical.ops[i].tick,
+                      timeline.logical.ops[i].longs];
+                  })
+                };
+
+                const renderJet = Object.assign({}, jet, {
+                  x: 100, y: 100, alive: true, pending: false,
+                  apos: 0, bobOrdinal: 1
+                });
+                const renderGame = {
+                  mapH: 256, mapIndex: new Uint8Array(320 * 256),
+                  effects: [], spawns: [], hazards: [], air: [renderJet],
+                  booms: [], plops: [], shots: [], tokens: [], player: null
+                };
+                const records = composeTownBobs(renderGame, 0).ordered;
+                const main = records.find(r => r.id === 'air-blackjet-main');
+                const shadow = records.find(r => r.id === 'air-blackjet-shadow');
+                const bob = [records.filter(r =>
+                  r.id.startsWith('air-blackjet-')).length,
+                  !!main && main.spr === indexedFrameFor(
+                    state, 'BLACKJET.LIN', 0),
+                  main?.key, main?.x, main?.y,
+                  shadow?.x, shadow?.y, shadow?.op];
+
+                const deathGame = { activeCost: 15, score: 0,
+                  nextLife: 10000, lives: 4, player: { rank: 0 },
+                  nextBobOrdinal: 1, townExplosionTasks: [] };
+                const deathJet = { kind: 'blackjet', x: 120, y: 300,
+                  alive: true, pending: false, dead: false,
+                  hp: 1, scoreValue: 25, cost: 15, budgeted: true };
+                damageAir(deathGame, deathJet);
+                const death = [deathJet.alive, deathGame.score,
+                  deathGame.activeCost,
+                  deathGame.townExplosionTasks[0]?.z,
+                  deathGame.townExplosionTasks[0]?.source];
+
+                return {
+                  map: { count: parsed.objs.filter(
+                    o => o.gfx === 0x0020).length,
+                    types: [...new Set(parsed.objs.filter(
+                      o => o.gfx === 0x0020).map(o => o.typ))],
+                    firstY: parsed.objs.find(o => o.gfx === 0x0020)?.y,
+                    airportCount: parsed.objs.filter(
+                      o => o.gfx === 0x1C3C).length,
+                    fishCount: parsed.objs.filter(
+                      o => o.gfx === 0x001E).length },
+                  route: [route?.coroutine, impl?.coroutine, impl?.id],
+                  color07Prefetch: [airportRoute?.coroutine,
+                    fishRoute?.coroutine, afterAirport, afterFish],
+                  normalFormation: {
+                    count: base.air.length,
+                    ys: base.air.map(a => a.y),
+                    types: base.air.map(a => a.typ),
+                    ordinals: base.air.map(a => a.bobOrdinal) },
+                  hardCount: hard.air.length,
+                  trigger: [trigger.taskStarted, trigger.born,
+                    trigger.alive, triggerGame.air.length],
+                  activation,
+                  compensation: [yBeforeCompensation, freeScreenY, locked.y],
+                  fields, cullFields, hitbox, highWordGate,
+                  blocked: [acceptedOverCap, blocked.dead,
+                    blockedGame.activeCost, rngCalls - callsBeforeBlock,
+                    blockedGame.sfx.events.length],
+                  sound, bob, death
+                };
+              } finally { window.random32 = savedRandom; }
+            }""")
+            expect(blackjet["map"] == {
+                     "count": 7, "types": [1], "firstY": 515,
+                     "airportCount": 4, "fishCount": 17} and
+                   blackjet["route"] == [0x7A98, 0x7A98, "blackjet"],
+                   "DESERT BLACKJET census/dispatch nesedi: %s" % blackjet["map"])
+            expect(blackjet["color07Prefetch"] ==
+                   [0x7970, 0xB1A8, False, True],
+                   "DESERT AIRPORT/FISH nemeni globalni COLOR07 pri prefetchi: %s" %
+                   blackjet["color07Prefetch"])
+            expect(blackjet["normalFormation"] == {
+                       "count": 5, "ys": [500, 496, 492, 488, 484],
+                       "types": [1, 1, 1, 1, 1],
+                       "ordinals": [10, 11, 12, 13, 3]} and
+                   blackjet["hardCount"] == 10 and
+                   blackjet["trigger"] == [True, True, False, 5],
+                   "BLACKJET nema a2a2 formaci (D>>1)+5/puvodni task: %s" %
+                   blackjet["normalFormation"])
+            expect(blackjet["activation"] == {
+                       "activated": True, "rngCalls": 1, "x": 98,
+                       "xRaw": 6422528, "yRaw": 6553600,
+                       "vyRaw": 0, "ayRaw": 6144,
+                       "hp": 1, "score": 25, "cost": 15,
+                       "activeCost": 160,
+                       "sound": [["blackjet", True, 70, 98]]},
+                   "BLACKJET nema guard/RNG/x/accel/sound aktivaci: %s" %
+                   blackjet["activation"])
+            expect(blackjet["compensation"] == [100, 100, 99.75],
+                   "BLACKJET chybne dostal airborne bit4 scroll lock")
+            selected_jet_fields = [blackjet["fields"][i] for i in [0, 1, 9, 39]]
+            expect(selected_jet_fields == [
+                       [13113344, 6144], [13125632, 12288],
+                       [13445120, 61440], [18145280, 245760]],
+                   "BLACKJET nema fixed +$1800 verticalni akceleraci: %s" %
+                   selected_jet_fields)
+            expect(blackjet["cullFields"] ==
+                   [[84, 315.65625, False], [85, 323.96875, True]],
+                   "BLACKJET nema inclusive field85 cull po poslednim BOBu: %s" %
+                   blackjet["cullFields"])
+            expect(blackjet["hitbox"] == {
+                     "projectile": [True, False, False],
+                     "heli": [True, False, False]},
+                   "BLACKJET nepouziva frame-header half-extenty 18x19: %s" %
+                   blackjet["hitbox"])
+            expect(blackjet["highWordGate"] == [-48, True, False],
+                   "BLACKJET activation nepouziva oddelene object/camera high WORDy: %s" %
+                   blackjet["highWordGate"])
+            expect(blackjet["blocked"] == [False, True, 150, 0, 0],
+                   "BLACKJET 0x8822 guard spotreboval RNG/zvuk nebo cost")
+            expect(blackjet["sound"] == {
+                       "count": 203, "end": 408, "ops": 203,
+                       "samples": [[0, 300, 64, 1, 16],
+                                   [62, 300, 64, 63, 16],
+                                   [64, 300, 64, 65, 16],
+                                   [0, 640, 64, 405, 16]]},
+                   "BLACKJET 0x52d8 nema presny 203stavovy/2-IRQ noise sweep: %s" %
+                   blackjet["sound"])
+            expect(blackjet["bob"] ==
+                   [2, True, 32735, 100, 100, 116, 132, "clear"],
+                   "BLACKJET nema frame0/z32/stin v globalni BOB fronte: %s" %
+                   blackjet["bob"])
+            expect(blackjet["death"] ==
+                   [False, 25, 0, 33, "death-blackjet"],
+                   "BLACKJET nema 1 HP/25 bodu/cost15/z33 death callback")
+
+            # DESERT EGGS#12: compound root/tri child tasky, staged a2c6,
+            # staticke BOB overlaye, 100VBL kadence, class6 projectile,
+            # custom 8876 smrt a obe procedurarni zvukove vrstvy.
+            eggs = page.evaluate("""() => {
+              const { fid, dico } = levelInfo(state.prog, 1);
+              const pam = unpackFile(state.adf, state.files.find(
+                f => f.name === state.order[fid]));
+              const parsed = parsePam(pam, dico);
+              const route = state.behaviorDispatch.get(0x181D);
+              const impl = IMPLEMENTED_BEHAVIORS.get(0x181D);
+              const roots = parsed.objs.filter(o => o.gfx === 0x181D);
+
+              function makeGame(scroll = 1000) {
+                const player = {
+                  x: 300, y: 220, ang: 192, alive: true, inv: 99999,
+                  bubbleTimer: 0, bubbleBound: null, bubbleFrame: 9,
+                  bubbleZ: 0, bubblePhase: 0, bank: 0, cool: 0,
+                  weapon: 2, tokenCount: 0, mode: 0, reload: 11,
+                  rank: 0, respawnT: 0, heliAnimPos: 0,
+                  heliAnimFresh: true, weaponX: 300, weaponY: 220,
+                  colHalfX: 10, colHalfY: 19, bobOrdinal: 0
+                };
+                return {
+                  tick: 0, scroll, scrollMul: 1, over: false, won: false,
+                  keys: {}, player, nextBobOrdinal: 1,
+                  bullets: [], shots: [], plops: [], spawns: [], booms: [],
+                  effects: [], tokens: [], air: [], hazards: [],
+                  activeCost: 0, score: 0, nextLife: 10000, lives: 4,
+                  players: 1, difficulty: 0, levelPhase: 1,
+                  continues: 2, playerPhase: 'active', playerPhaseT: 0,
+                  joinClosed: false, jeepLives: 1, jeepScore: 0,
+                  jeepTokenCount: 0, townColor07Enabled: true,
+                  rotoDirectionWord: 0, fadeBlack: 0, fadeWhite: 0,
+                  fadeDir: 0, fadeWhiteStep: 0, smartPulse: 0,
+                  smartPulseEpoch: 0, smartStartTasks: [],
+                  smartPulseTasks: [], smartPulseTaskOrdinals: [],
+                  tokenSfxTasks: [], townExplosionTasks: [],
+                  eggShotStartTasks: [], eggRootEffects: [],
+                  rngState: 0, rngVhposWord: 0, sfx: createTownSfxState()
+                };
+              }
+              function eggRoot(x = 160, y = 1000, ordinal = 1) {
+                return { file: 'EGGS.LIN', idx: 12, gfx: 0x181D,
+                  coroutine: 0xA8E4, beh: 'eggs12', typ: 1,
+                  x, y, alive: true, born: false, armed: true,
+                  taskStarted: false, st: 0, t: 0, fr: -1,
+                  bobOrdinal: ordinal };
+              }
+
+              // Prefetch graph a staged costs: bottom, root, obe sides.
+              const graph = makeGame(1085);
+              graph.nextBobOrdinal = 2;
+              const root = eggRoot(); graph.spawns = [root];
+              startMapObjectTask(graph, root);
+              const childSetup = root.eggParts.map(h => [h.eggId, h.frame,
+                h.x, h.y, h.bobOrdinal, h.colHalfX, h.colHalfY]);
+              advanceTownHazardField(graph, root.eggParts[1]);
+              const staged = [graph.activeCost];
+              graph.scroll = 1032; root.born = true; initEggRoot(graph, root);
+              staged.push(graph.activeCost);
+              graph.scroll = 1007;
+              advanceTownHazardField(graph, root.eggParts[0]);
+              advanceTownHazardField(graph, root.eggParts[2]);
+              staged.push(graph.activeCost);
+
+              // Ctyri z0/no-shadow BOB overlaye a linked one-field flash.
+              graph.scroll = 900; root.hitFlash = false;
+              const renderBase = () => composeTownBobs({
+                mapH: 1156, mapIndex: new Uint8Array(320 * 1156),
+                effects: [], spawns: [root], hazards: root.eggParts,
+                air: [], booms: [], plops: [], shots: [], tokens: [],
+                player: null
+              }, 900).ordered;
+              const frameOf = r => [9, 10, 11, 12].find(i =>
+                r.spr === indexedFrameFor(state, 'EGGS.LIN', i));
+              const relevant = rs => rs.filter(r => r.kind === 'main' &&
+                frameOf(r) !== undefined).map(r =>
+                  [frameOf(r), r.x, r.y, r.key, r.op]).sort((a,b) => a[0]-b[0]);
+              const baseBobs = relevant(renderBase());
+              const shadows = renderBase().filter(r => r.kind === 'shadow' &&
+                frameOf(r) !== undefined).length;
+              root.hitFlash = true;
+              const linkedFlash = relevant(renderBase()).filter(
+                r => r[4] === 'fill9').map(r => r[0]);
+              root.hitFlash = false; root.eggParts[0].hitFlash = true;
+              const ownFlash = relevant(renderBase()).filter(
+                r => r[4] === 'fill9').map(r => r[0]);
+              root.eggParts[0].hitFlash = false;
+
+              // Izolovana kamera: presne 16 pokusu v 0,100..1500.
+              const cadenceGame = makeGame(92);
+              const cadencePart = { kind: 'eggpart', file: 'EGGS.LIN',
+                frame: 9, seq: [9], x: 100, y: 100, parent: {alive:true},
+                pending: false, alive: true, dead: false,
+                cost: 10, budgeted: true, hp: 8, scoreValue: 75,
+                apos: 0, at: 0, per: 1, animFresh: false,
+                eggShotsFired: 0, eggShotWait: 0, eggFiring: false,
+                bobOrdinal: 1 };
+              cadenceGame.activeCost = 10;
+              const shotTicks = [];
+              for (let i = 0; i <= 1600; i++) {
+                cadenceGame.tick = i;
+                const before = cadenceGame.eggShotStartTasks.length;
+                stepEggPart(cadenceGame, cadencePart);
+                if (cadenceGame.eggShotStartTasks.length > before)
+                  shotTicks.push(i);
+              }
+
+              // Skutecny .25px scroll/cull/unlink da 13+12+12, ne 48 ran.
+              const natural = makeGame(1085.25), naturalRoot = eggRoot();
+              natural.nextBobOrdinal = 2;
+              natural.spawns = [naturalRoot];
+              startMapObjectTask(natural, naturalRoot);
+              const naturalShotRows = [[], [], []];
+              for (let i = 0; i < 1700; i++) {
+                const before = naturalRoot.eggParts.map(h => h.eggShotsFired);
+                step(natural);
+                naturalRoot.eggParts.forEach((h, j) => {
+                  if (h.eggShotsFired !== before[j])
+                    naturalShotRows[j].push([natural.tick,
+                      worldScreenPositionWord(naturalRoot.y,natural.scroll),
+                      worldScreenPositionWord(h.y,natural.scroll)]);
+                });
+              }
+              const naturalCounts = naturalRoot.eggParts.map(
+                h => h.eggShotsFired);
+
+              function audioGame() {
+                const g = makeGame(1000.75);
+                g.player = null; return g;
+              }
+              const timeline = sfxEggShotTimeline();
+              let audioRng = 0;
+              const savedRandom = window.random32;
+              window.random32 = () => { audioRng++; return 0x12345678; };
+              let panLeft, panRight, projectile, death, culledDeath,
+                partDeath, orphan, orphanOverlap, orphanTriple, rootOverlap,
+                fifoCost;
+              try {
+                panLeft = audioGame();
+                fireEggShot(panLeft, {x:44, y:1008});
+                fireEggShot(panLeft, {x:146, y:1008});
+                const leftQueued = panLeft.eggShotStartTasks.map(
+                  t => t.bobOrdinal);
+                runFreshTownPriorityTasks(panLeft);
+                panLeft = { queued: leftQueued,
+                  channels: panLeft.sfx.events.map(e => e.channel),
+                  ends: panLeft.sfx.voices.map(v =>
+                    [v.channel, v.effect && v.effect.end]),
+                  shotOrdinals: panLeft.shots.map(s => s.bobOrdinal),
+                  plopOrdinals: panLeft.plops.map(p => p.bobOrdinal),
+                  activeCost: panLeft.activeCost,
+                  pendingPlops: panLeft.plopStartTasks.length };
+
+                const fifoCostGame = audioGame();
+                fireEggShot(fifoCostGame, {x:44,y:1008});
+                fireEggShot(fifoCostGame, {x:146,y:1008});
+                const fifoCostTasks = fifoCostGame.eggShotStartTasks.slice();
+                fifoCost = [];
+                startEggShotTask(fifoCostGame, fifoCostTasks[0]);
+                fifoCost.push([fifoCostGame.activeCost,
+                  fifoCostGame.plops.length,
+                  fifoCostGame.plopStartTasks.map(t=>t.bobOrdinal)]);
+                startEggShotTask(fifoCostGame, fifoCostTasks[1]);
+                fifoCost.push([fifoCostGame.activeCost,
+                  fifoCostGame.plops.length,
+                  fifoCostGame.plopStartTasks.map(t=>t.bobOrdinal)]);
+                startPlopTask(fifoCostGame,fifoCostGame.plopStartTasks[0]);
+                fifoCost.push([fifoCostGame.activeCost,
+                  fifoCostGame.plops.map(p=>p.bobOrdinal)]);
+                startPlopTask(fifoCostGame,fifoCostGame.plopStartTasks[1]);
+                fifoCost.push([fifoCostGame.activeCost,
+                  fifoCostGame.plops.map(p=>p.bobOrdinal)]);
+
+                panRight = audioGame();
+                fireEggShot(panRight, {x:210, y:1008});
+                fireEggShot(panRight, {x:312, y:1008});
+                runFreshTownPriorityTasks(panRight);
+                panRight = panRight.sfx.events.map(e => e.channel);
+
+                // Quarter-scroll fixed WORD hranice, one-field PLOP a
+                // inclusive field47 cull projektilu.
+                const pg = audioGame();
+                pg.nextBobOrdinal = 2;
+                const pt = {x:100, y:1024, bobOrdinal:1, started:false};
+                const ps = startEggShotTask(pg, pt), fields = [];
+                const beforePlop = [pg.activeCost,pg.plops.length,
+                  pg.plopStartTasks.map(t=>t.bobOrdinal)];
+                runFreshTownPriorityTasks(pg);
+                fields.push([0, worldScreenPositionWord(ps.y, pg.scroll),
+                  !!ps.retireAfterField]);
+                for (let i = 1; i <= 47; i++) {
+                  pg.scroll -= .25; advanceEggShot(pg, ps);
+                  if ([3,4,46,47].includes(i))
+                    fields.push([i, worldScreenPositionWord(ps.y, pg.scroll),
+                      !!ps.retireAfterField]);
+                }
+                const shotRender = composeTownBobs({
+                  mapH: 1256, mapIndex: new Uint8Array(320 * 1256),
+                  effects: [], spawns: [], hazards: [], air: [], booms: [],
+                  plops: [], shots: [Object.assign({}, ps, {y:1030})],
+                  tokens: [], player: null
+                }, 1000).ordered.filter(r => r.id.startsWith('egg-shot-'))
+                  .map(r => [r.kind, r.key, r.x, r.y]);
+                const hw = townHwCandidates(pg).filter(r => r.kind === 'plop')
+                  .map(r => [r.frame, r.anchorX, r.anchorY, r.taskOrdinal]);
+                const normalPlopGame=audioGame(), normalPlop={t:1,
+                  dead:false,cost:1,budgeted:true,bobOrdinal:1};
+                normalPlopGame.activeCost=1;normalPlopGame.plops=[normalPlop];
+                resumeTownObjectHousekeeping(normalPlopGame,
+                  {kind:'plop',o:normalPlop});
+                const culledPlopGame=audioGame(), culledPlop={t:1,
+                  dead:false,cost:1,budgeted:true,bobOrdinal:1,
+                  retireAfterField:true};
+                culledPlopGame.activeCost=1;culledPlopGame.plops=[culledPlop];
+                const culledPlopTask={kind:'plop',o:culledPlop};
+                resumeTownObjectHousekeeping(culledPlopGame,culledPlopTask);
+                const cullBeforeRetire=[culledPlopGame.activeCost,
+                  culledPlop.dead];
+                retireTownTaskAfterField(culledPlopGame,culledPlopTask);
+                projectile = { fields, beforePlop,
+                  first: [ps.z, ps.vy, ps.colHalfX,
+                    ps.colHalfY, pg.plops[0].y], shotRender, hw,
+                  plopResume:[[normalPlopGame.activeCost,normalPlop.dead],
+                    cullBeforeRetire,
+                    [culledPlopGame.activeCost,culledPlop.dead]] };
+
+                // Custom root death: 1 audio + 3 offset RNG, big z0 a
+                // silent puffy t0/15/30 z1.
+                const dg = audioGame(), dr = eggRoot(160, 1000, 1);
+                dr.born = true; initEggRoot(dg, dr); dr.eggParts = [];
+                for (let i = 0; i < 18; i++) damageEggRoot(dg, dr);
+                const afterHit = [dr.hp, dr.alive, dg.score, dg.activeCost,
+                  dg.townExplosionTasks[0]?.kind];
+                runFreshTownPriorityTasks(dg);
+                const rootSoundChannels = dg.sfx.events.filter(
+                  e => e.kind === 'egg-root-explosion' && e.accepted)
+                  .map(e => e.channel);
+                const rootSoundEnds = dg.sfx.voices.filter(
+                  v => v.effect && v.effect.end === 4)
+                  .map(v => [v.channel, v.effect.end]);
+                for (let i = 0; i < 4; i++) advanceTownSfxIrq(dg);
+                const rootSoundIrq4 = rootSoundChannels.map(channel => {
+                  const v = dg.sfx.voices.find(v => v.channel === channel);
+                  return [v.channel, v.guard, v.effect !== null];
+                });
+                for (let i = 1; i <= 30; i++) {
+                  dg.tick = i;
+                  for (const task of townCollisionResumeTasks(dg))
+                    resumeTownObjectHousekeeping(dg, task);
+                }
+                death = { afterHit, rng: audioRng,
+                  sounds: dg.sfx.events.filter(
+                    e => e.kind === 'egg-root-explosion').map(
+                      e => [e.channel, e.priority, e.period]),
+                  soundEnds: rootSoundEnds, soundIrq4: rootSoundIrq4,
+                  booms: dg.booms.map(b =>
+                    [b.kind, b.z, b.x - 160, b.y - 1000, b.source]) };
+
+                // 8876 ukonceny pred dalsim wait resume ponecha jen t0
+                // puff; deadline field naopak puffne jeste pred novym cullem.
+                const cg = audioGame(), cullRng0 = audioRng;
+                queueEggRootExplosionTask(cg, -64, 1000);
+                runFreshTownPriorityTasks(cg);
+                cg.eggRootEffects[0].main.retireAfterField = true;
+                for (const task of townCollisionResumeTasks(cg))
+                  resumeTownObjectHousekeeping(cg, task);
+                const cullRng = audioRng - cullRng0;
+                const deadline = audioGame(), deadlineRng0 = audioRng;
+                const deadlineMain = {dead:false,retireAfterField:false};
+                const deadlineEffect = {x:-64,y:1000,wait:1,left:1,
+                  bobOrdinal:1,main:deadlineMain,done:false,
+                  puffTicks:[],puffOffsets:[]};
+                deadline.eggRootEffects = [deadlineEffect];
+                resumeEggRootEffect(deadline, deadlineEffect);
+                culledDeath = {
+                  culled: [cullRng, cg.booms.map(b => b.kind),
+                    cg.eggRootEffects[0].done],
+                  deadline: [audioRng - deadlineRng0,
+                    deadline.booms.map(b => [b.kind,b.z]),
+                    deadlineEffect.done]
+                };
+
+                const hd = audioGame(), hp = {kind:'eggpart', x:120,y:900,
+                  alive:true, dead:false, cost:10,budgeted:true,hp:8,
+                  scoreValue:75};
+                hd.activeCost = 10;
+                for (let i=0;i<8;i++) damageHazard(hd,hp);
+                partDeath = [hp.alive, hd.score, hd.activeCost,
+                  hd.townExplosionTasks[0]?.z,
+                  hd.townExplosionTasks[0]?.source];
+
+                const og = audioGame(), op = {kind:'eggpart',x:130,y:910,
+                  alive:true,dead:false,cost:10,budgeted:true,hp:8,
+                  scoreValue:75,parent:null,collisionEventWord:0};
+                og.activeCost=10;
+                const orphanTask={kind:'hazard',o:op};
+                resumeTownObjectHousekeeping(og,orphanTask);
+                retireTownTaskAfterField(og,orphanTask);
+                orphan=[op.alive,og.score,og.activeCost,
+                  og.townExplosionTasks[0]?.z,
+                  og.townExplosionTasks[0]?.source];
+
+                function overlapPart(hp) {
+                  const g=audioGame(), h={kind:'eggpart',x:130,y:910,
+                    alive:true,dead:false,cost:10,budgeted:true,hp,
+                    scoreValue:75,parent:null,hitFlash:true,
+                    collisionEventWord:TOWN_EVENT_PLAYER_SHOT,
+                    collisionPlayerCredit:true};
+                  g.activeCost=10;g.smartPulse=1;
+                  const task={kind:'hazard',o:h};
+                  resumeTownObjectHousekeeping(g,task);
+                  const beforeRetire=[g.score,h.hp,h.hitFlash,
+                    g.townExplosionTasks.map(t=>t.source)];
+                  retireTownTaskAfterField(g,task);
+                  return [beforeRetire,h.alive,g.activeCost];
+                }
+                orphanOverlap=overlapPart(8);
+                orphanTriple=overlapPart(1);
+
+                const rg=audioGame(), rr=eggRoot(160,1000,1);
+                rr.born=true;initEggRoot(rg,rr);rr.eggParts=[];rr.hp=1;
+                rr.collisionEventWord=TOWN_EVENT_PLAYER_SHOT;
+                rr.collisionPlayerCredit=true;rg.smartPulse=1;
+                const rootTask={kind:'spawn',o:rr};
+                resumeTownObjectHousekeeping(rg,rootTask);
+                const rootBeforeRetire=[rg.score,rr.hp,
+                  rg.townExplosionTasks.map(t=>[t.kind,t.source])];
+                retireTownTaskAfterField(rg,rootTask);
+                rootOverlap=[rootBeforeRetire,rr.alive,rg.activeCost];
+              } finally { window.random32 = savedRandom; }
+
+              // HELI kontakt je N/N+1 lethal, ale shot prezije. Player
+              // bolt a class6 shot se navzajem vubec nespotrebuji.
+              const contact = makeGame(1000);
+              contact.player.x=100; contact.player.y=100; contact.player.inv=0;
+              contact.shots=[{kind:'egg',x:100,y:1093,z:1,alive:true,
+                dead:false,cost:5,budgeted:true,colHalfX:2,colHalfY:11,
+                bobOrdinal:1}]; contact.activeCost=5;
+              step(contact);
+              const contactN=[contact.player.alive,
+                contact.player.collisionEventWord|0,
+                contact.shots[0]?.collisionEventWord|0,
+                contact.shots.length];
+              step(contact);
+              const contactN1=[contact.player.alive,contact.shots.length,
+                contact.shots[0]?.dead||false];
+
+              const bolt = makeGame(1000);
+              bolt.shots=[{kind:'egg',x:100,y:1093,z:1,dead:false,
+                cost:5,budgeted:true,colHalfX:2,colHalfY:11,bobOrdinal:1}];
+              bolt.activeCost=5;
+              bolt.bullets=[{x:100,y:109,vx:0,vy:-9,frame:14,poolSlot:0}];
+              step(bolt);
+              const mutual=[bolt.shots.length,bolt.bullets.length,
+                !!bolt.bullets[0]?.collisionConsumed];
+
+              // SMART nad class6 shotem: default 894a z2 a presne 2 RNG.
+              const savedRandom2=window.random32; let smartRng=0;
+              window.random32=()=>{smartRng++;return 0x11112222;};
+              let smart;
+              try {
+                const sg=audioGame(), ss={kind:'egg',x:100,y:1100,z:1,
+                  dead:false,cost:5,budgeted:true,bobOrdinal:1};
+                sg.shots=[ss];sg.activeCost=5;
+                pulseKillEnemyShot(sg,ss,false);
+                const queued=[ss.dead,sg.activeCost,
+                  sg.townExplosionTasks[0]?.z,
+                  sg.townExplosionTasks[0]?.source];
+                runFreshTownPriorityTasks(sg);
+                smart={queued,rng:smartRng,boom:sg.booms.map(
+                  b=>[b.kind,b.z,b.source])};
+              } finally {window.random32=savedRandom2;}
+
+              return {
+                map: roots.map(o=>[o.y,o.x,o.typ]),
+                route:[route?.coroutine,impl?.coroutine,impl?.id],
+                childSetup, staged, baseBobs, shadows, linkedFlash, ownFlash,
+                shotTicks, naturalCounts, naturalShotRows,
+                sound:{count:timeline.length,
+                  first:timeline.slice(0,8).map(s=>s.period),
+                  last:timeline.slice(-5).map(s=>s.period),
+                  volumes:[timeline[0].volume,timeline[47].volume],
+                  wave:Array.from(SFX_EGG_SHOT_WAVE),audioRng:death.rng,
+                  panLeft,panRight,fifoCost},
+                projectile,death,culledDeath,partDeath,orphan,
+                orphanOverlap,orphanTriple,rootOverlap,
+                contactN,contactN1,mutual,smart
+              };
+            }""")
+            expect(eggs["map"] == [[533, 261, 1], [698, 318, 1],
+                                    [901, 95, 1]] and
+                   eggs["route"] == [0xA8E4, 0xA8E4, "eggs12"],
+                   "DESERT EGGS#12 census/dispatch nesedi: %s" % eggs["map"])
+            expect(eggs["childSetup"] == [
+                     ["left", 9, 109, 987, 2, 14, 19],
+                     ["bottom", 10, 160, 1065, 3, 15, 19],
+                     ["right", 11, 211, 987, 4, 15, 19]] and
+                   eggs["staged"] == [10, 30, 50],
+                   "EGGS nema root/left-bottom-right task graph a staged cost: %s" %
+                   eggs["childSetup"])
+            expect(eggs["baseBobs"] == [
+                     [9,109,87,32767,"cookie"],
+                     [10,160,165,32767,"cookie"],
+                     [11,211,87,32767,"cookie"],
+                     [12,160,100,32767,"cookie"]] and
+                   eggs["shadows"] == 0 and
+                   eggs["linkedFlash"] == [9,10,11,12] and
+                   eggs["ownFlash"] == [9],
+                   "EGGS staticke z0 overlaye/linked flash nesedi: %s" %
+                   eggs["baseBobs"])
+            expect(eggs["shotTicks"] == list(range(0,1600,100)) and
+                   eggs["naturalCounts"] == [12,13,12],
+                   "EGGS nema 16-shot frozen / 37-shot natural cadence: %s / %s / %s" %
+                   (eggs["shotTicks"], eggs["naturalCounts"],
+                    eggs["naturalShotRows"]))
+            expect(eggs["sound"] == {
+                     "count":48,
+                     "first":[220,186,232,198,244,211,258,225],
+                     "last":[688,750,732,795,779], "volumes":[48,1],
+                     "wave":[127,-128,127,-128,127,127,-128,-128],
+                     "audioRng":4,
+                     "panLeft":{"queued":[1,2],"channels":[3,0,2,1],
+                       "ends":[[3,50],[2,50],[1,58],[0,58]],
+                       "shotOrdinals":[1,2],"plopOrdinals":[3,4],
+                       "activeCost":12,"pendingPlops":0},
+                     "panRight":[2,1,3,0],
+                     "fifoCost":[[5,0,[3]],[10,0,[3,4]],
+                                  [11,[3]],[12,[3,4]]]},
+                   "EGGS 0x5436 waveform/period/pan/FIFO nesedi: %s" %
+                   eggs["sound"])
+            expect(eggs["projectile"] == {
+                     "fields":[[0,30,False],[3,48,False],[4,55,False],
+                               [46,317,False],[47,323,True]],
+                     "beforePlop":[5,0,[2]],
+                     "first":[1,6,2,11,24],
+                     "shotRender":[["main",32766,100,30]],
+                     "hw":[[2,100,24,2]],
+                     "plopResume":[[0,True],[1,False],[0,True]]},
+                   "EGGS BULLET#56/PLOP fixed-WORD lifecycle nesedi: %s" %
+                   eggs["projectile"])
+            expect(eggs["death"]["afterHit"] ==
+                   [0,False,75,0,"egg-root"] and
+                   eggs["death"]["rng"] == 4 and
+                   eggs["death"]["sounds"] ==
+                   [[2,60,768],[1,60,769]] and
+                   eggs["death"]["soundEnds"] == [[2,4],[1,4]] and
+                   eggs["death"]["soundIrq4"] ==
+                   [[2,0,False],[1,0,False]] and
+                   eggs["death"]["booms"] == [
+                     ["big",0,0,0,"death-eggs12"],
+                     ["small",1,25,21,"egg-root-puff"],
+                     ["small",1,25,21,"egg-root-puff"],
+                     ["small",1,25,21,"egg-root-puff"]],
+                   "EGGS custom 8876 death/audio/RNG/puffy nesedi: %s" %
+                   eggs["death"])
+            expect(eggs["culledDeath"] == {
+                     "culled":[2,["big","small"],True],
+                     "deadline":[1,[["small",1]],True]},
+                   "EGGS 8876 cull/deadline nesedi: %s" %
+                   eggs["culledDeath"])
+            expect(eggs["partDeath"] == [False,75,0,1,"death-eggpart"] and
+                   eggs["orphan"] == [False,0,0,1,"orphan-eggpart"],
+                   "EGGS part standard/orphan death nesedi")
+            expect(eggs["orphanOverlap"] == [
+                     [150,7,True,["orphan-eggpart","death-eggpart"]],
+                     False,0] and
+                   eggs["orphanTriple"] == [
+                     [225,0,False,["orphan-eggpart","death-eggpart",
+                                   "death-eggpart"]],False,0] and
+                   eggs["rootOverlap"] == [
+                     [150,0,[["egg-root","death-eggs12"],
+                             ["egg-root","death-eggs12"]]],False,0],
+                   "EGGS orphan/SMART/bit0 callback chain nesedi: %s/%s/%s" %
+                   (eggs["orphanOverlap"],eggs["orphanTriple"],
+                    eggs["rootOverlap"]))
+            expect(eggs["contactN"] == [True,8,8,1] and
+                   eggs["contactN1"] == [False,1,False] and
+                   eggs["mutual"] == [1,1,False],
+                   "EGGS class6 HELI/bolt collision semantika nesedi: %s/%s/%s" %
+                   (eggs["contactN"],eggs["contactN1"],eggs["mutual"]))
+            expect(eggs["smart"] == {
+                     "queued":[True,0,2,"death-egg-shot"],"rng":2,
+                     "boom":[["small",2,"death-egg-shot"]]},
+                   "SMART nema EGGS shot default z2/2-RNG death: %s" %
+                   eggs["smart"])
+
+            # DESERT EGGS#2: zavrena class20 kapsle, presna petiframova
+            # hatch timeline, fixed-point rise/launch a 16-shell death ring.
+            eggs2 = page.evaluate("""() => {
+              const { fid, dico } = levelInfo(state.prog, 1);
+              const pam = unpackFile(state.adf, state.files.find(
+                f => f.name === state.order[fid]));
+              const parsed = parsePam(pam, dico);
+              const route = state.behaviorDispatch.get(0x041D);
+              const impl = IMPLEMENTED_BEHAVIORS.get(0x041D);
+              const roots = parsed.objs.filter(o => o.gfx === 0x041D);
+
+              function coreGame(scroll = 999) {
+                return { tick: 0, scroll, activeCost: 0, score: 0,
+                  nextLife: 10000, lives: 4, player: {rank: 0},
+                  nextBobOrdinal: 2, rngState: 0, rngVhposWord: 0,
+                  shots: [], booms: [], effects: [], townExplosionTasks: [],
+                  cannonStartTasks: [], sfx: createTownSfxState() };
+              }
+              function root(x = 160, y = 1127) {
+                return { file:'EGGS.LIN', idx:2, gfx:0x041D,
+                  coroutine:0x8478, beh:'eggs2', typ:1, x, y,
+                  born:true, alive:true, armed:true, taskStarted:true,
+                  bobOrdinal:1, fr:-1 };
+              }
+
+              const g = coreGame(), s = root();
+              initEgg2(g, s);
+              const initialized = [s.fr,s.collisionClass,s.hp,s.scoreValue,
+                s.cost,g.activeCost,s.xRaw,s.yRaw,s.zRaw,
+                s.colHalfX,s.colHalfY,s.egg2Armed,s.egg2Phase];
+              g.scroll = 1000; stepEgg2(g, s); // sy127: posledni #2
+              const closed = [s.fr,s.egg2Phase,s.zRaw];
+              g.scroll = 999;                  // sy128: rovnou prvni #3
+              const hatch = [];
+              for (let i=0; i<50; i++) {
+                stepEgg2(g, s);
+                if ([0,9,10,19,20,29,30,39,40,49].includes(i))
+                  hatch.push([i+1,s.fr,s.colHalfX,s.colHalfY,s.egg2Phase]);
+              }
+              const rise = [];
+              for (let i=0; i<64; i++) {
+                stepEgg2(g, s);
+                if ([0,1,62,63].includes(i))
+                  rise.push([i+1,s.zRaw,s.egg2Phase,s.hp,s.egg2Armed]);
+              }
+              const savedRandom = window.random32;
+              window.random32 = () => 0x40;    // target x160, primo na sever
+              stepEgg2(g, s);                  // launch + prvni 0x62cc field
+              window.random32 = savedRandom;
+              const launch = [s.egg2Phase,s.hp,s.collisionClass,s.ang,
+                s.egg2TargetX,s.egg2TargetY,s.xRaw,s.yRaw,
+                s.vxRaw,s.vyRaw,s.x,s.y,s.zRaw,s.fr];
+
+              function bobAt(z) {
+                const o = Object.assign({}, s, {x:100,y:100,
+                  xRaw:100<<16,yRaw:100<<16,z,zRaw:Math.trunc(z*65536),
+                  born:true,alive:true,bobOrdinal:1,fr:7});
+                const bg = {mapH:256,mapIndex:new Uint8Array(320*256),
+                  effects:[],spawns:[o],hazards:[],air:[],booms:[],
+                  plops:[],shots:[],tokens:[],player:null};
+                return composeTownBobs(bg,0).ordered
+                  .filter(r=>r.id.startsWith('eggs2-'))
+                  .map(r=>[r.id,r.kind,r.key,r.x,r.y,r.op]);
+              }
+
+              let gameplayRng = 0;
+              window.random32 = () => { gameplayRng++; return 0x12345678; };
+              let death, overlap;
+              try {
+                const dg=coreGame(1000), dr=root(120.25,1100.75);
+                initEgg2(dg,dr); dr.egg2Armed=true;
+                dr.collisionClass=0x22;dr.hp=2;dr.z=32;dr.zRaw=32<<16;
+                damageEgg2(dg,dr);
+                const nonlethal=[dr.hp,dr.hitFlash,dg.sfx.events.length];
+                damageEgg2(dg,dr);
+                const queued = [dr.hp,dr.alive,dg.score,dg.activeCost,
+                  dg.cannonStartTasks.map(t=>t.angle),
+                  dg.townExplosionTasks.map(t=>[t.z,t.source]),
+                  [...dg.cannonStartTasks.map(t=>['C',t.bobOrdinal]),
+                   ...dg.townExplosionTasks.map(t=>['E',t.bobOrdinal])]
+                    .sort((a,b)=>a[1]-b[1]).map(r=>r[0])];
+                runFreshTownPriorityTasks(dg);
+                const down=dg.shots.find(q=>q.ang===64);
+                death={nonlethal,queued,rng:gameplayRng,
+                  shots:dg.shots.map(q=>[q.ang,q.phase,q.st,q.spd,q.bobOrdinal]),
+                  subpixel:[down.worldSpace,down.xRaw,down.yRaw,
+                    positionWord(down.y),worldScreenPositionWord(down.y,1000),
+                    down.hwDepth],
+                  sounds:dg.sfx.events.map(e=>[e.kind,e.accepted,e.channel]),
+                  booms:dg.booms.map(b=>[b.kind,b.z,b.source,b.bobOrdinal]),
+                  pending:[dg.cannonStartTasks.length,
+                           dg.townExplosionTasks.length]};
+
+                const og=coreGame(1000), or=root(120,1100);
+                initEgg2(og,or);or.egg2Armed=true;or.collisionClass=0x22;
+                or.hp=1;or.z=32;or.zRaw=32<<16;
+                or.collisionEventWord=TOWN_EVENT_PLAYER_SHOT |
+                                      TOWN_EVENT_PLAYER_CONTACT;
+                or.collisionPlayerCredit=true;og.smartPulse=1;
+                const task={kind:'spawn',o:or};
+                resumeTownObjectHousekeeping(og,task);
+                const fifo=[...og.cannonStartTasks.map(t=>['C',t.bobOrdinal]),
+                  ...og.townExplosionTasks.map(t=>['E',t.bobOrdinal])]
+                  .sort((a,b)=>a[1]-b[1]).map(r=>r[0]);
+                const before=[og.score,or.hp,or.alive,og.activeCost,fifo];
+                retireTownTaskAfterField(og,task);
+                const rngBefore=gameplayRng;
+                runFreshTownPriorityTasks(og);
+                overlap={before,after:[or.alive,og.activeCost,
+                  og.shots.length,og.booms.length,gameplayRng-rngBefore]};
+              } finally { window.random32=savedRandom; }
+
+              // Pred vyzbrojenim bolt nema bit0 callback, ale jeho player
+              // attribution musi byt viditelna drivejsimu SMART A36A.
+              function stepGame() {
+                const player={x:300,y:220,ang:192,alive:true,inv:99999,
+                  bubbleTimer:0,bubbleBound:null,bubbleFrame:9,bubbleZ:0,
+                  bubblePhase:0,bank:0,cool:0,weapon:2,tokenCount:0,
+                  mode:0,reload:11,rank:0,respawnT:0,heliAnimPos:0,
+                  heliAnimFresh:true,weaponX:300,weaponY:220,
+                  colHalfX:10,colHalfY:19,bobOrdinal:0};
+                return {lv:1,tick:0,scroll:1000,scrollMul:.000001,
+                  over:false,won:false,keys:{},player,nextBobOrdinal:2,
+                  bullets:[],shots:[],plops:[],spawns:[],booms:[],
+                  effects:[],tokens:[],air:[],hazards:[],activeCost:0,
+                  score:0,nextLife:10000,lives:4,players:1,difficulty:0,
+                  levelPhase:1,continues:2,playerPhase:'active',
+                  playerPhaseT:0,joinClosed:false,jeepLives:1,jeepScore:0,
+                  jeepTokenCount:0,townColor07Enabled:true,
+                  rotoDirectionWord:0,fadeBlack:0,fadeWhite:0,fadeDir:0,
+                  fadeWhiteStep:0,smartPulse:0,smartStartTasks:[],
+                  smartPulseTasks:[],smartPulseTaskOrdinals:[],
+                  tokenSfxTasks:[],townExplosionTasks:[],cannonStartTasks:[],
+                  eggShotStartTasks:[],plopStartTasks:[],eggRootEffects:[],
+                  rngState:0,rngVhposWord:0,sfx:createTownSfxState()};
+              }
+              const pg=stepGame(), pr=root(100,1100);
+              initEgg2(pg,pr);pg.spawns=[pr];
+              pg.bullets=[{x:100,y:109,vx:0,vy:-9,frame:14,poolSlot:0}];
+              step(pg);
+              const prearmN=[!!pg.bullets[0]?.collisionConsumed,
+                !!pr.collisionPlayerCredit,pr.collisionEventWord|0,pr.hp];
+              pg.smartPulse=1;step(pg);
+              const prearmN1=[pg.score,pr.alive,pg.activeCost,
+                pg.shots.length,pg.booms.map(b=>b.source)];
+
+              return {map:roots.map(o=>[o.y,o.x,o.typ]),
+                route:[route?.coroutine,impl?.coroutine,impl?.id],
+                initialized,closed,hatch,rise,launch,
+                bobs:[bobAt(.5),bobAt(1),bobAt(32)],death,overlap,
+                prearmN,prearmN1};
+            }""")
+            expect(eggs2["map"] == [[628,104,1],[686,44,1],
+                                     [1045,160,1],[1126,264,1]] and
+                   eggs2["route"] == [0x8478,0x8478,"eggs2"],
+                   "DESERT EGGS#2 census/dispatch nesedi: %s" % eggs2["map"])
+            expect(eggs2["initialized"] ==
+                   [2,0x20,0,200,13,13,160<<16,1127<<16,0,
+                    11,19,False,"closed"] and
+                   eggs2["closed"] == [2,"closed",0],
+                   "EGGS#2 nema presny a2c6/closed setup: %s" %
+                   eggs2["initialized"])
+            expect(eggs2["hatch"] == [
+                     [1,3,12,19,"hatch"],[10,3,12,19,"hatch"],
+                     [11,4,11,19,"hatch"],[20,4,11,19,"hatch"],
+                     [21,5,11,18,"hatch"],[30,5,11,18,"hatch"],
+                     [31,6,11,19,"hatch"],[40,6,11,19,"hatch"],
+                     [41,7,9,10,"hatch"],[50,7,9,10,"rise"]],
+                   "EGGS#2 nema presnou 5x10 hatch/extents timeline: %s" %
+                   eggs2["hatch"])
+            expect(eggs2["rise"] == [
+                     [1,32768,"rise",0,False],
+                     [2,65536,"rise",0,False],
+                     [63,2064384,"rise",0,False],
+                     [64,2097152,"launch",0,False]] and
+                   eggs2["launch"] ==
+                     ["fly",15,0x22,192,160,999,160<<16,
+                      (1127<<16)-32768,0,-32768,160,1126.5,
+                      32<<16,7],
+                   "EGGS#2 nema 64field rise a prvni fixed-point flight: %s/%s" %
+                   (eggs2["rise"],eggs2["launch"]))
+            expect(eggs2["bobs"] == [
+                     [["eggs2-main","main",32767,100,100,"cookie"]],
+                     [["eggs2-shadow","shadow",65535,100,101,"clear"],
+                      ["eggs2-main","main",32766,100,100,"cookie"]],
+                     [["eggs2-shadow","shadow",65535,116,132,"clear"],
+                      ["eggs2-main","main",32735,100,100,"cookie"]]],
+                   "EGGS#2 nema dynamicky rise stin/depth: %s" % eggs2["bobs"])
+            expect(eggs2["death"]["nonlethal"] == [1,True,0] and
+                   eggs2["death"]["queued"][:4] == [0,False,200,0] and
+                   eggs2["death"]["queued"][4] == list(range(0,256,16)) and
+                   eggs2["death"]["queued"][5] == [[33,"death-eggs2"]] and
+                   eggs2["death"]["queued"][6] == ["C"]*16+["E"] and
+                   eggs2["death"]["rng"] == 2 and
+                   [row[0] for row in eggs2["death"]["shots"]] ==
+                     list(range(0,256,16)) and
+                   all(row[1:4] == [0,1,.5]
+                       for row in eggs2["death"]["shots"]) and
+                   eggs2["death"]["subpixel"] ==
+                     [True,7880704,73220096,1117,117,558] and
+                   [row[0] for row in eggs2["death"]["sounds"]] ==
+                     ["cannon"]*16+["bigexpl"]*2 and
+                   eggs2["death"]["booms"] ==
+                     [["small",33,"death-eggs2",18]] and
+                   eggs2["death"]["pending"] == [0,0],
+                   "EGGS#2 nema silent hit a ring16->894A FIFO/audio: %s" %
+                   eggs2["death"])
+            expect(eggs2["overlap"]["before"] ==
+                     [600,-1,True,13,
+                      ["E"]+["C"]*16+["E"]+["C"]*16+["E"]] and
+                   eggs2["overlap"]["after"] == [False,0,32,3,6],
+                   "EGGS#2 SMART/bit0/bit3 callback FIFO nesedi: %s" %
+                   eggs2["overlap"])
+            expect(eggs2["prearmN"] == [True,True,0,0] and
+                   eggs2["prearmN1"] ==
+                     [200,False,0,0,["death-eggs2"]],
+                   "EGGS#2 pre-arm bolt attribution/SMART nesedi: %s/%s" %
+                   (eggs2["prearmN"],eggs2["prearmN1"]))
+
             screenshot = os.environ.get("SWIV_UI_SCREENSHOT")
             if screenshot:
                 page.screenshot(path=screenshot)
             expect(not errors, "browser ohlasil chyby: " + "; ".join(errors[:6]))
-            print("UI OK (%.1fs): %d dispatch zaznamu, %d CAMOGUN, bez JS chyb" %
-                  (time.time() - started, summary["dispatch"], summary["camoguns"]))
+            print("UI OK (%.1fs): %d dispatch zaznamu, %d CAMOGUN, "
+                  "%d AIRMINE, %d BLACKJET, %d EGGS#12, %d EGGS#2, "
+                  "bez JS chyb" %
+                  (time.time() - started, summary["dispatch"],
+                   summary["camoguns"], desert["map"]["airmineCount"],
+                   blackjet["map"]["count"], len(eggs["map"]),
+                   len(eggs2["map"])))
         finally:
             browser.close()
 
