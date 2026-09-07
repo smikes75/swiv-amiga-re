@@ -629,3 +629,39 @@ opt-in: hodi se, kdyz se do okna vejde jen 2x nebo 3x, kde jinak cast
 tiku stoji. Kontrakt `tools/smoothtest.py` meri vychozi cestu (bez
 prolnuti); pro prolnutou zatim kontrakt neni.
 
+## Prevzato z `game-codex.html` (2026-09-07)
+
+Codex publikoval `game-codex.html` - odbocku z `game.html` z predchoziho
+dne (ma jeste celociselne konce scrollu i sev na radku 16, oboji uz je
+v `game.html` opravene). Slucovat cely soubor by byl krok zpet; prevzaty
+jsou tyto veci:
+
+- **Cisteni klaves pri ztrate fokusu** (`window blur -> g.keys = {}`).
+  Prepnuti okna s drzenou sipkou nechalo klavesu "zmacknutou" a stroj
+  odjel sam. Skutecna chyba, kterou jsme nemeli.
+- **Zmerena vyska okoli platna** (`chromeHeight()`) misto natvrdo zadane
+  rezervy 170 px: scita se poloha platna a skutecne `offsetHeight`
+  testovaci listy, radku velikosti a paticky. Zmereno 139 px, tedy o 31
+  px vic pro hru; hlavne se to ale samo prizpusobi, kdyz ovladacich
+  prvku pribude (nase 170 uz bylo po pridani posuvniku spatne).
+- **Tlacitka "do okna", 2x, 3x, 4x** vedle posuvniku, se stavem
+  v `aria-pressed`.
+- **`state.zoom` je prani, ne oriznuta hodnota**: male okno ho jen
+  docasne omezi a po zvetseni se vrati (zmereno: prani 3x, v malem okne
+  se pouzije 1x, po zvetseni zase 3x). Drive se ulozena hodnota orezala
+  natrvalo.
+- Pristupnost: `tabindex` a popisek na platne, fokus na platno pri
+  kliknuti, obrysy pri ovladani klavesnici.
+
+**Neprevzato a proc:**
+
+- Codex drzi nadvzorkovani pevne na 4 nezavisle na zvetseni. Krok 1/4 px
+  pak presne sedi na 0,25 px za tik, takze pozadi nezastavi na zadnem
+  zvetseni - elegantni. Cena je ostrost: platno 1280 px se pri zoomu 3x
+  zmensuje na 960 (pomer 0,75) a sloupce pixelu prestanou byt stejne
+  siroke. Nase cesta drzi presnou mrizku (pomer vzdy cely) a
+  nerovnomernost pod 4x resi volitelnym prolnutim. Obe reseni jsou
+  legitimni, jen jinde na kompromisu ostrost/plynulost.
+- Plynuly posuvnik 0,5x az 6x po 0,05: neceločíselne zvetseni pixelartu
+  dela ruzne siroke pixely, coz je presne to, co jsme odstranovali.
+

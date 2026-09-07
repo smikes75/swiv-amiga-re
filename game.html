@@ -18,7 +18,17 @@ p { max-width:640px; margin:6px 0; font-size:14px; }
   color:var(--black); border:2px solid var(--black); box-shadow:3px 3px 0 var(--black);
   text-decoration:none; cursor:pointer; }
 .btn:active { transform:translate(2px,2px); box-shadow:1px 1px 0 var(--black); }
-#game { image-rendering:pixelated; border:3px solid var(--black); background:#000; }
+#game { image-rendering:pixelated; border:3px solid var(--black); background:#000;
+  box-sizing:content-box; display:block; }
+#gamewrap { max-width:100%; }
+#zoomrow { display:flex; flex-wrap:wrap; justify-content:center; align-items:center;
+  gap:6px; margin:6px auto 0; font:12px monospace; color:#9ab; }
+#zoomrow button { font:inherit; color:var(--white); background:#003b78;
+  border:1px solid #9ac5ed; border-radius:4px; padding:4px 8px; cursor:pointer; }
+#zoomrow button[aria-pressed="true"] { background:var(--orange); color:var(--black); }
+#testbar label { display:inline-flex; align-items:center; gap:4px; }
+#game:focus-visible, #zoomrow :focus-visible, #testbar :focus-visible {
+  outline:2px solid var(--orange); outline-offset:3px; }
 small { opacity:.75 }
 a { color:#cfe0ff }
 </style>
@@ -50,7 +60,8 @@ a { color:#cfe0ff }
 
 <div id="gamewrap" style="display:none">
   <div id="cvwrap" style="position:relative;display:inline-block;line-height:0">
-    <canvas id="game" width="320" height="256" style="image-rendering:pixelated"></canvas>
+    <canvas id="game" width="320" height="256" tabindex="0"
+      aria-label="Hern&#237; pole SWIV" style="image-rendering:pixelated"></canvas>
     <div id="crtfx" style="display:none;position:absolute;inset:0;pointer-events:none;
       background:repeating-linear-gradient(to bottom, rgba(0,0,0,0) 0 2px, rgba(0,0,0,.28) 2px 3px),
                  repeating-linear-gradient(to right, rgba(255,0,0,.045) 0 1px, rgba(0,255,0,.045) 1px 2px, rgba(0,0,255,.045) 2px 3px);
@@ -63,9 +74,17 @@ a { color:#cfe0ff }
       style="width:3.5em;font:inherit">
     &nbsp;&middot;&nbsp; scroll <input type="range" id="scrollpct" min="25" max="200" step="5"
       value="100" style="width:130px;vertical-align:middle"><span id="scrollval">100%</span>
-    &nbsp;&middot;&nbsp; zoom <input type="range" id="zoombox" min="0" max="12" step="1"
-      value="0" style="width:110px;vertical-align:middle"><span id="zoomval">auto</span>
     &nbsp;&middot;&nbsp; <label title="Svisle prolnuti pozadi: plynuly posun i pod 4x, teren je za to pri pohybu mekci"><input type="checkbox" id="blendchk"> hladk&#233; pozad&#237;</label>
+  </div>
+  <div id="zoomrow" role="group" aria-label="Velikost hern&#237;ho pole">
+    <span>velikost</span>
+    <button type="button" data-zoom="0" aria-pressed="true">do okna</button>
+    <button type="button" data-zoom="2" aria-pressed="false">2&#215;</button>
+    <button type="button" data-zoom="3" aria-pressed="false">3&#215;</button>
+    <button type="button" data-zoom="4" aria-pressed="false">4&#215;</button>
+    <input id="zoombox" type="range" min="0" max="12" step="1" value="0"
+      style="width:110px" aria-label="Zv&#283;t&#353;en&#237; hern&#237;ho pole">
+    <output id="zoomval" for="zoombox">auto</output>
   </div>
 </div>
 
@@ -6677,10 +6696,28 @@ function bestS(dev) {                   // nejvetsi delitel `dev` do osmi
   for (let k = Math.min(8, dev); k >= 1; k--) if (dev % k === 0) return k;
   return 1;
 }
+/* Misto natvrdo zadane rezervy se okoli plátna zmeri (prevzato z
+   game-codex.html): pri zmene ovladacich prvku uz neni co dopocitavat
+   a pri skryte strance se drzi posledni znama hodnota. */
+function chromeHeight() {
+  const wrap = document.getElementById("cvwrap");
+  if (!wrap || !wrap.getClientRects().length) return state.chromeH ?? 170;
+  const bar = document.getElementById("testbar");
+  const row = document.getElementById("zoomrow");
+  const foot = document.getElementById("gamewrap").nextElementSibling;
+  const h = wrap.getBoundingClientRect().top + window.scrollY +
+            (bar ? bar.offsetHeight : 0) + (row ? row.offsetHeight : 0) +
+            (foot ? foot.offsetHeight : 0) + 24;
+  state.chromeH = h;
+  return h;
+}
 function viewScale(smooth) {
   const dpr = window.devicePixelRatio || 1;
   const fit = Math.max(1, Math.floor(Math.min(
-    (window.innerWidth - 40) * dpr / 320, (window.innerHeight - 170) * dpr / 256)));
+    (window.innerWidth - 40) * dpr / 320,
+    (window.innerHeight - chromeHeight()) * dpr / 256)));
+  // state.zoom je PRANI uzivatele; male okno ho jen docasne omezi, ulozena
+  // hodnota zustava, aby se po zvetseni okna vratila (prevzato z Codexu).
   let dev = (state.zoom | 0) > 0 ? Math.min(state.zoom | 0, fit) : fit;
   // Auto bere nejvetsi nasobek, ktery se vejde: od 4x uz pozadi nestoji
   // ani pri nasobku nedelitelnem ctyrmi, takze neni duvod ustupovat.
@@ -6690,8 +6727,11 @@ function viewScale(smooth) {
 function updateZoomLabel() {
   const z = viewScale(!!state.smooth);
   const box = document.getElementById("zoombox");
-  box.max = String(z.fit);              // vetsi nez okno nema smysl nabizet
-  if ((state.zoom | 0) > z.fit) box.value = String(z.fit);
+  box.max = String(Math.max(z.fit, state.zoom | 0));
+  box.value = String(state.zoom | 0);
+  for (const btn of document.querySelectorAll("#zoomrow [data-zoom]"))
+    btn.setAttribute("aria-pressed",
+                     String((state.zoom | 0) === +btn.dataset.zoom));
   // Pod 4x ujede pozadi za tik min nez jeden bod displeje a cast tiku stoji.
   document.getElementById("zoomval").textContent =
     ((state.zoom | 0) > 0 ? "" : "auto ") + z.dev + "\u00d7" +
@@ -6704,12 +6744,18 @@ try {                                   // volba prezije reload (per-viewer)
   if (Number.isInteger(saved) && saved >= 0 && saved <= 12) state.zoom = saved;
 } catch (e) { /* privatni okno / zakazane uloziste */ }
 document.getElementById("zoombox").value = state.zoom | 0;
-document.getElementById("zoombox").oninput = e => {
-  state.zoom = Math.max(0, Math.min(12, +e.target.value || 0));
-  try { localStorage.setItem("swivZoom", String(state.zoom)); } catch (err) {}
+function setZoom(v) {
+  state.zoom = Math.max(0, Math.min(12, v | 0));
+  try { localStorage.setItem("swivZoom", String(state.zoom)); } catch (e) {}
   updateZoomLabel();
-};
+}
+document.getElementById("zoombox").oninput = e => setZoom(+e.target.value || 0);
+for (const btn of document.querySelectorAll("#zoomrow [data-zoom]"))
+  btn.addEventListener("click", () => setZoom(+btn.dataset.zoom));
 window.addEventListener("resize", updateZoomLabel);
+// Plátno si bere fokus, aby po kliknuti na ovladaci prvek slo hned hrat.
+document.getElementById("game").addEventListener("pointerdown", () =>
+  document.getElementById("game").focus({ preventScroll: true }));
 updateZoomLabel();
 
 /* ---- testovaci lista (CRT, zivoty, rychlost scrollu) ---- */
@@ -6745,6 +6791,9 @@ document.getElementById("scrollpct").oninput = e => {
 /* ---- vstup ---- */
 const KEYMAP = { ArrowLeft: "l", ArrowRight: "r", ArrowUp: "u", ArrowDown: "d",
   a: "l", d: "r", w: "u", s: "d", " ": "f", z: "f", y: "f" };
+// Prepnuti okna s drzenou klavesou nechalo klavesu "zmacknutou" a stroj
+// odjel sam; pri ztrate fokusu se proto stav klaves vycisti.
+window.addEventListener("blur", () => { if (state.g) state.g.keys = {}; });
 window.addEventListener("keydown", e => {
   const k = KEYMAP[e.key];
   if (k && state.g) { state.g.keys[k] = true; e.preventDefault(); }
