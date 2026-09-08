@@ -79,6 +79,28 @@ def playSequence(page, target):
     return now
 
 
+# Vstup do skutecne hry pres MEGA TRAINER: F1 nekonecne zivoty, F3 ponechani
+# zbrani, F4 super zbrane (wasm_key, surove kody Amigy). Overeno snimkem -
+# volby se prepnou na YES. Palba se musi pulzovat; drzene PRESS_FIRE hru
+# nestrili. Pozor: pulzovana palba behem continue okna hned vhodi kredit a
+# resetuje skore, takze "skore = 0" neznamena, ze hrac ve hre neni.
+TRAINER_KEYS = (0x50, 0x52, 0x53)          # F1, F3, F4
+JOY_UP, JOY_FIRE, JOY_RELEASE_FIRE = 0, 4, 13
+
+PLAY_PROLOGUE = """() => {
+  VA.run(32*50, null); VA.fn.mouse(1,7); VA.run(4,null); VA.fn.mouse(1,16);
+  VA.run(8*50, null);
+  const key = c => { VA.fn.key(c,1); VA.run(6,null);
+                     VA.fn.key(c,0); VA.run(6,null); };
+  for (const c of %s) key(c);
+  VA.run(25,null); VA.fn.mouse(1,7); VA.run(4,null); VA.fn.mouse(1,16);
+  VA.run(37*50, null);
+  VA.fn.joy(2,4); VA.run(4,null); VA.fn.joy(2,13); VA.run(3*50,null);
+  window.playFor = sec => { for (let i = 0; i < sec*50/10; i++) {
+    VA.fn.joy(2,4); VA.run(5,null); VA.fn.joy(2,13); VA.run(5,null); } };
+}""" % (list(TRAINER_KEYS),)
+
+
 def grab(t_after_fire, out_raw, chip=None, headless=True):
     """Vrati (raw RGB24 716x285, volitelne kopii chip RAM) v case t po fire."""
     target = ZERO_AT + t_after_fire
