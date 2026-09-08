@@ -225,6 +225,41 @@ an exact reuse pattern still needs scanline DMA-slot phase.
 
 ## Still open
 
+### Codex sound pass, 2026-09-07
+
+Selectively adapted Claude's 766facb after reading the corresponding
+AMPROG instructions. The existing local BLACKJET, EGGS shot/root, noise
+scratch, four-IRQ raw-sample guard release and creation FIFO are retained.
+Newly connected effects:
+
+| Event | Native routine / call site | Behaviour |
+|---|---|---|
+| XEVIOUS bomb launch | 0x4cf8 / 0x7f9e | priority 30; 48 one-IRQ states, volume 48..1, triangle period modulation with rising base 250+3n |
+| PLAT turret opening/firing | 0x4d6a / 0xa530 | priority 40; volume 48, 16 periods 800..500 by -20 |
+| Nonlethal installation hit | 0x4e2e / 0xb8ca | two priority-40 noise sweeps, initial period 400 instead of generic HIT; shared deferred GOOSE callback |
+| Factory and INST2 laser | 0x541e / 0xb8b8, 0xba4e | two priority-100 126-state pulse layers, initial accumulator 500 and alternating offset +/-50, second layer delayed 8 CIAB IRQs |
+| Walking boss pod launch | 0x5436 / 0xbb80 | two priority-100 48-state pulse layers, accumulator 200 and +/-20; waveform/periods match the preserved EGGS routine |
+| Bolt against XEVIOUS armour | 0x55b0 / 0x7968 | priority 20, two-byte 7f81 wave, periods 300/500/700 for two IRQs each; no damage to armour |
+
+Bomb and hatch waveforms are the exact sixteen bytes written by 0x4d20
+and 0x4d98. Pulse volume uses Paula's bit-6 rule, not an arbitrary linear
+normalization of the 126-state counter. Installation noise reads global
+RNG only on the second accepted IRQ; rejection/preemption before that IRQ
+does not consume the seed. Neither procedural synthesis nor mixing gain
+was retuned by ear in this pass.
+
+`python3 tools/soundtest.py` checks all period/volume states against an
+independent Python recurrence, waveform bytes, 128/136-IRQ laser cleanup,
+delayed scratch writes, deferred seeds and preemption, bomb/hatch/armour/
+installation gameplay hooks, and finite non-silent generated PCM. Actual
+OfflineAudioContext rendering at 48 kHz tests the shared A500 output path:
+mirrored stereo allocation, onset at sample 469 (~9.77 ms), and peak
+~0.418 for the isolated two-layer laser (no clipping in this fixture).
+This is not yet a sample-for-sample comparison with an original Amiga
+recording, nor a guarantee for every possible multi-effect mix.
+
+### Remaining sound work
+
 - Remaining special/player-transition effects outside the TOWN hooks listed
   above still need their exact call-site map; the six-note extra-life chime at
   `0x5600` is known but not yet connected to the browser's score threshold.
@@ -232,8 +267,11 @@ an exact reuse pattern still needs scanline DMA-slot phase.
   priority 120 and a stereo selector derived from the signed low score word;
   the threshold itself belongs to the following live-player resume, not to
   `awardScore()`.
-- Sounds belonging only to later levels, apart from the transcribed DESERT
-  BLACKJET and EGGS routines, remain outside the current slice.
+- Geyser, _CORN and general large-death call sites beyond the local EGGS
+  root still need integration. Claude's geyser buffers predict future RNG
+  periods from a fork; integrating it unchanged would not establish exact
+  interleaved gameplay/audio RNG parity. The table above lists the later
+  effects that are now connected.
 - `AMHITUNE.MOD` is decoded and included in the effect-census tests, but no
   runtime scene currently starts it or switches to it. Its native
   high-score/post-game call site remains to be connected.
@@ -256,3 +294,43 @@ software synthesis. See the
 [Ronald Pieket Weeserik interview](https://codetapper.com/amiga/interviews/ronald-pieket-weeserik/).
 Accordingly, silence under the TOWN effects is the original music policy,
 not a missing level-one module.
+
+### 2026-09-07: TOWN boss death volume correction
+
+Disassembly of `0x5580..0x55aa` shows one AUDVOL write per pair of
+three-IRQ waits. The RAM counter is negated at `0x5594` only to calculate
+the second AUDPER value; AUDVOL retains the positive 32..1 envelope.
+The browser previously applied the negated counter to Paula volume too,
+incorrectly producing volume 64 in every second half. Both stereo layers
+(period bases 200 and 202) now retain the positive envelope throughout.
+
+`tools/soundtest.py` independently checks every boss volume/period/wait
+and all 64 TOKEN waveform states against the original table arithmetic.
+Sound and full UI regression tests pass. TOKEN's state sequence matches;
+this is not a recorded-original PCM or listening comparison. Its reported
+audible difference remains unresolved, including exact DMA phase and the
+mix of overlapping voices.
+
+### TOKEN resampling test revision
+
+TOKEN playback now renders at four times the device sample rate and uses
+a normalized symmetric Blackman-windowed sinc low-pass before decimation.
+This suppresses audible aliases from the eight-byte wave before they reach
+the shared A500 output filter. Notes, byte arithmetic, IRQ envelope, voice
+selection, scratch writes and task scheduling are unchanged. Other sound
+effects retain their existing renderer. The cache separates filtered and
+legacy buffers; the symmetric filter adds no scheduling delay, but can
+produce sub-millisecond pre-ringing around waveform changes.
+
+The independent square-wave resampling test measures unwanted folded
+harmonic amplitudes before/after as 0.42283/0.000228 at 44.1 kHz,
+0.42332/0.000591 at 48 kHz and 0.25381/0.000265 at 96 kHz. Fundamental
+amplitude changes by less than 0.02%. These are synthetic resampler tests,
+not recorded Amiga parity scores. Actual TOKEN playback is separately
+checked offline at 44.1/48 kHz for the filtered path, stereo and clipping.
+
+An isolated original-game capture was attempted by redirecting the fire
+sound entry in emulator RAM to `0x5614`; the captured mixture did not
+establish a clean, aligned TOKEN reference. Full listening/PCM parity
+therefore remains open. This revision is a targeted anti-aliasing improvement
+for user testing, not a claim to have resolved every reported difference.

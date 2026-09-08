@@ -1,5 +1,9 @@
 # SWIV — an Amiga floppy, fully decoded
 
+**Codex review branch:** start with [the Claude handoff](docs/CLAUDE-HANDOFF.md)
+for the snapshot scope, isolated checkout and test commands. This branch does
+not replace Claude's current `main` implementation.
+
 Reverse engineering of **S.W.I.V.** (Storm / The Sales Curve, 1991) for
 the Commodore Amiga: the disk format, the boot chain, all three
 proprietary packers, every graphics format, and the level maps —
@@ -63,6 +67,10 @@ The integrated DESERT work retains exact AIRMINE, BLACKJET, TILT and EGGS
 fixed-point motion, EGGS child scheduling and BLACKJET/EGGS sound routines.
 Coverage is not full original-game parity: later bosses, sound call sites,
 hardware timing and the post-game flow still need work.
+The local sound pass also connects XEVIOUS bomb/armour effects, PLAT hatches,
+installation hits, factory/INST2 lasers and walking-boss pod launches.
+Existing TOWN/DESERT sound contracts and the A500 mixer are preserved;
+remaining effects and recording-level parity are tracked in `docs/SOUND.md`.
 
 **Display size:** use **1× / 2× / 3×**, **Do okna** (fit to window), or the
 slider beneath the game. The default is 2× (640×512 CSS pixels), limited to
@@ -72,6 +80,15 @@ locally and restored after reload or resizing to a larger window.
 **Plynulý pohyb** enables interpolation for high-refresh displays, including
 120 Hz. Display zoom does not change the 50 Hz simulation or interpolation
 precision. Click the game to return keyboard focus after using a control.
+The Codex renderer now interpolates fractional terrain/BOB positions and
+hardware projectiles, with a transparent HUD overlay (no stationary terrain
+strip). Enable **Hladké pozadí** alongside **Plynulý pohyb** for vertical
+terrain blending at small zoom; this deliberately softens moving terrain.
+Classic mode and 50 Hz gameplay are unchanged. Test this Codex version at
+[the separate online preview](https://smikes75.github.io/swiv-amiga-re/game-codex.html?v=003f697).
+Published on 2026-09-07 with the corrected boss-death volume envelope and
+anti-aliased TOKEN pickup playback. Bring your own ADF; it stays in your
+browser. TOKEN's exact recorded-original sound parity is still under review.
 
 Measured original-frame checks: TOWN start 99.9%, first wave 99.0%, death
 98.3%, respawn 99.9%. The separate static DESERT renderer checkpoint remains
@@ -89,6 +106,7 @@ python3 tools/gfx.py sheets out/ sheets/   # sprite sheets for every .LIN
 python3 tools/map.py                       # render all 7 levels as tall PNGs
 python3 tools/uitest.py                    # Chromium runtime/behaviour regressions
 python3 tools/displaytest.py               # zoom, DPI, persistence, simulated 120 Hz
+python3 tools/soundtest.py                 # later effects, IRQs, hooks, stereo PCM
 python3 tools/integrationtest.py           # all zones, both renderers, map joins, FINAL death
 python3 tools/compare.py                   # four native TOWN comparisons
 python3 tools/compare.py desert            # optional static DESERT renderer comparison
