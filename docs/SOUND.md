@@ -226,7 +226,20 @@ an exact reuse pattern still needs scanline DMA-slot phase.
   phase.
 - GOOSE periods below 123 use the correct PAL average address-rate ceiling,
   but exact repeated-byte cadence remains dependent on unmeasured beam/DMA
-  slot phase.
+  slot phase. **The boss-death synth `0x553A` is the only effect in the whole
+  game that goes there**: `base - 4*counter` runs down to 72, and 26 of its
+  128 states (both layers) sit between 72 and 122. The browser plays those
+  states as a clean tone up to 927 cents below the requested pitch, because
+  the renderer caps the address-advance rate; Paula instead re-outputs the
+  last fetched word, which changes the timbre, not just the pitch. Every
+  other transcribed effect stays above 123, so this approximation is
+  confined to that one sound. Settling it needs a capture of the GOOSE boss
+  death from the original - see docs/GAPS.md.
+- `0x5580` writes AUDVOL once per state pair; `0x5594` negates the counter
+  afterwards and the second half touches only AUDPER. Until 2026-09-08 the
+  browser passed the negated counter through `sfxPaulaVolume`, which returns
+  64 for every negative input, so every second state played at full volume
+  and the effect never faded out.
 
 Collision-driven TOWN effects now inherit the resident N+1 boundary: the
 producing sweep is silent and the hit, pickup or death sound is submitted only

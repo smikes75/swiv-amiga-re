@@ -2437,7 +2437,11 @@ function sfxBossDeathTimeline(base) {
     states.push({ wave, volume: sfxPaulaVolume(volume),
                   period: signedWord(base + volume * 4),
                   length: 8, ticks: 3 });
-    states.push({ wave, volume: sfxPaulaVolume(-volume),
+    // 0x5580 zapisuje AUDVOL jen jednou na dvojici; 0x5594 neguje citac
+    // az potom a druha polovina sahne uz jen na AUDPER (0x559e). Drive
+    // tu bylo sfxPaulaVolume(-volume), coz kvuli dvojkovemu doplnku
+    // vracelo 64 pro kazdou hodnotu, takze kazdy druhy stav hral naplno.
+    states.push({ wave, volume: sfxPaulaVolume(volume),
                   period: signedWord(base - volume * 4),
                   length: 8, ticks: 3 });
   }

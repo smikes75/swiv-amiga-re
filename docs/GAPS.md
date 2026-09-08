@@ -513,6 +513,36 @@ k porovnavani po objektech, musi se cas merit primo (`wasm_agnus_frame`
 uz existuje, na strane VAHeadless je potreba prikaz RetroShellu).
 Take je potreba najit bazi A6, aby se daly cist zaznamy uloh z chip RAM.
 
+## Zvuk smrti bosse `0x553a` pod DMA minimem Pauly (2026-09-08)
+
+Uzivatel po poslechu obou variant rekl, ze ani jedna nezni verne, a mereni
+mu dalo za pravdu. Rutina pocita periodu jako `base +- 4*citac`, takze pro
+base 200/202 klesa az na **72**, zatimco jeden audio kanal dostane jedno
+slovo na radek, tedy hranice periody je kolem 114-124. **26 ze 128 stavu**
+(obe vrstvy) lezi mezi 72 a 122.
+
+- Nas render clampuje rychlost posunu adresy na periodu 123, takze prehraje
+  celou osmibajtovou vlnu ciste, jen o **927 centu niz**, nez rutina zada.
+- Paula misto toho DAC krokuje dal na pozadovane rychlosti, ale DMA nestiha
+  dodat nove slovo, takze se posledni opakuje - meni se timbre, ne jen vyska.
+
+Prosli jsme vsechny prepsane efekty: **zadny jiny pod 123 nejde** (nejblize
+je geyzir 0x5350 se 127..254). Aproximace je tedy uzce ohranicena na tento
+jediny zvuk.
+
+**Pokus o mereni na originalu (neuspesny, ale nastroje zustavaji).** Harness
+umi projit MEGA TRAINER (klavesy F1 nekonecne zivoty, F3 zbrane, F4 super
+zbrane pres `wasm_key`), pulzovat palbu a nahravat zvuk pri `warp(0)`
+rychlosti asi 7x realtime (240 s hry za 36 s). Detektor podpisu je
+zkalibrovany: okno 14,6 ms = jeden stav, korelace dominantni frekvence se
+stridavym vzorem; **nas render dava 0,877**, nejlepsi kandidat ve 240 s
+skutecne hry 0,40 (a ten je na 0-717 Hz, tedy palba, ne synth). GOOSE boss
+se objevuje kolem 75 s hry, ale skriptovany hrac ho nezabije.
+
+Dalsi krok je najit bazi A6 a cist/menit zaznamy uloh v chip RAM - pak jde
+bossovi srazit HP a zvuk vyvolat na povel. Tataz baze je potreba pro
+porovnani po objektech, takze se ta prace nezahodi.
+
 ## Junkce map a `levelPhase` (nalezeno pri revizi 2026-09-06)
 
 `g.levelPhase` se inicializuje cislem urovne (`lv`), ale `g.junctionRows`

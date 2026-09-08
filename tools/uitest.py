@@ -6029,6 +6029,10 @@ def main():
                   instShot: [gI.sfx.events.map(e => e.kind),
                              gI.sfx.voices.filter(v => v.effect)
                                .map(v => v.effect.end)],
+                  bossDeath: (() => { const st = sfxBossDeathTimeline(200);
+                     const p = s => [s.volume, s.period];
+                     return [st.length, p(st[0]), p(st[1]),
+                             p(st[62]), p(st[63])]; })(),
                   bigDeath: [gB.sfx.events.map(
                                e => [e.kind, e.priority, e.period]), rngHops],
                   extraLife: [gE.tokenSfxTasks.length,
@@ -6073,6 +6077,9 @@ def main():
                                          [50, 58]],
                    "0x5436 nema druhou vrstvu o 8 IRQ pozdeji: %r" %
                    (zvuky["instShot"],))
+            expect(zvuky["bossDeath"] == [64, [32, 328], [32, 72],
+                                          [1, 204], [1, 196]],
+                   "0x5556 obalka smrti bosse: %r" % (zvuky["bossDeath"],))
             expect(zvuky["bigDeath"][1] == 1 and
                    [e[:2] for e in zvuky["bigDeath"][0]] ==
                    [["bigdeath", 60], ["bigdeath", 60]] and
