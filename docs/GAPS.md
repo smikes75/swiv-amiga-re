@@ -554,6 +554,29 @@ Tim padly dve otevrene veci naraz:
   radku za 30 s = 12,0 px/s. Zpetna extrapolace k nule sedi na `0xE9C0`,
   cimz je **potvrzena konstanta ve vzorci na procenta** - drive jen odvozena.
 
+**Dekodovani ADF overeno proti pameti originalu (2026-09-08).** Produkcni
+cesta `unpackFile(adf, f) = unpackC(adf, f.off + 4, f.size)` da bajty, ktere
+se v chip RAM shoduji **bajt po bajtu**: `BIGEXPL.SND` (8486 B) na `0x4CB38`
+a `SMART.SND` (8280 B) na `0x4EC60`. Vzorek vybuchu, ktery hraje pri smrti
+bosse, tedy spravny je. (`AMTITUNE.MOD` se za behu hry v pameti nenajde -
+titulni hudba se pri nacteni hernich dat zahodi, jak rika docs/SOUND.md.)
+
+**Zmereny podil period pod DMA limitem.** Prvni cista nahravka `0x553a` z
+originalu (spustena prepsanim displacementu volani `0x8aa4` na `0x553a`,
+takze efekt bezi nativni cestou vcetne zastaveni DMA v `0x4bca`) dava jako
+nejkratsi skutecne zahrane periody **114, 116, 119, 120, 125, 126**.
+Teoreticky limit jednoho kanalu je jedno slovo na radek = 227/2 = **113,5**,
+takze `PAULA_PAL_MIN_DMA_PERIOD = 123` v nasem renderu je asi o 8 % (130
+centu) moc vysoko. vAmiga zadny pevny clamp nema - `StateMachine.cpp`
+implementuje skutecny automat (`AUDxDR()`, `percntrld()`), takze to cislo
+vypadlo z emulovaneho casovani DMA, ne z konstanty.
+
+Porovnani stav po stavu ale zatim neni cisté: `0x553a` posila obe vrstvy
+pres oba selektory a druha muze po rejectu propadnout do teze dvojice, takze
+se v jednom kanale sectou dva tony s periodami 200 a 202 a odhad frekvence
+z prechodu nulou pak nedava smysl. Nez se prah opravi, chce to nahravku s
+jistotou, ze v kanale hraje jen jedna vrstva.
+
 Zbyva zmerit zvuk `0x553a`. Prve pokusy: instalace pozadavku primo do
 hlasove struktury (`fp@(10786)`, ctyri po 268 B) zafunguje, ale zacatek
 efektu vyjde potichu, protoze se preskoci zastaveni DMA z `0x4bca` a novy
