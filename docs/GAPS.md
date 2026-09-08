@@ -539,9 +539,31 @@ stridavym vzorem; **nas render dava 0,877**, nejlepsi kandidat ve 240 s
 skutecne hry 0,40 (a ten je na 0-717 Hz, tedy palba, ne synth). GOOSE boss
 se objevuje kolem 75 s hry, ale skriptovany hrac ho nezabije.
 
-Dalsi krok je najit bazi A6 a cist/menit zaznamy uloh v chip RAM - pak jde
-bossovi srazit HP a zvuk vyvolat na povel. Tataz baze je potreba pro
-porovnani po objektech, takze se ta prace nezahodi.
+**Baze A6 nalezena 2026-09-08: `0x17DC` (6108) v chip RAM**, AMPROG.OBJ je
+nahran na `0xEFC0`. Postup i konstanty jsou v `tools/survey/vacmp.py`
+(`A6_BASE`, `PROG_BASE`, `FIND_A6_JS`, `FIND_PROG_JS`); dva behy s ruznou
+delkou hry daly stejne hodnoty. Metoda: `fp@(3530)` je mapova pozice 16.16,
+kterou scroll task `0x3cd4` snizuje presne o `fp@(3526)` = `0x4000` za VBL,
+takze dva otisky chip RAM N snimku od sebe daji jedinou adresu, ktera klesla
+o `N*0x4000` a ma pred sebou long `0x4000`.
+
+Tim padly dve otevrene veci naraz:
+- `fp@(12490)` ("Tokens picked up") je na originalu v obou behach **nula**,
+  presne jak rikala disassembly - statisticka obrazovka to drzi spravne;
+- `fp@(3530)` bylo po 20 s hry `0xE7E5` a po 50 s `0xE66E`, tedy rozdil 359
+  radku za 30 s = 12,0 px/s. Zpetna extrapolace k nule sedi na `0xE9C0`,
+  cimz je **potvrzena konstanta ve vzorci na procenta** - drive jen odvozena.
+
+Zbyva zmerit zvuk `0x553a`. Prve pokusy: instalace pozadavku primo do
+hlasove struktury (`fp@(10786)`, ctyri po 268 B) zafunguje, ale zacatek
+efektu vyjde potichu, protoze se preskoci zastaveni DMA z `0x4bca` a novy
+AUDxLC se nezalatchuje. Cista cesta je **prepsat displacement volani
+`0x8aa4` (zvuk palby) na `0x553a`** - jeden vystrel pak spusti synth
+nativni cestou. Prvni trasa takto porizena ukazuje, ze original v prvni
+tretine efektu hraje periody kolem **130-150**, zatimco nas render tam
+clampuje na konstantnich 123; pozadovanych 74 nehraje ani jeden. Presne
+cislo potrebuje cistsi nahravku (bez ostatnich efektu) a lepsi odhad
+frekvence nez pocitani prechodu nulou.
 
 ## Junkce map a `levelPhase` (nalezeno pri revizi 2026-09-06)
 

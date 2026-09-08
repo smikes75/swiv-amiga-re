@@ -101,6 +101,44 @@ PLAY_PROLOGUE = """() => {
 }""" % (list(TRAINER_KEYS),)
 
 
+# --- baze A6 a AMPROG.OBJ v chip RAM (zmereno 2026-09-08) ------------------
+# A6 je bazovy registr globalu (fp@(N)) i skokove tabulky na zapornych
+# offsetech; nastavuje jej zavadec jeste pred vstupem do AMPROG.OBJ (0xc72
+# uz ho prvni instrukci pouziva), takze v disassembly neni videt.
+#
+# Zmereno takto: fp@(3530) je mapova pozice 16.16, kterou scroll task 0x3cd4
+# snizuje presne o fp@(3526) = 0x4000 za VBL. Dva otisky chip RAM N snimku od
+# sebe -> hledej longy, ktere klesly o N*0x4000, a filtruj tim, ze long tesne
+# pred nimi je 0x4000. Zbyde jedina adresa; A6 = ta adresa - 3530.
+# Baze AMPROG.OBJ se najde podle bajtu rutiny 0x5556 (61 00 f5 88 41 ed ...).
+#
+# Overeno dvema behy s ruznou delkou hry: obe daly stejne hodnoty.
+A6_BASE = 0x17DC          # 6108
+PROG_BASE = 0xEFC0        # 61376
+FIND_A6_JS = """(frames) => {
+  const H = VA.M.HEAPU8, p = VA.fn.chipPtr(), n = VA.fn.chipSize();
+  const before = H.slice(p, p + n);
+  VA.run(frames, null);
+  const after = H.slice(p, p + n);
+  const be = (a, i) => (a[i]<<24 | a[i+1]<<16 | a[i+2]<<8 | a[i+3]) >>> 0;
+  const hits = [];
+  for (let i = 0; i + 4 <= n; i += 2)
+    if (((be(before, i) - be(after, i)) | 0) === frames * 0x4000 &&
+        be(after, i - 4) === 0x4000) hits.push(i - 3530);
+  return hits;
+}"""
+FIND_PROG_JS = """() => {
+  const H = VA.M.HEAPU8, p = VA.fn.chipPtr(), n = VA.fn.chipSize();
+  const sig = [0x61,0x00,0xf5,0x88,0x41,0xed,0x00,0x0c,0x29,0x48,0x00,0xa0];
+  const out = [];
+  outer: for (let i = 0; i + sig.length <= n; i += 2) {
+    for (let k = 0; k < sig.length; k++) if (H[p+i+k] !== sig[k]) continue outer;
+    out.push(i - 0x5556);
+  }
+  return out;
+}"""
+
+
 def grab(t_after_fire, out_raw, chip=None, headless=True):
     """Vrati (raw RGB24 716x285, volitelne kopii chip RAM) v case t po fire."""
     target = ZERO_AT + t_after_fire

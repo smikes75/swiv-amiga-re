@@ -346,6 +346,14 @@ Also read along the way:
   Canvas prevod skutecnych COLOR16–31 slov pouziva z headless-vAmiga
   baseline zmerenou radu high nibblu `106,123,141,159,178,197,216,236`;
   fitted mapova paleta je od teto registrove cesty zamerne oddelena.
+- **`A6` is the base of the global area and of the negative-offset jump
+  table.** The loader sets it before `AMPROG.OBJ` is entered (`0xc72` already
+  uses `%fp@` in its first instruction), so it is not visible in the program
+  itself. Measured in the emulator on 2026-09-08: **`A6 = 0x17DC`** in chip
+  RAM, with `AMPROG.OBJ` loaded at **`0xEFC0`**. The negative offsets hold
+  `BRA.W` entries four bytes apart. `tools/survey/vacmp.py` carries both
+  constants and the two searches that re-derive them, so a different build or
+  disk can be re-measured rather than assumed.
 - A level-select cheat handler reads raw keys at `0x20e4`.
 - The normal attract dispatcher starts at `0x0d64`. The browser follows its
   COVER -> Sales Curve -> HELI blueprint/scores -> JEEP blueprint/scores ->
