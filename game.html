@@ -76,6 +76,7 @@ a { color:#cfe0ff }
       style="width:3.5em;font:inherit">
     &nbsp;&middot;&nbsp; scroll <input type="range" id="scrollpct" min="25" max="200" step="5"
       value="100" style="width:130px;vertical-align:middle"><span id="scrollval">100%</span>
+    &nbsp;&middot;&nbsp; <span title="Vyvojarska zkratka: preskoci na zaverecnou sekvenci hry">C&nbsp;=&nbsp;konec hry</span>
     &nbsp;&middot;&nbsp; <label title="Svisle prolnuti pozadi: plynuly posun i pod 4x, teren je za to pri pohybu mekci"><input type="checkbox" id="blendchk"> hladk&#233; pozad&#237;</label>
   </div>
   <div id="zoomrow" role="group" aria-label="Velikost hern&#237;ho pole">
@@ -7270,6 +7271,16 @@ const KEYMAP = { ArrowLeft: "l", ArrowRight: "r", ArrowUp: "u", ArrowDown: "d",
 // odjel sam; pri ztrate fokusu se proto stav klaves vycisti.
 window.addEventListener("blur", () => { if (state.g) state.g.keys = {}; });
 window.addEventListener("keydown", e => {
+  // Vyvojarska zkratka (neni v originale): C preskoci na zaverecnou
+  // sekvenci 0x0f42, ke ktere se jinak lze dostat jen dohranim vsech
+  // sedmi zon. Statistika 0x0da2 na ni nativne navazuje, takze se
+  // ukaze hned po ni.
+  if (e.key.toLowerCase() === "c" && state.g && !state.g.over) {
+    const g = state.g;
+    g.won = true; g.over = true; g.congrat = null;
+    e.preventDefault();
+    return;
+  }
   const k = KEYMAP[e.key];
   if (k && state.g) { state.g.keys[k] = true; e.preventDefault(); }
 });
