@@ -7500,7 +7500,7 @@ function step(g) {
           margin = (g.inst1Factories | 0) > 0 ? 0 : Infinity;
         else if (s.beh === "corn") margin = -80;      // 0x8218
         else if (s.beh === "swappad0") margin = -16;  // 0xac70
-        else if (s.beh === "trackzone") margin = 0;   // 0xad38: 0x9ac8(0)
+        else if (s.beh === "trackzone") margin = -16; // 0xadf8
         else if (s.beh === "airplane") margin = s.airMargin; // 0x7978/0x797e
         else if (s.beh === "blinklight") margin = -24;  // 0xb95a
         else if (s.beh === "mine" || s.beh === "camogun" ||
@@ -7523,6 +7523,25 @@ function step(g) {
         else if (s.beh === "proxmine") {
           margin = s.activationMargin;
         }
+        // Doplneno 2026-09-09 po statickem porovnani s a2c6 D2
+        // (tools/margins.py): tato chovani se drive rodila na vychozich
+        // -32, tedy o 16 px driv, nez je original pusti.
+        else if (s.beh === "tank") margin = -16;      // 0x9ee0
+        else if (s.beh === "roto") margin = -16;      // 0x9954
+        else if (s.beh === "mine") margin = -16;      // 0x9b1c
+        else if (s.beh === "camogun") margin = -16;   // 0xac18
+        else if (s.beh === "blackjet") margin = -48;  // 0x7ab0
+        else if (s.beh === "onerig") margin = -16;    // 0x816c
+        else if (s.beh === "egg") margin = -16;       // 0x847e
+        else if (s.beh === "trilo") margin = -16;     // 0x8270
+        else if (s.beh === "plat") margin = -16;      // 0xa3be
+        else if (s.beh === "vtol") margin = -16;      // 0x834a
+        else if (s.beh === "flattank") margin = -16;  // 0x9e18
+        else if (s.beh === "rig") margin = -16;       // 0xb230
+        else if (s.beh === "xevdrift") margin = -16;  // 0x7920
+        else if (s.beh === "xevplane") margin = -16;  // 0xadf8
+        else if (s.beh === "inst5") margin = 0;       // 0xc06e
+        else if (s.beh === "swappad") margin = -16;   // 0xacbc
         if (esy >= margin) fire = true;
       }
       else if ((s.beh === "unimplemented" || s.beh === "missing-dispatch") &&

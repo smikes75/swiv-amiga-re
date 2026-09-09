@@ -18,6 +18,15 @@ okamziku, kdy se zamek uvolni; kontrolni bod je "ujeto D pixelu".
 
 Parovani: gfx + poloha na obrazovce (x, y - kamera), tolerance TOL px.
 
+**Znama slabina (2026-09-09):** parovani je spolehlive jen u objektu, ktere
+stoji. Pohybujici se objekt se od aktivace posune, takze se sparuje s jinym
+kusem teze grafiky, ktery nahodou stoji blizko - a diagnostika "prepis ma,
+ale jeste neaktivoval" pak ukaze rozdil 0 px na uplne jinem objektu. Nez se
+tohle vyresi (parovanim pres poradi vzniku, ne polohu), berte za prukazne
+jen radky "prepis nema vubec" a soucty; jednotlive rozdily u pohyblivych
+druhu je treba overit rucne. Staticka kontrola marzi bez teto slabiny je
+v tools/margins.py.
+
     python3 tools/objdiff.py            # vsechny kontrolni body
     python3 tools/objdiff.py 500 1000   # vlastni vzdalenosti
 """

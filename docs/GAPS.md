@@ -626,6 +626,34 @@ a hp -27862. `+504` je pritom **bitove pole**, ne vycet - vedle znamych 4,
 `anim_task` pripise "inicializovano". Pro mapove objekty to nevadi (ty `a2c6`
 volaji vzdy), u efektovych uloh se na priznak spolehat nelze.
 
+## Aktivacni marze: 18 chovani opraveno (2026-09-09)
+
+`0x9ac8` (volane z `a2c6`) drzi korutinu, dokud `y - D2 < kamera` unsigned,
+tedy pusti ji presne pri `ys >= D2`, kde `D2` je registr pri volani `a2c6`.
+Prepis tuto hodnotu drzi v `step()` jako `margin`, ale mel ji vypsanou jen
+u casti chovani - zbytek bral vychozich -32.
+
+`tools/margins.py` porovnal obe strany staticky a nasel **18 rozdilu**;
+u peti (tank, roto, mine, camogun, rig) jsem hodnotu overil primo v
+disassembly (`moveq #-16,%d2`). Vetsina se rodila o **16 px driv**, nez ma,
+coz je pri 12,5 px/s asi 1,3 s. Opraveno, `margins.py` hlasi 0 rozdilu,
+compare/smoothtest/uitest zustavaji zelene (parita TOWN 99,9 / 99,0 / 98,3
+/ 99,9 %).
+
+Parser je zamerne konzervativni: kdyz mezi zapisem do `D2` a volanim `a2c6`
+lezi skok nebo cil skoku, hlasi "nelze urcit staticky" misto falesneho
+nalezu. Hned to zabralo u `0x7970`, kde rodic ma `movew #176` a pres `bras`
+preskoci `moveq #127`, coz je vstup ditete - naivni zpetne hledani by
+ohlasilo chybu tam, kde zadna neni.
+
+**Otevrene: parovani pohyblivych objektu v `objdiff.py`.** Harness umi
+synchronizovat obe strany na 0 px pres ujety scroll a spolehlive rekne,
+kolik objektu ma kazda strana. Konkretni dvojice ale paruje podle polohy,
+takze pohybujici se objekt se sparuje s jinym kusem teze grafiky, ktery
+nahodou stoji blizko. Pro prukazne porovnani jednotlivych objektu je potreba
+parovat pres poradi vzniku (bobOrdinal na jedne strane, poradi ve fronte na
+druhe), ne pres polohu.
+
 ## Junkce map a `levelPhase` (nalezeno pri revizi 2026-09-06)
 
 `g.levelPhase` se inicializuje cislem urovne (`lv`), ale `g.junctionRows`
