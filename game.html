@@ -76,7 +76,11 @@ a { color:#cfe0ff }
       style="width:3.5em;font:inherit">
     &nbsp;&middot;&nbsp; scroll <input type="range" id="scrollpct" min="25" max="200" step="5"
       value="100" style="width:130px;vertical-align:middle"><span id="scrollval">100%</span>
-    &nbsp;&middot;&nbsp; <span title="Vyvojarska zkratka: preskoci na zaverecnou sekvenci hry">C&nbsp;=&nbsp;konec hry</span>
+    &nbsp;&middot;&nbsp; <button type="button" id="btnrestart" title="Zacit aktualni zonu znovu">&#8635; restart</button>
+    <button type="button" id="btnback" title="O pul zony zpet">&#9668;&#9668;</button>
+    <button type="button" id="btnfwd" title="O pul zony vpred">&#9658;&#9658;</button>
+    <span id="jumplabel" style="opacity:.8"></span>
+    &nbsp;&middot;&nbsp; <button type="button" id="btnend" title="Preskocit na zaverecnou sekvenci (klavesa C)">konec hry</button>
     &nbsp;&middot;&nbsp; <label title="Svisle prolnuti pozadi: plynuly posun i pod 4x, teren je za to pri pohybu mekci"><input type="checkbox" id="blendchk"> hladk&#233; pozad&#237;</label>
   </div>
   <div id="zoomrow" role="group" aria-label="Velikost hern&#237;ho pole">
@@ -7053,6 +7057,10 @@ function startGame(lv) {
       };
     });
 
+  // Vyvojarsky skok po mape potrebuje vratit objekt do stavu pred
+  // spustenim korutiny; melka kopie hned po vytvoreni je presne to.
+  for (const s of spawns) s.clean = Object.assign({}, s);
+
   const g = state.g = {
     lv, big, mapIndex: m.mapIndex, terrainOpen: m.terrainOpen,
     mapW: m.w, spawns, mapH: m.h,
@@ -7248,6 +7256,21 @@ document.getElementById("smoothchk").onchange = e => {
 document.getElementById("blendchk").onchange = e => {
   state.blendBg = e.target.checked; updateZoomLabel();
 };
+document.getElementById("btnrestart").onclick = () => {
+  if (state.g) { startGame(state.g.lv | 0); updateJumpLabel(); }
+  document.getElementById("game").focus();
+};
+document.getElementById("btnfwd").onclick = () => {
+  jumpMap(state.g, 0.5); document.getElementById("game").focus();
+};
+document.getElementById("btnback").onclick = () => {
+  jumpMap(state.g, -0.5); document.getElementById("game").focus();
+};
+document.getElementById("btnend").onclick = () => {
+  const g = state.g;
+  if (g && !g.over) { g.won = true; g.over = true; g.congrat = null; }
+  document.getElementById("game").focus();
+};
 document.getElementById("livesbox").onchange = e => {
   const g = state.g; if (!g) return;
   g.lives = Math.max(1, +e.target.value || 4);
@@ -7270,6 +7293,68 @@ const KEYMAP = { ArrowLeft: "l", ArrowRight: "r", ArrowUp: "u", ArrowDown: "d",
 // Prepnuti okna s drzenou klavesou nechalo klavesu "zmacknutou" a stroj
 // odjel sam; pri ztrate fokusu se proto stav klaves vycisti.
 window.addEventListener("blur", () => { if (state.g) state.g.keys = {}; });
+/* ---- Vyvojarske ovladani (neni soucast originalu) -------------------
+   Skok po mape meni jen scroll a znovu nastavi `armed` podle nove polohy,
+   tedy stejnym pravidlem jako startGame. Zive objekty se zahodi, aby po
+   skoku nezustali viset nepratele z mist, ktera uz nejsou na obrazovce. */
+function zoneBounds(g) {
+  // junctionRows jsou konce map v souradnicich scrollu (klesaji). Doplnime
+  // zacatek a konec, at je z toho seznam hranic zon odshora dolu.
+  const rows = [g.mapH - 256].concat(g.junctionRows || []).concat([0]);
+  return rows.slice().sort((a, b) => b - a);
+}
+function currentZoneSpan(g) {
+  const b = zoneBounds(g), y = scrollTop(g);
+  for (let i = 0; i < b.length - 1; i++)
+    if (y <= b[i] && y > b[i + 1]) return b[i] - b[i + 1];
+  return 1700;                                  // fallback: prumerna zona
+}
+function jumpMap(g, fraction) {
+  if (!g || g.over) return;
+  const span = currentZoneSpan(g);
+  const target = Math.max(0, Math.min(g.mapH - 256,
+                                      g.scroll - span * fraction));
+  g.scroll = target; g.scrollPrev = target;
+  // Kazdy objekt se vrati do stavu pred spustenim korutiny; jinak by po
+  // skoku zustaly viset rozpracovane stavy (boss bez `parts` a podobne).
+  for (const s of g.spawns) {
+    if (s.clean) { const c = s.clean; for (const k of Object.keys(s))
+      if (k !== "clean") delete s[k];
+      Object.assign(s, c); s.clean = c; }
+    // Presne pravidlo startGame: co uz je na obrazovce nebo za ni, se
+    // neozbroji a korutinu nikdy nedostane. Nic dalsiho nastavovat nesmime
+    // - objekt s `born` bez rozpracovaneho stavu by shodil step()
+    // (napriklad boss bez `parts`).
+    s.armed = (s.y - scrollTop(g)) < -32;
+  }
+  g.air.length = 0; g.hazards.length = 0; g.shots.length = 0;
+  g.bullets.length = 0; g.booms.length = 0; g.tokens.length = 0;
+  g.plops.length = 0; g.effects.length = 0;
+  g.townExplosionTasks = []; g.tokenSfxTasks = [];
+  g.activeCost = 0; g.inst1Factories = 0; g.levelEndHold = false;
+  g.boss = null; g.trackZone = null;
+  placePlayerSpawn(g);
+  updateJumpLabel();
+}
+const ZONE_NAMES = ["TOWN", "DESERT", "GRASS", "RIVER", "ICE", "SCIFI", "FINAL"];
+function updateJumpLabel() {
+  const el = document.getElementById("jumplabel"), g = state.g;
+  if (!el) return;
+  if (!g) { el.textContent = ""; return; }
+  const y = scrollTop(g);
+  // Zonu urcuje `mapIndex` mapovych objektu, ktery prirazuje parseMapChain;
+  // pocitat ji z junctionRows nevychazi, protoze ty jsou v jine konvenci
+  // (viz zname `levelPhase` vs `junctionRows` v docs/GAPS.md).
+  let best = null, bestD = Infinity;
+  for (const s of g.spawns) {
+    const d = Math.abs(s.y - y - 128);
+    if (d < bestD) { bestD = d; best = s; }
+  }
+  const zone = best ? (g.lv | 0) + (best.mapIndex | 0) : (g.lv | 0);
+  el.textContent = (ZONE_NAMES[zone] || "?") +
+    "  " + Math.round(g.mapH - 256 - y) + " px";
+}
+
 window.addEventListener("keydown", e => {
   // Vyvojarska zkratka (neni v originale): C preskoci na zaverecnou
   // sekvenci 0x0f42, ke ktere se jinak lze dostat jen dohranim vsech
@@ -10129,6 +10214,7 @@ function frame(now) {
     if (g.won && g.congrat && !g.congrat.done) renderCongrat(ctx, g);
     else renderStatsScreen(ctx, g);
   }
+  if ((g.tick & 31) === 0) updateJumpLabel();
 
   requestAnimationFrame(frame);
 }
