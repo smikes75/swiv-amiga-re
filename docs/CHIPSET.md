@@ -167,3 +167,35 @@ kazda operace se opakuje pro vsechny ctyri roviny.
 Pro 2,5D nebo 3D efekty to znamena, ze vrstvy jsou oddelitelne uz na urovni
 dat: teren je bitmapa, objekty jsou seznam blitu se znamou pozici a
 velikosti, strely jsou sprite kanaly. Neni potreba nic odhadovat z obrazu.
+
+
+# Faze 4: nastroje (2026-09-09)
+
+Z fazi 1-3 vznikly ctyri nastroje a zadny neni vazany na SWIV:
+
+| nastroj | co dela |
+|---|---|
+| `tools/vamiga-regtrace.patch` | hook na `Memory::pokeCustom16`; kazdy zapis do custom registru s PC, zdrojem (CPU/Agnus) a rastrovou pozici |
+| `tools/copper.py` | disassembler copper listu - cte zivy original nebo soubor |
+| `tools/blitlog.py` | slozi z trace jednotlive blit operace: minterm, zdroje, rozmer, moduly, ukazatele, PC |
+| `tools/layers.py` | slozi snimek primo z chip RAM podle copper listu, bez emulatoru |
+
+U jineho titulu reknou prvni tri totez za jeden beh. `layers.py` je zatim
+rozpracovany - viz nize.
+
+## Otevrene: casovani `layers.py`
+
+Slozeny obraz je rozpoznatelna herni obrazovka (teren, budovy, formace
+nepratel, HUD), ale proti snimku emulatoru souhlasi jen asi **21 %** pixelu
+i pri nejlepsim vyrezu, a objekty nejsou jen posunute - jsou na jinych
+mistech.
+
+Nejpravdepodobnejsi vysvetleni je casovy posun: bitplany ctu **po** dobehnuti
+snimku, takze uz obsahuji stav pro snimek nasledujici. Hra kresli BOBy hned
+po VBL (59 blitu na snimek), kdezto textura emulatoru vznikla behem
+rasterizace, tedy pred timto kreslenim. Pro presne porovnani by se chip RAM
+musela cist uprostred snimku (napriklad na `VP=44`), coz harness zatim
+neumi - `wasm_step` bezi po celych snimcich.
+
+Struktura sama overena je: ukazatele bitplanu, palety, splity a moduly
+souhlasi s tim, co projekt drzi nezavisle v `docs/HUD.md` a `game.html`.
