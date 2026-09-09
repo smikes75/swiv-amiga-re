@@ -561,21 +561,37 @@ a `SMART.SND` (8280 B) na `0x4EC60`. Vzorek vybuchu, ktery hraje pri smrti
 bosse, tedy spravny je. (`AMTITUNE.MOD` se za behu hry v pameti nenajde -
 titulni hudba se pri nacteni hernich dat zahodi, jak rika docs/SOUND.md.)
 
-**Zmereny podil period pod DMA limitem.** Prvni cista nahravka `0x553a` z
-originalu (spustena prepsanim displacementu volani `0x8aa4` na `0x553a`,
-takze efekt bezi nativni cestou vcetne zastaveni DMA v `0x4bca`) dava jako
-nejkratsi skutecne zahrane periody **114, 116, 119, 120, 125, 126**.
-Teoreticky limit jednoho kanalu je jedno slovo na radek = 227/2 = **113,5**,
-takze `PAULA_PAL_MIN_DMA_PERIOD = 123` v nasem renderu je asi o 8 % (130
-centu) moc vysoko. vAmiga zadny pevny clamp nema - `StateMachine.cpp`
-implementuje skutecny automat (`AUDxDR()`, `percntrld()`), takze to cislo
-vypadlo z emulovaneho casovani DMA, ne z konstanty.
+**Uzavreno 2026-09-09 podle HRM: prah 123 i zpusob modelovani jsou spravne.**
+Hardware Reference Manual (3. vydani, kapitola o zvuku) rika doslova: *"If
+the period value is below 124, ... the audio DMA will not have had enough
+time to retrieve the next data sample and the previous sample will be
+reused"* a *"for PAL systems, a value of at least 123 ticks/sample must be
+written into the period register"*. `PAULA_PAL_MIN_DMA_PERIOD = 123` je tedy
+primo z dokumentace, ne odhad.
 
-Porovnani stav po stavu ale zatim neni cisté: `0x553a` posila obe vrstvy
-pres oba selektory a druha muze po rejectu propadnout do teze dvojice, takze
-se v jednom kanale sectou dva tony s periodami 200 a 202 a odhad frekvence
-z prechodu nulou pak nedava smysl. Nez se prah opravi, chce to nahravku s
-jistotou, ze v kanale hraje jen jedna vrstva.
+Overeny je tim i **zpusob** modelovani. Pri opakovani vzorku postoupi index
+ve vlne jen tehdy, kdyz DMA stihne dodat, tedy nejvyse jednou za 123 tiku;
+trajektorie indexu je `min(k, floor(k*perioda/123))`, coz je matematicky
+totez, co dela nas clamp rychlosti posunu adresy. Lisi se jen jemna
+struktura schodu, ktera lezi nad slysitelnym pasmem.
+
+**Mezikrok, ktery se timto rusi.** Prvni cista nahravka `0x553a` z originalu
+(spustena prepsanim displacementu volani `0x8aa4` na `0x553a`, aby efekt sel
+nativni cestou vcetne zastaveni DMA v `0x4bca`) vypadala, jako by nejkratsi
+zahrane periody byly 114-126, a z toho vzniklo tvrzeni, ze nas prah je o 130
+centu moc vysoko. Bylo to spatne dvakrat: 227/2 = 113,5 neni skutecny
+rozpocet DMA, a hlavne odhad periody z prechodu nulou na roztresenem prubehu
+nemeri zakladni frekvenci. Byl to artefakt meridla, ne nalez o hardwaru.
+
+Porovnani stav po stavu navic neni ciste z jineho duvodu: `0x553a` posila
+obe vrstvy pres oba selektory a druha muze po rejectu propadnout do teze
+dvojice, takze se v jednom kanale sectou dva tony s periodami 200 a 202.
+
+Rozdil, ktery uzivatel slysel, tedy podle vseho nepochazi z chovani pod
+periodou 123. Prvni porovnani dostal jako **samotny synth**, zatimco ve hre
+na nej hned nasedaji dve vrstvy BIGEXPL (`build/sfx-boss/boss-death-REMAKE-CELY.wav`).
+Nahravka ze skutecne Amigy zustava vitana jako kontrola, ale uz na ni nevisi
+zadna konkretni konstanta.
 
 Zbyva zmerit zvuk `0x553a`. Prve pokusy: instalace pozadavku primo do
 hlasove struktury (`fp@(10786)`, ctyri po 268 B) zafunguje, ale zacatek
