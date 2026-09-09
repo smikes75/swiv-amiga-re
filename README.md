@@ -70,6 +70,9 @@ python3 tools/gfx.py raw ... cover.png     # decode a full screen to PNG
 python3 tools/gfx.py sheets out/ sheets/   # sprite sheets for every .LIN
 python3 tools/map.py                       # render all 7 levels as tall PNGs
 python3 tools/uitest.py                    # Chromium runtime/behaviour regressions
+python3 tools/spawncheck.py                # every map object is born on its own margin
+python3 tools/margins.py                   # a2c6 D2 in AMPROG.OBJ vs the remake
+python3 tools/objdiff.py --events 900      # activation moments, original vs remake
 ```
 
 Disassembly needs `m68k-elf-binutils` (`brew install m68k-elf-binutils`).

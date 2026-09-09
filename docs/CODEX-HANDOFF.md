@@ -64,6 +64,7 @@ Run from the repository root:
 ```sh
 python3 tools/check.py
 python3 tools/uitest.py
+python3 tools/spawncheck.py
 python3 tools/hudscan.py SWIVFIX.ADF
 python3 tools/hudscan.py build/files/001_AMPROG.OBJ
 python3 tools/animscan.py | diff -u docs/ANIMS.md -
