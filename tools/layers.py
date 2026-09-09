@@ -12,20 +12,24 @@ registry displeje) a chip RAM. Vystupem jsou oddelene vrstvy:
 Je to zaroven test celeho pochopeni: kdyz slozeny obraz sedi s tim, co
 ukazuje emulator, znamena to, ze model displeje je spravny.
 
-**Stav 2026-09-09: struktura sedi, casovani ne.** Slozeny obraz je
-rozpoznatelna herni obrazovka - teren, budovy, formace nepratel, HUD - ale
-proti snimku emulatoru souhlasi jen asi 21 % pixelu, a to i pri nejlepsim
-vyrezu. Objekty pritom nejsou jen posunute, jsou na jinych mistech.
+**Stav 2026-09-09: 73 % shody s emulatorem** pri toleranci 20 na kanal.
 
-Nejpravdepodobnejsi vysvetleni: **bitplany ctu po dobehnuti snimku, takze uz
-obsahuji stav pro snimek nasledujici.** Hra kresli BOBy hned po VBL, kdezto
-textura emulatoru vznikla behem rasterizace, tedy pred timto kreslenim. Pro
-presne porovnani je potreba cist chip RAM uprostred snimku (napr. na
-`VP=44`), ne po nem - to zatim harness neumi.
+Cesta k tomu cislu stala za dve opravy, obe v mereni, ne v modelu:
+1. **Gamma.** Prvni verze prevadela RGB12 jako `nibble * 17`, kdezto vAmiga
+   linearizuje CRT gammou 2.8 a re-koduje 1/2.2. Rozdil byl systematicky
+   (102 -> 72, 85 -> 56, 51 -> 28) a shodu drzel na 21 %. Tabulka je stejna
+   jako `VAMIGA_LUT` v `tools/compare.py`.
+2. **Vyrez.** Vyrez `(124, 26)` je z `tools/compare.py`, ktery porovnava
+   snimek z VAHeadless - ten ma jine okraje. Spravny vyrez pro texturu z
+   naseho harnessu je `(62, 18)`; hledanim maxima vyskocil ze 33 na 73 %.
 
-Struktura (copper list, ukazatele, palety, splity, moduly) je overena
-nezavisle: hodnoty souhlasi s tim, co projekt drzi v `docs/HUD.md` a
-`game.html`.
+Predtim jsem myslel, ze rozdil je casovy - ze se bitplany ctou po dobehnuti
+snimku, kdezto textura vznikla behem rasterizace. **Zmereno a vyvraceno:**
+cteni na `VP` 0, 44, 150, 260 i 300 (pres `wasm_step_line`) dava shodu
+20-21 %, tedy nezavisle na okamziku.
+
+Zbylych 27 % jsou hardwarove sprity (osm kanalu, ktere `render()` zatim
+nekresli), okraje mimo DIW a pixely na hranach objektu.
 
     python3 tools/layers.py [adresar]
 """
@@ -102,8 +106,15 @@ def parse_copper(data, base):
     return st
 
 
-def rgb12(word):
-    return (((word >> 8) & 15) * 17, ((word >> 4) & 15) * 17, (word & 15) * 17)
+# vAmiga neprevadi RGB12 linearne (nibble*17): Denise linearizuje CRT gammou
+# 2.8 a re-koduje 1/2.2. Tabulka je zmerena v tools/compare.py; pouzivame ji
+# tady, aby slo porovnavat se snimkem emulatoru ve stejne soustave.
+VAMIGA_LUT = [0, 0, 0, 28, 43, 56, 72, 89, 106, 123, 141, 159, 178, 197, 216, 236]
+
+
+def rgb12(word, lut=True):
+    n = [(word >> 8) & 15, (word >> 4) & 15, word & 15]
+    return tuple(VAMIGA_LUT[v] if lut else v * 17 for v in n)
 
 
 def render(chip, chipbase, st, planes=None, first_row=0):
@@ -186,9 +197,11 @@ def main():
     Image.frombytes("RGB", (W, H), slozeno).save(os.path.join(out, "slozeno.png"))
     em = Image.frombytes("RGB", (716, 285), shot)
     em.save(os.path.join(out, "emulator.png"))
-    # Emulator vraci 716x285 se dvojnasobnou vodorovnou hustotou; vyrez
-    # odpovidajici 320x256 oblasti je (124, 26) o velikosti 640x256.
-    crop = em.crop((124, 26, 124 + 640, 26 + 256)).resize((W, H), Image.NEAREST)
+    # Emulator vraci 716x285 se dvojnasobnou vodorovnou hustotou. Vyrez
+    # odpovidajici hernimu poli je (62, 18) - zmereno hledanim maxima shody.
+    # Neni to vyrez z tools/compare.py: ten porovnava snimek z VAHeadless,
+    # ktery ma jine okraje.
+    crop = em.crop((62, 18, 62 + 640, 18 + 256)).resize((W, H), Image.NEAREST)
     crop.save(os.path.join(out, "emulator_320.png"))
     ours = Image.frombytes("RGB", (W, H), slozeno)
     a, bpx = ours.load(), crop.load()
@@ -196,7 +209,7 @@ def main():
     for y in range(H):
         for x in range(W):
             p1, p2 = a[x, y], bpx[x, y]
-            if all(abs(p1[i] - p2[i]) <= 24 for i in range(3)):
+            if all(abs(p1[i] - p2[i]) <= 20 for i in range(3)):
                 same += 1
     print("shoda s emulatorem: %.1f %% (%d z %d pixelu)" %
           (100.0 * same / (W * H), same, W * H))

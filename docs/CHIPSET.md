@@ -183,19 +183,26 @@ Z fazi 1-3 vznikly ctyri nastroje a zadny neni vazany na SWIV:
 U jineho titulu reknou prvni tri totez za jeden beh. `layers.py` je zatim
 rozpracovany - viz nize.
 
-## Otevrene: casovani `layers.py`
+## `layers.py`: 73 % shody, model displeje overen
 
-Slozeny obraz je rozpoznatelna herni obrazovka (teren, budovy, formace
-nepratel, HUD), ale proti snimku emulatoru souhlasi jen asi **21 %** pixelu
-i pri nejlepsim vyrezu, a objekty nejsou jen posunute - jsou na jinych
-mistech.
+Snimek slozeny **primo z chip RAM podle copper listu, bez emulatoru**,
+souhlasi se snimkem emulatoru na **73 %** pixelu (tolerance 20 na kanal).
+Tim je model displeje overeny prakticky, ne jen strukturalne.
 
-Nejpravdepodobnejsi vysvetleni je casovy posun: bitplany ctu **po** dobehnuti
-snimku, takze uz obsahuji stav pro snimek nasledujici. Hra kresli BOBy hned
-po VBL (59 blitu na snimek), kdezto textura emulatoru vznikla behem
-rasterizace, tedy pred timto kreslenim. Pro presne porovnani by se chip RAM
-musela cist uprostred snimku (napriklad na `VP=44`), coz harness zatim
-neumi - `wasm_step` bezi po celych snimcich.
+Cesta k tomu cislu stala za dve opravy, obe v mereni, ne v modelu:
+1. **Gamma.** Prvni verze prevadela RGB12 jako `nibble * 17`, kdezto vAmiga
+   linearizuje CRT gammou 2.8 a re-koduje 1/2.2 (102 -> 72, 85 -> 56,
+   51 -> 28). Drzelo to shodu na 21 %. Je to tataz `VAMIGA_LUT`, kterou uz
+   projekt pouziva v `tools/compare.py`.
+2. **Vyrez.** Prevzal jsem `(124, 26)` z `compare.py`, jenze ten porovnava
+   snimek z VAHeadless s jinymi okraji. Spravny vyrez pro texturu z naseho
+   harnessu je `(62, 18)` - hledanim maxima shoda vyskocila ze 33 na 73 %.
 
-Struktura sama overena je: ukazatele bitplanu, palety, splity a moduly
-souhlasi s tim, co projekt drzi nezavisle v `docs/HUD.md` a `game.html`.
+**Vyvracena hypoteza.** Puvodne jsem rozdil pripisoval casovemu posunu: ze
+se bitplany ctou po dobehnuti snimku, kdezto textura vznikla behem
+rasterizace. Zmereno pres `wasm_step_line` na `VP` 0, 44, 150, 260 a 300 -
+shoda vsude 20-21 %, tedy na okamziku cteni **nezavisi**. Hypoteza byla
+vedle, chyba byla v barvach a vyrezu.
+
+Zbylych 27 % jsou hardwarove sprity (osm kanalu, ktere `render()` zatim
+nekresli), okraje mimo DIW a pixely na hranach objektu.
