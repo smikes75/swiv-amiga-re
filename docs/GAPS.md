@@ -604,22 +604,27 @@ clampuje na konstantnich 123; pozadovanych 74 nehraje ani jeden. Presne
 cislo potrebuje cistsi nahravku (bez ostatnich efektu) a lepsi odhad
 frekvence nez pocitani prechodu nulou.
 
-## Rozliseni typu zivych uloh (otevrene, 2026-09-09)
+## Rozliseni typu zivych uloh - VYRESENO (2026-09-09)
 
-`tools/survey/tasks_live.py` uz kazde zive uloze originalu priradi chovani
-podle PC na `+270` (43 ze 43 objektu s prioritou 100 v TOWN). Poloha `x`/`y`
-sedi i proti snimku obrazovky.
+`tools/survey/tasks_live.py` priradi kazde zive uloze chovani podle PC na
+`+270` a nove i pozna, jestli uz prosla `a2c6`, tedy jestli jsou `+360 hp` a
+`+504 trida` platne.
 
-Zbyva ale poznat **typ** ulohy. Offsety `+360 hp` a `+504 trida` plati pro
-plnohodnotne objekty (`a5` v korutinach `AMPROG.OBJ`); u deti a efektovych
-uloh tam lezi neco jineho, takze vychazi `trida 8191`, `-32768`, `21064`
-nebo `hp -27862`. Pri porovnani po objektech se proto zatim smi porovnavat
-jen poloha a jmeno chovani, ne HP a trida.
+**Marker:** `a2c6` na `0xa326` zapise `movel #0xa36a, +534` (handler smart
+pulzu). Smart-immune se pak dodela zapisem jen do **horni** poloviny -
+`movew #-1, +534` (`0x8604`) nebo `st +534` (12 mist) - protoze `0x6468`
+testuje znamenko celeho longu. Spodni slovo tedy zustava `0xa36a` i u immune
+objektu a je to spolehlivy priznak inicializace.
 
-Nejblizsi cesta: `0x1030` alokuje zaznam po 308 bajtech pro vsechny typy, ale
-`a2c6` (0xa2c6) plni pole objektu jen u tech, ktere jim projdou. Rozliseni by
-tedy mohlo jit podle toho, zda PC ulohy lezi za volanim `a2c6`, nebo podle
-pole, ktere `a2c6` prokazatelne zapisuje (`+370` gfx, `+362` skore).
+Overeno na peti kontrolnich bodech (20..100 s hry, 198 uloh): oznacene ulohy
+maji vyhradne platne tridy a hp 0..3, neoznacene maji tridy typu 8191, 21064
+a hp -27862. `+504` je pritom **bitove pole**, ne vycet - vedle znamych 4,
+34, 36 se bezne objevuji i 32 a 72.
+
+**Znamy limit:** blok o 308 B se recykluje, a kdyz ho dostane uloha, ktera
+`a2c6` nevola, zustane v `+534` marker po predchozim uzivateli; zridka se tak
+`anim_task` pripise "inicializovano". Pro mapove objekty to nevadi (ty `a2c6`
+volaji vzdy), u efektovych uloh se na priznak spolehat nelze.
 
 ## Junkce map a `levelPhase` (nalezeno pri revizi 2026-09-06)
 

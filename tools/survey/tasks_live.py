@@ -25,16 +25,32 @@ import vacmp                                            # noqa: E402
 from playwright.sync_api import sync_playwright         # noqa: E402
 
 PC = 270                    # aktualni PC korutiny (overeno 2026-09-09)
+SMART = 534                 # +534: handler smart pulzu, viz INIT_MARK
 HEAD_MAIN = -698            # hlava hlavni fronty vuci A6
 HEAD_ALT = -1006
 NEXT = 4                    # odkaz na dalsi ulohu
 PRIO = 274
 
 # Offsety poli herniho objektu (a5 v korutinach AMPROG.OBJ).
-# Pozor: tyto offsety plati pro plnohodnotne objekty (a5 v korutinach
-# AMPROG.OBJ). Deti a efektove ulohy maji jine rozlozeni - u nich vychazi
-# napr. trida 8191 nebo hp -27862, coz jsou cizi data, ne skutecne hodnoty.
-# Rozliseni podle typu ulohy zatim otevrene, viz docs/GAPS.md.
+# Rozliseni inicializovanych uloh (2026-09-09): `a2c6` na 0xa326 zapise
+# `movel #0xa36a, +534` (handler smart pulzu). Smart-immune se pak dodela
+# zapisem jen do horni poloviny - `movew #-1, +534` (0x8604) nebo `st +534`
+# - protoze 0x6468 testuje znamenko celeho longu. **Spodni slovo tedy
+# zustava 0xa36a i u immune objektu** a je to spolehlivy marker toho, ze
+# uloha uz a2c6 prosla; u ostatnich jsou +360 hp a +504 trida jen smeti po
+# predchozim uzivateli bloku.
+#
+# Overeno na peti kontrolnich bodech (20..100 s hry, 198 uloh): oznacene
+# ulohy maji vyhradne platne tridy (bitove pole: 4, 32, 34, 36, 72, 0x8000,
+# 0x8006) a hp 0..3, kdezto neoznacene maji tridy typu 8191, 21064 a hp
+# -27862. Na obrazovce jsou neoznacene jen telo a stin hrace (0x939c),
+# ktery a2c6 skutecne nevola.
+#
+# **Znamy limit:** blok o 308 B se recykluje, a kdyz ho dostane uloha, ktera
+# a2c6 nevola, zustane v +534 marker po predchozim uzivateli. Zridka se tak
+# nekterym `anim_task` pripise "inicializovano". Pro porovnani mapovych
+# objektu to nevadi - ty a2c6 volaji vzdy - ale u efektovych uloh se na ten
+# priznak spolehat nelze.
 FIELDS = {"x": 320, "y": 324, "z": 328, "vx": 332, "vy": 336,
           "hp": 360, "cull": 364, "flags": 367, "trida": 504}
 
@@ -49,7 +65,10 @@ WALK_JS = """(cfg) => {
     const nx = L(node + cfg.next);
     if (!nx || nx >= n) break;
     if (out.some(t => t.adr === nx)) break;
-    const rec = { adr: nx, prio: W(nx + cfg.prio), pc: L(nx + cfg.pc) };
+    const h = L(nx + cfg.smart);
+    const rec = { adr: nx, prio: W(nx + cfg.prio), pc: L(nx + cfg.pc),
+                  init: (h & 0xffff) === cfg.mark,
+                  immune: (h & 0x80000000) !== 0 };
     for (const [k, off] of Object.entries(cfg.fields)) rec[k] = W(nx + off);
     out.push(rec);
     node = nx;
@@ -61,7 +80,8 @@ WALK_JS = """(cfg) => {
 def live_tasks(page, head=HEAD_MAIN):
     return page.evaluate(WALK_JS, {"a6": vacmp.A6_BASE, "head": head,
                                    "next": NEXT, "prio": PRIO, "pc": PC,
-                                   "fields": FIELDS})
+                                   "smart": SMART, "fields": FIELDS,
+                                   "mark": (0xa36a + vacmp.PROG_BASE) & 0xffff})
 
 
 def behaviour_index(root):
@@ -108,10 +128,18 @@ def main():
     starts = sorted(ent)
     objects = [t for t in tasks if t["prio"] == 100]
     print(f"uloh celkem {len(tasks)}, z toho priorita 100: {len(objects)}")
+    init = [t for t in objects if t["init"]]
+    print("  z toho inicializovanych (proslo a2c6): %d" % len(init))
     for t in objects:
-        print("  0x%05x  %-22s x %4d  y %7d  z %3d  hp %5d  trida %6d" %
-              (t["adr"], behaviour_of(ent, starts, t["pc"]),
-               t["x"], t["y"], t["z"], t["hp"], t["trida"]))
+        name = behaviour_of(ent, starts, t["pc"])
+        if t["init"]:
+            print("  0x%05x  %-22s x %4d  y %7d  z %3d  hp %5d  trida %6d%s" %
+                  (t["adr"], name, t["x"], t["y"], t["z"], t["hp"], t["trida"],
+                   "  immune" if t["immune"] else ""))
+        else:
+            # syrova uloha: +360/+504 jsou smeti, vypisujeme jen polohu
+            print("  0x%05x  %-22s x %4d  y %7d  z %3d  (neaktivovana)" %
+                  (t["adr"], name, t["x"], t["y"], t["z"]))
 
 
 if __name__ == "__main__":

@@ -372,10 +372,12 @@ Also read along the way:
   `x=95, y_scr=197` je na snimku presne tam, a dva vybuchy odpovidaji
   `child@0x8952` a `anim_task@0xab78`.
 
-  **Otevrene:** offsety `320/324/504` plati jen pro plnohodnotne objekty.
-  Deti a efektove ulohy maji jine rozlozeni - u nich vychazi trida 8191 nebo
-  hp -27862, coz jsou cizi data. Poloha `x` a `y` vypada spravne i u nich,
-  ale `hp`/`trida` se u nich cist nesmi, dokud se typ ulohy nerozlisi.
+  Jestli jsou `+360 hp` a `+504 trida` platne, pozna se podle `+534`:
+  `a2c6` tam zapise long `0xa36a`, a smart-immune se dodela zapisem jen do
+  horni poloviny (`movew #-1` na `0x8604`, nebo `st`), protoze `0x6468`
+  testuje znamenko celeho longu. **Spodni slovo tedy zustava `0xa36a`** i u
+  immune objektu a slouzi jako priznak inicializace; u neinicializovanych
+  uloh jsou `hp`/`trida` smeti po predchozim uzivateli bloku.
 - A level-select cheat handler reads raw keys at `0x20e4`.
 - The normal attract dispatcher starts at `0x0d64`. The browser follows its
   COVER -> Sales Curve -> HELI blueprint/scores -> JEEP blueprint/scores ->
