@@ -183,26 +183,37 @@ Z fazi 1-3 vznikly ctyri nastroje a zadny neni vazany na SWIV:
 U jineho titulu reknou prvni tri totez za jeden beh. `layers.py` je zatim
 rozpracovany - viz nize.
 
-## `layers.py`: 73 % shody, model displeje overen
+## `layers.py`: 99 % shody, model displeje overen
 
-Snimek slozeny **primo z chip RAM podle copper listu, bez emulatoru**,
-souhlasi se snimkem emulatoru na **73 %** pixelu (tolerance 20 na kanal).
-Tim je model displeje overeny prakticky, ne jen strukturalne.
+Snimek slozeny **primo z chip RAM podle copper listu, bez emulatoru a bez
+herniho kodu**, souhlasi se snimkem emulatoru na **99,0 %** pixelu
+(81073 z 81920, tolerance 20 na kanal).
 
-Cesta k tomu cislu stala za dve opravy, obe v mereni, ne v modelu:
-1. **Gamma.** Prvni verze prevadela RGB12 jako `nibble * 17`, kdezto vAmiga
-   linearizuje CRT gammou 2.8 a re-koduje 1/2.2 (102 -> 72, 85 -> 56,
-   51 -> 28). Drzelo to shodu na 21 %. Je to tataz `VAMIGA_LUT`, kterou uz
-   projekt pouziva v `tools/compare.py`.
-2. **Vyrez.** Prevzal jsem `(124, 26)` z `compare.py`, jenze ten porovnava
-   snimek z VAHeadless s jinymi okraji. Spravny vyrez pro texturu z naseho
-   harnessu je `(62, 18)` - hledanim maxima shoda vyskocila ze 33 na 73 %.
+Tim je cela analyza z fazi 1-3 overena prakticky: kdyz z ukazatelu, palet,
+splitu a modulu slozime obraz a ten sedi, znamena to, ze model displeje je
+spravny.
 
-**Vyvracena hypoteza.** Puvodne jsem rozdil pripisoval casovemu posunu: ze
-se bitplany ctou po dobehnuti snimku, kdezto textura vznikla behem
-rasterizace. Zmereno pres `wasm_step_line` na `VP` 0, 44, 150, 260 a 300 -
-shoda vsude 20-21 %, tedy na okamziku cteni **nezavisi**. Hypoteza byla
-vedle, chyba byla v barvach a vyrezu.
+Cesta k tomu cislu stala za ctyri opravy, vsechny v nastroji, zadna v
+pochopeni hardwaru:
 
-Zbylych 27 % jsou hardwarove sprity (osm kanalu, ktere `render()` zatim
-nekresli), okraje mimo DIW a pixely na hranach objektu.
+| oprava | shoda |
+|---|---|
+| vychozi stav | 21 % |
+| gamma `VAMIGA_LUT` misto `nibble * 17` | 33 % |
+| spravny vyrez textury `(62, 18)` | 73 % |
+| adresovani po copper splitu | **99 %** |
+
+Posledni oprava je ta zajimava: `BPLxPT` nastavene splitem plati **od toho
+radku**, ne od zacatku obrazu. Pocitat adresu z absolutniho `y` znamenalo
+cist dolni pulku obrazu o `y_splitu * 44` bajtu vedle. Rozdilova mapa to
+ukazala okamzite - horni polovina cerna (shoda), dolni cervena.
+
+Sprity jsou doplnene podle HRM (`SPRxPOS`/`SPRxCTL`, dve datova slova na
+radek). Barvy `COLOR17-31` copper list nenastavuje, zapisuje je CPU primo
+(`0x2afc`), takze se berou z trace. Kresli jen 76 pixelu - v SWIV jsou
+sprity vyhradne strely, vrtulnik i nepratele jsou BOBy.
+
+**Vyvracena hypoteza.** Rozdil jsem nejdriv pripisoval casovemu posunu, ze
+se bitplany ctou po dobehnuti snimku. Zmereno pres `wasm_step_line` na `VP`
+0, 44, 150, 260 a 300: shoda vsude 20-21 %, tedy na okamziku cteni nezavisi.
+Chyba byla v barvach, vyrezu a adresovani.

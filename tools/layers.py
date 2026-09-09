@@ -12,24 +12,32 @@ registry displeje) a chip RAM. Vystupem jsou oddelene vrstvy:
 Je to zaroven test celeho pochopeni: kdyz slozeny obraz sedi s tim, co
 ukazuje emulator, znamena to, ze model displeje je spravny.
 
-**Stav 2026-09-09: 73 % shody s emulatorem** pri toleranci 20 na kanal.
+**Stav 2026-09-09: 99,0 % shody s emulatorem** pri toleranci 20 na kanal
+(81073 z 81920 pixelu). Model displeje je tim overeny prakticky.
 
-Cesta k tomu cislu stala za dve opravy, obe v mereni, ne v modelu:
-1. **Gamma.** Prvni verze prevadela RGB12 jako `nibble * 17`, kdezto vAmiga
-   linearizuje CRT gammou 2.8 a re-koduje 1/2.2. Rozdil byl systematicky
-   (102 -> 72, 85 -> 56, 51 -> 28) a shodu drzel na 21 %. Tabulka je stejna
-   jako `VAMIGA_LUT` v `tools/compare.py`.
-2. **Vyrez.** Vyrez `(124, 26)` je z `tools/compare.py`, ktery porovnava
-   snimek z VAHeadless - ten ma jine okraje. Spravny vyrez pro texturu z
-   naseho harnessu je `(62, 18)`; hledanim maxima vyskocil ze 33 na 73 %.
+Cesta k tomu cislu stala za ctyri opravy, vsechny v nastroji, zadna v
+pochopeni hardwaru:
+1. **Gamma** (21 -> 33 %). Prevod RGB12 delal `nibble * 17`, kdezto vAmiga
+   linearizuje CRT gammou 2.8 a re-koduje 1/2.2 (102 -> 72, 85 -> 56,
+   51 -> 28). Je to tataz `VAMIGA_LUT`, kterou projekt uz pouziva v
+   `tools/compare.py` - prevzal jsem odtud vzorec, ale ne tabulku.
+2. **Vyrez** (33 -> 73 %). Take prevzaty z `compare.py`, jenze ten porovnava
+   snimek z VAHeadless s jinymi okraji. Spravny vyrez pro nas harness je
+   `(62, 18)`, zmereno hledanim maxima.
+3. **Sprity**. Doplneny podle HRM (SPRxPOS/CTL, dve datova slova na radek).
+   Barvy `COLOR17-31` copper list nenastavuje - zapisuje je CPU primo
+   (`0x2afc`), takze se berou z trace. Kresli jen 76 pixelu, protoze v SWIV
+   jsou sprity vyhradne strely; vrtulnik i nepratele jsou BOBy.
+4. **Adresovani po copper splitu** (73 -> 99 %). `BPLxPT` nastavene splitem
+   plati **od toho radku**, ne od zacatku obrazu. Pocitat adresu z
+   absolutniho `y` znamenalo cist dolni pulku o `y_splitu * 44` bajtu vedle -
+   presne to ukazovala rozdilova mapa, kde horni polovina sedela a dolni ne.
 
-Predtim jsem myslel, ze rozdil je casovy - ze se bitplany ctou po dobehnuti
-snimku, kdezto textura vznikla behem rasterizace. **Zmereno a vyvraceno:**
-cteni na `VP` 0, 44, 150, 260 i 300 (pres `wasm_step_line`) dava shodu
-20-21 %, tedy nezavisle na okamziku.
+**Vyvracena hypoteza.** Puvodne jsem rozdil pripisoval casovemu posunu (ze
+se bitplany ctou po dobehnuti snimku). Zmereno pres `wasm_step_line` na `VP`
+0, 44, 150, 260 a 300 - shoda vsude 20-21 %, na okamziku tedy nezavisi.
 
-Zbylych 27 % jsou hardwarove sprity (osm kanalu, ktere `render()` zatim
-nekresli), okraje mimo DIW a pixely na hranach objektu.
+Zbyle 1 % jsou hrany objektu a HUD text.
 
     python3 tools/layers.py [adresar]
 """
@@ -127,7 +135,11 @@ def render(chip, chipbase, st, planes=None, first_row=0):
     splits = sorted([s for s in st["splits"]], key=lambda s: s[0])
     px = bytearray(W * H * 3)
     si = 0
-    bpl = dict(st["bpl"])
+    # Ke kazde rovine si drzime i radek, od ktereho jeji ukazatel plati:
+    # copper split nastavi BPLxPT pro TEN radek, Agnus od nej pokracuje dal.
+    # Pocitat adresu z absolutniho `y` je chyba - dolni pulka obrazu pak
+    # cte o `y_splitu * 44` bajtu vedle.
+    bpl = {k: (v, 0) for k, v in st["bpl"].items()}
     for y in range(H):
         vp = 44 + y                                   # DIWSTRT V = 0x2C
         while si < len(splits) and splits[si][0] <= vp:
@@ -135,20 +147,66 @@ def render(chip, chipbase, st, planes=None, first_row=0):
             if kind == "col":
                 pal[idx] = val
             elif kind == "bpl":
-                bpl[idx] = val
+                bpl[idx] = (val, y)
             elif kind == "con0":
                 n = (val >> 12) & 7 if planes is None else n
         for x in range(W):
             c = 0
             for p in range(n):
-                addr = bpl.get(p, 0) - chipbase + y * row_bytes + (x >> 3)
+                base, y0 = bpl.get(p, (0, 0))
+                addr = base - chipbase + (y - y0) * row_bytes + (x >> 3)
                 if 0 <= addr < len(chip):
                     if chip[addr] & (0x80 >> (x & 7)):
                         c |= 1 << p
             r, g, b = rgb12(pal.get(c, 0))
             o = (y * W + x) * 3
             px[o] = r; px[o + 1] = g; px[o + 2] = b
-    return bytes(px)
+    return px
+
+
+def sprites(chip, st, px):
+    """Prekresli hardwarove sprity pres uz slozeny obraz.
+
+    Format podle HRM: dve ridici slova (SPRxPOS, SPRxCTL) a pak dve datova
+    slova na kazdy radek. VSTART/VSTOP daji vysku, HSTART vodorovnou pozici.
+    Barva pixelu je dvoubitova (0 = pruhledna) a bere se z COLOR16+ podle
+    dvojice kanalu: 0/1 -> COLOR17-19, 2/3 -> COLOR21-23, atd.
+    Retez konci ridicim slovem s VSTART = 0.
+    """
+    for ch in sorted(st["spr"]):
+        addr = st["spr"][ch] & 0x7ffff
+        bank = 16 + (ch // 2) * 4                  # COLOR17.. pro par kanalu
+        guard = 0
+        while addr + 4 <= len(chip) and guard < 64:
+            guard += 1
+            pos = (chip[addr] << 8) | chip[addr + 1]
+            ctl = (chip[addr + 2] << 8) | chip[addr + 3]
+            if pos == 0 and ctl == 0:
+                break
+            vstart = ((pos >> 8) & 0xff) | ((ctl & 0x04) << 6)
+            vstop = ((ctl >> 8) & 0xff) | ((ctl & 0x02) << 7)
+            hstart = ((pos & 0xff) << 1) | (ctl & 0x01)
+            h = vstop - vstart
+            if h <= 0 or h > 256:
+                break
+            addr += 4
+            for row in range(h):
+                lo = (chip[addr] << 8) | chip[addr + 1]
+                hi = (chip[addr + 2] << 8) | chip[addr + 3]
+                addr += 4
+                y = vstart + row - 44              # DIWSTRT V = 0x2C
+                if not (0 <= y < H):
+                    continue
+                for bit in range(16):
+                    c = (((hi >> (15 - bit)) & 1) << 1) | ((lo >> (15 - bit)) & 1)
+                    if not c:
+                        continue                   # 0 = pruhledna
+                    x = hstart - 129 + bit     # DIWSTRT H = 0x81
+                    if not (0 <= x < W):
+                        continue
+                    r, g, b = rgb12(st["pal"].get(bank + c, 0))
+                    o = (y * W + x) * 3
+                    px[o] = r; px[o + 1] = g; px[o + 2] = b
 
 
 def grab():
@@ -168,9 +226,17 @@ def grab():
               VA.regTrace(true); VA.run(2, null); VA.regTrace(false);
               const t = VA.regTraceRead();
               let hi = 0, lo = 0;
-              for (const e of t) { if (e.reg === 0x080) hi = e.value;
-                                   if (e.reg === 0x082) lo = e.value; }
-              return { cop: (hi << 16) | lo, chip: VA.fn.chipSize() };
+              // Barvy spritu (COLOR17-31) copper list nenastavuje - zapisuje
+              // je CPU primo (0x2afc, viz docs/ENGINE.md), takze je bereme
+              // z trace, jinak by sprity vysly cerne.
+              const sprpal = {};
+              for (const e of t) {
+                if (e.reg === 0x080) hi = e.value;
+                if (e.reg === 0x082) lo = e.value;
+                if (e.reg >= 0x1a0 && e.reg < 0x1c0)
+                  sprpal[(e.reg - 0x180) / 2] = e.value;
+              }
+              return { cop: (hi << 16) | lo, chip: VA.fn.chipSize(), sprpal };
             }""")
             chip = base64.b64decode(page.evaluate("([o, n]) => VA.chip(o, n)",
                                                   [0, info["chip"]]))
@@ -178,23 +244,30 @@ def grab():
             browser.close()
     finally:
         srv.shutdown()
-    return info["cop"], chip, shot
+    return info["cop"], chip, shot, info.get("sprpal", {})
 
 
 def main():
     out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, "build", "layers")
     os.makedirs(out, exist_ok=True)
-    cop, chip, shot = grab()
+    cop, chip, shot, sprpal = grab()
     print("COP1LC = $%06X, chip RAM %d kB" % (cop, len(chip) // 1024))
     st = parse_copper(chip[cop:cop + 4096], cop)
+    for k, v in sprpal.items():
+        st["pal"][int(k)] = v
+    print("barvy spritu z trace:", {int(k): "$%03X" % v for k, v in sprpal.items()})
     print("bitplany:", {k: "$%06X" % v for k, v in sorted(st["bpl"].items())})
     print("BPLCON0 = $%04X -> %d rovin, moduly %s, splitu %d" %
           (st["bplcon0"], (st["bplcon0"] >> 12) & 7, st["mod"], len(st["splits"])))
     from PIL import Image
     teren = render(chip, 0, st, planes=4)
-    Image.frombytes("RGB", (W, H), teren).save(os.path.join(out, "teren.png"))
+    Image.frombytes("RGB", (W, H), bytes(teren)).save(os.path.join(out, "teren.png"))
     slozeno = render(chip, 0, st, planes=None)
-    Image.frombytes("RGB", (W, H), slozeno).save(os.path.join(out, "slozeno.png"))
+    Image.frombytes("RGB", (W, H), bytes(slozeno)).save(
+        os.path.join(out, "bez_spritu.png"))
+    sprites(chip, st, slozeno)                     # osm HW kanalu navrch
+    Image.frombytes("RGB", (W, H), bytes(slozeno)).save(
+        os.path.join(out, "slozeno.png"))
     em = Image.frombytes("RGB", (716, 285), shot)
     em.save(os.path.join(out, "emulator.png"))
     # Emulator vraci 716x285 se dvojnasobnou vodorovnou hustotou. Vyrez
@@ -203,7 +276,7 @@ def main():
     # ktery ma jine okraje.
     crop = em.crop((62, 18, 62 + 640, 18 + 256)).resize((W, H), Image.NEAREST)
     crop.save(os.path.join(out, "emulator_320.png"))
-    ours = Image.frombytes("RGB", (W, H), slozeno)
+    ours = Image.frombytes("RGB", (W, H), bytes(slozeno))
     a, bpx = ours.load(), crop.load()
     same = 0
     for y in range(H):
