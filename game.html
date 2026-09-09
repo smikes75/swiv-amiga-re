@@ -953,6 +953,8 @@ const ATTRACT_HOLD_VBLS = Object.freeze({
 const ATTRACT_PALETTE_OFFSETS = Object.freeze({
   cover: 0x29BC, sales: 0x29BC, faces: 0x29DC, scores: 0x29FC,
   stats: 0x2A1C,                               // 0xdbc: post-game 0x0da2
+  congrat: 0x2ABC,                             // 0xf6c: CONGRAT2 i CONGRAT1
+  congratWhite: 0x2ADC,                        // 0xfb0: bila faze mezi nimi
   outline: 0x2A3C, white: 0x2A5C, jeep: 0x2A7C, heli: 0x2A9C,
 });
 /* 0x33fe: sedm longu vychozi tabulky skore. Radek 0x33ba je vypisuje pres
@@ -3033,6 +3035,27 @@ function sfxGeyser(g, x) {
   submitTownSfx(g, x, 200, "geyser", make);
   submitTownSfx(g, 0, 60, "geyser-l", make);
   return submitTownSfx(g, 320, 60, "geyser-r", make);
+}
+function sfxCongrat(g) {
+  // 0x51d4: ctyri hlasy pres levy selektor 0x4bb4, periody 400, 480, 413
+  // a 441, priorita 127. Callback 0x51f4 plni scratch ctyrmi longy sumu a
+  // hlasitost bere jako `citac >> 7`, takze nabiha velmi pomalu; smycka
+  // 0x5218 je nekonecna a task se ukonci az cleanupem sceny.
+  const voices = [];
+  for (const period of [400, 480, 413, 441]) {
+    const states = [];
+    const scratch = new Uint8Array(256);
+    for (let i = 0; i < 512; i++) {             // 0x5222: citac roste o 1
+      sfxNoiseFill(scratch, 4);                 // 0x521c: D0 = 4 longy
+      states.push({ wave: scratch.slice(0, 16),
+                    volume: sfxPaulaVolume(i >>> 7),
+                    period, length: 16, ticks: 1 });
+    }
+    voices.push(submitTownSfx(g, 0, 127, "congrat", () => ({
+      states, logical: sfxLogicalTimeline(states),
+      cacheKey: "congrat-51d4-" + period, period })));
+  }
+  return voices;
 }
 function sfxExtraLife(g, score) {
   // 0x5600 sdili s TOKENem cely zbytek 0x5618: priority100 task 0x564c,
@@ -6664,6 +6687,69 @@ function renderStatsScreen(ctx, g) {
   ctx.putImageData(new ImageData(g.statsRgba, 320, 256), 0, 0);
 }
 
+/* ---- 0x0f42..0x1042: zaverecna sekvence po dohrani hry --------------
+   Vola se z attract dispatcheru na 0xd90, tedy JESTE PRED statistikou
+   0x0da2, a jen kdyz je nastaven bit 3 fp@(12353) (hra dohrana).
+
+   Nativni tok:
+     0xf50  nacte CONGRAT2.RAW, paleta 0x2abc
+     0xf80  dva tasky: 0x13ea (staticky dil) a 0x134e (emitor 20 deti
+            0x1412 s rozestupem 6, pak raketa 0x12d2)
+     0xf90  fade z cerne, 0xf94 zvuk 0x51d4
+     0xf98  ceka na fp@(12352), coz nastavi raketa na 0x1346
+     0xfaa  bily zablesk: fp@(11166) = 256, paleta 0x2adc, emitory 0x125e,
+            task 0x122a (trese mapovou pozici), wait 200, pak fp@(11166)
+            klesa z 8 po 16 zpet na 256
+     0xff4  CONGRAT1.RAW, paleta 0x2abc, text 0x1058, kruhy 0x11d4
+     0x1014 fp@(11136) = 818, fp@(11168) = -16, wait 1000, pak -4
+     0x103a uvolni CONGRAT2.RAW
+
+   Prepsana je zatim struktura, obrazovky, paleta, text, zvuk a casovani.
+   REACTOR animace (tasky 0x13ea/0x134e/0x12d2/0x1412 a kruhy 0x14a2)
+   zbyva - viz docs/GAPS.md. */
+const CONGRAT_TEXT = 0x1058;
+function congratRaw(name) {
+  return cloneIntroRaw(introRaw(name));
+}
+function beginCongrat(g) {
+  // 0xf50/0xf6c: CONGRAT2 s paletou 0x2abc, jeste pred fade z cerne.
+  g.congrat = { phase: "reactor", vbl: 0, raw: congratRaw("CONGRAT2.RAW") };
+  sfxCongrat(g);                               // 0xf94 -> 0x51d4
+}
+function stepCongrat(g) {
+  const c = g.congrat;
+  if (!c || c.done) return;
+  c.vbl++;
+  if (c.phase === "reactor") {
+    // Nativne konci, az raketa 0x12d2 dobehne animaci a na 0x1346 nastavi
+    // fp@(12352). Bez prepsane animace drzime zmerenou delku jejiho
+    // skriptu: 20 deti po 6 VBL (0x137c) + 80 VBL rakety (0x139c).
+    if (c.vbl >= 20 * 6 + 80) { c.phase = "white"; c.vbl = 0; }
+  } else if (c.phase === "white") {
+    // 0xfaa: plna bila, pak 0xfd2..0xfe8 fp@(11166) roste o 16 z 8 na 256.
+    if (c.vbl >= 200 + 16) {
+      c.phase = "text"; c.vbl = 0;
+      c.raw = congratRaw("CONGRAT1.RAW");       // 0xff4
+      drawIntroFormatted(state.prog, c.raw.pixels,
+                         programCString(state.prog, CONGRAT_TEXT));
+    }
+  } else if (c.phase === "text") {
+    if (c.vbl >= 1000) c.done = true;           // 0x1020: wait 1000
+  }
+}
+function renderCongrat(ctx, g) {
+  const c = g.congrat;
+  if (!c) return;
+  const white = c.phase === "white"
+    ? ATTRACT_PALETTE_OFFSETS.congratWhite : ATTRACT_PALETTE_OFFSETS.congrat;
+  const palette = readProgramPalette(state.prog, white);
+  // 0xf90 je fade z cerne; v bile fazi je obraz naopak prosvicen.
+  const black = c.phase === "reactor" ? Math.max(0, 256 - c.vbl * 16) : 0;
+  if (!c.rgba) c.rgba = new Uint8ClampedArray(320 * 256 * 4);
+  colorizeAttractRaw(c.raw, palette, black, [], c.rgba);
+  ctx.putImageData(new ImageData(c.rgba, 320, 256), 0, 0);
+}
+
 function respawnPlayer(g) {                    // 0x714e -> 0x9046 -> 0x9410
   if (--g.lives <= 0) {
     g.lives = 0;
@@ -9756,7 +9842,12 @@ function frame(now) {
   let stepped = 0;
   while (g.frac >= TICK) {
     g.frac -= TICK;
-    if (!g.over) { step(g); stepped++; } else stepStatsScreen(g);
+    if (!g.over) { step(g); stepped++; }
+    else if (g.won && (!g.congrat || !g.congrat.done)) {
+      // 0xd90 vola 0xf42 jeste pred statistikou 0xda2
+      if (!g.congrat) beginCongrat(g);
+      stepCongrat(g);
+    } else stepStatsScreen(g);
   }
   if (g.statsDone) {                           // 0xda0: zpet na 0x0d64
     state.loopRunning = false; state.g = null; showTitle(); return;
@@ -10023,7 +10114,10 @@ function frame(now) {
 
   // Po continue + closing fadu uz pod statistikou neprosvita HUD ani
   // pozdni HW sprity: 0x0da2 kresli na cistou plochu s paletou 0x2a1c.
-  if (g.over) renderStatsScreen(ctx, g);
+  if (g.over) {
+    if (g.won && g.congrat && !g.congrat.done) renderCongrat(ctx, g);
+    else renderStatsScreen(ctx, g);
+  }
 
   requestAnimationFrame(frame);
 }

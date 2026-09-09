@@ -6166,6 +6166,50 @@ def main():
             expect(stats["ink"] > 1500,
                    "statistika nakreslila jen %d pixelu" % stats["ink"])
 
+            congrat = page.evaluate("""() => {
+              const g = state.g;
+              const before = g.sfx.events.length;
+              g.won = true; g.over = true; g.congrat = null;
+              beginCongrat(g);
+              const zvuk = g.sfx.events.slice(before)
+                .map(e => [e.kind, e.priority, e.accepted]);
+              const faze = [];
+              for (let i = 0; i < 2000; i++) {
+                stepCongrat(g);
+                const c = g.congrat;
+                if (!faze.length || faze[faze.length - 1][0] !== c.phase)
+                  faze.push([c.phase, i]);
+                if (c.done) { faze.push(["done", i]); break; }
+              }
+              const text = programCString(state.prog, CONGRAT_TEXT);
+              const raw = blankIntroRaw();
+              drawIntroFormatted(state.prog, raw.pixels, text);
+              return { zvuk, faze,
+                       textZacatek: text.slice(0, 40),
+                       textKonec: text.slice(-24),
+                       ink: raw.pixels.reduce((n, v) => n + (v ? 1 : 0), 0),
+                       palety: [ATTRACT_PALETTE_OFFSETS.congrat,
+                                ATTRACT_PALETTE_OFFSETS.congratWhite] };
+            }""")
+            expect(congrat["zvuk"] == [["congrat", 127, True]] * 4,
+                   "0x51d4 nema ctyri prijate hlasy priority 127: %r" %
+                   (congrat["zvuk"],))
+            expect([f[0] for f in congrat["faze"]] ==
+                   ["reactor", "white", "text", "done"],
+                   "0xf42 poradi fazi: %r" % (congrat["faze"],))
+            expect(congrat["faze"][1][1] == 199 and
+                   congrat["faze"][2][1] == 415 and
+                   congrat["faze"][3][1] == 1415,
+                   "0xf42 casovani fazi: %r" % (congrat["faze"],))
+            expect(congrat["textZacatek"].startswith("_x160_y040_a0_c15Congratulations"),
+                   "0x1058 zacatek textu: %r" % (congrat["textZacatek"],))
+            expect("in the post." in congrat["textKonec"],
+                   "0x1058 konec textu: %r" % (congrat["textKonec"],))
+            expect(congrat["ink"] > 3000,
+                   "zaverecny text nakreslil jen %d pixelu" % congrat["ink"])
+            expect(congrat["palety"] == [0x2ABC, 0x2ADC],
+                   "palety CONGRAT: %r" % (congrat["palety"],))
+
             screenshot = os.environ.get("SWIV_UI_SCREENSHOT")
             if screenshot:
                 page.screenshot(path=screenshot)

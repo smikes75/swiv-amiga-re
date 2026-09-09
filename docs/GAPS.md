@@ -340,9 +340,7 @@ Otevrene zustava:
   browserovy vyvojarsky level picker;
 - fire/click vzdy spusti jednoplayerovy HELI TOWN (viz vyse); obrazovka volby
   ovladani `0x1f5e` ("Press function keys to select controls") prepsana neni;
-- `0x0f42..0x1042` (`CONGRAT2.RAW`, paleta `0x2abc`, REACTOR tasky, zvuk
-  `0x51d4`) a `CONGRAT1.RAW` nejsou prepsane - jsou dostupne jen po dohrani
-  hry (`fp@(12353)` bit 3);
+- `0x0f42..0x1042` (zaverecna sekvence) je prepsana **castecne** - viz nize;
 - zapis do tabulky skore `0x2fe8` meni jen model tabulky, ne jeji obrazovku:
   nativne po nem jeste bezi `0x3062`, ktery vykresli jmeno hrace ze zaznamu
   (`+40`). Jmena bere hra z `AMDLS0.CAT` / `HS*.TXT`, hrac je nezadava.
@@ -685,6 +683,32 @@ protoze rodic pres `bras` preskoci hodnotu ditete.
 
 Test bezi bez originalu i bez emulatoru, takze se hodi jako rychly kontrakt
 vedle compare/uitest/smoothtest.
+
+## Zaverecna sekvence `0x0f42` - prepsana struktura, animace zbyva (2026-09-09)
+
+Vola se z attract dispatcheru na `0xd90`, tedy **jeste pred statistikou**
+`0x0da2`, a jen kdyz je nastaven bit 3 `fp@(12353)`.
+
+Prepsano: obe obrazovky (`CONGRAT2.RAW`, pak `CONGRAT1.RAW`), palety
+`0x2abc` a `0x2adc`, fade z cerne, bila mezifaze, zaverecny text `0x1058`
+a zvuk `0x51d4` (ctyri hlasy priority 127 na periodach 400, 480, 413 a 441;
+hlasitost je `citac >> 7`, takze nabiha velmi pomalu). Tim je **posledni
+nepripojeny zvuk ve hre pripojen**.
+
+**Zbyva REACTOR animace.** Nativne prvni fazi ukoncuje raketa `0x12d2`, ktera
+na `0x1346` nastavi `fp@(12352)`; do te doby bezi dva tasky:
+- `0x13ea` staticky dil na (102, 126), z 1, gfx `0x1a55`, `+367 |= 1`;
+- `0x134e` na (99, 130) s anim `0x1c55`, ktery pres `0x137c` vytvori dvacet
+  deti `0x1412` s rozestupem 6 VBL, pak `0x1398` vypusti raketu `0x12d2`
+  (x += 1, y -= 3, z = 2, `fp@(11164)` 4092 -> 4095, dve dlouhe anim davky).
+Druha faze pridava emitory `0x125e` (dva `0x14a2` s parametry 98/156/30 a
+98/130/44), tres mapove pozice `0x122a` a kruhy `0x11d4` (jedenact volani
+`0x1222` na polomerech 56..184, kresli je Bresenham `0x14f0`).
+
+Misto teto animace drzi prepis **zmerenou delku jejiho skriptu** (20x6 + 80
+VBL), takze casovani sceny sedi, ale obrazovka je staticka. Kontrakt v
+`tools/uitest.py` hlida poradi i delku fazi (199 / 415 / 1415 VBL), zvuk,
+text a palety.
 
 ## Junkce map a `levelPhase` (nalezeno pri revizi 2026-09-06)
 
