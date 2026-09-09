@@ -667,9 +667,24 @@ falesne nalezy:
 - **Palba**: kdyz obe strany strili, objekty umiraji v jinych okamzicich.
   Harness proto bezi bez palby.
 
-**Zbyva:** parovani stale pouziva polohu, takze druhy, ktere si `x` pri
-vzniku prepisou (`tank` a `train` vjizdeji z okraje), skonci jako
-"NEAKTIVOVAN", i kdyz jsou v poradku. Spravne je parovat pres poradi vzniku.
+**Plny sken vsech sedmi zon (2026-09-09): 980 z 981 aktivaci presne, nula
+odchylek.** Parovani jde pres poradi vzniku, ne polohu (`tank` a `train` si
+`x` pri vzniku prepisou, protoze vjizdeji z okraje). Jedina neaktivovana je
+`inst5` a je to artefakt kontroly: FINAL boss ceka na `g.inst1Factories > 0`
+(bit 3 `fp@(166)`), zatimco skript tuto promennou nuluje, aby obesel scroll
+lock u DESERT tovarny - bez palby by ji hrac nezniicil a mapa by stala.
+
+Pri dolazovani se ukazalo, ze ocekavani se **musi pocitat az v okamziku
+`taskStarted`** (prah -256), ne z mapove polohy: nektera chovani do te chvile
+jeste meni `y` nebo si urcuji vlastni marzi - `xevswarm` posune rodici `y` o
+-27 (`0x7ed8`) a `airplane` si nastavi 176 (`0x7978`), zatimco jeho dite ma
+127 (`0x797e`). Naivni predikce z mapy hlasila prave tyhle dva druhy jako
+chybu (+208 a +27 px), pritom prepis je mel spravne; hodnoty jsou overene v
+disassembly. `margins.py` u `airplane` schvalne hlasi "nelze urcit staticky",
+protoze rodic pres `bras` preskoci hodnotu ditete.
+
+Test bezi bez originalu i bez emulatoru, takze se hodi jako rychly kontrakt
+vedle compare/uitest/smoothtest.
 
 ## Junkce map a `levelPhase` (nalezeno pri revizi 2026-09-06)
 

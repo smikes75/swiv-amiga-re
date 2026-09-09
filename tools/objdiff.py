@@ -43,11 +43,19 @@ marzi z tehoz dne.
 - Obe strany bezi **bez palby**; kdyz se strili, objekty umiraji v jinych
   okamzicich a porovnani vzniku se v tom ztraci.
 
-**Zbyvajici slabina:** parovani pouziva polohu, takze druhy, ktere si `x`
-pri vzniku prepisou (`tank`, `train` vjizdeji z okraje), se nenajdou a
-skonci jako "NEAKTIVOVAN", i kdyz v poradku jsou. Spravne je parovat pres
-poradi vzniku. Staticka kontrola marzi bez teto slabiny je v
-tools/margins.py.
+Parovani jde pres **poradi vzniku**, ne polohu: obe strany prochazeji mapu
+odshora dolu, takze n-ty objekt daneho druhu v predikci je n-ty i ve
+skutecnosti. Podle polohy to nejde - `tank` a `train` si `x` pri vzniku
+prepisou, protoze vjizdeji z okraje obrazovky.
+
+**Vysledek plneho skenu (2026-09-09): 980 z 981 aktivaci presne, 0 odchylek.**
+Jedina neaktivovana je `inst5`, a to kvuli teto kontrole samotne: FINAL boss
+ceka na `g.inst1Factories > 0` (bit 3 `fp@(166)`, aktivni instalace),
+zatimco skript tuto promennou nuluje, aby obesel scroll lock u DESERT
+tovarny - bez palby by ji hrac nezniicil a mapa by stala navzdy.
+
+**Test bezi bez originalu i bez emulatoru**, takze se hodi jako rychly
+kontrakt vedle compare/uitest/smoothtest.
 
     python3 tools/objdiff.py            # vsechny kontrolni body
     python3 tools/objdiff.py 500 1000   # vlastni vzdalenosti
@@ -360,20 +368,43 @@ PREDICT_JS = """(cfg) => {
   // kontroly nepatri.
   const SPOUSTECE = new Set(["wave", "yellow", "bird", "blackjet",
                              "fish", "goose7", "skyeye", "skyeyea"]);
+  // Ocekavani se pocita az v okamziku, kdy objekt dostane ulohu
+  // (`taskStarted`, prah -256). Nektera chovani totiz do te chvile jeste
+  // meni `y` nebo si urcuji vlastni marzi: xevswarm posune rodici y o -27
+  // (0x7ed8) a airplane si nastavi airMargin 176 (0x7978), zatimco jeho
+  // dite ma 127 (0x797e). Kdyby se ocekavani bralo z mapove polohy pred
+  // timto krokem, hlasil by skript prave tyhle dva druhy jako chybu.
   const want = [];
-  for (const s of g.spawns) {
-    if (s.gfx === undefined || !cfg.margins[s.beh]) continue;
-    if (SPOUSTECE.has(s.beh)) continue;
-    want.push({ gfx: s.gfx, beh: s.beh, x: Math.round(s.x),
-                ocekavano: cfg.margins[s.beh] + zero - Math.round(s.y) });
-  }
+  const wantSeen = new Set();
+  const noteWant = () => {
+    for (const s of g.spawns) {
+      if (!s.taskStarted || wantSeen.has(s)) continue;
+      wantSeen.add(s);
+      if (s.gfx === undefined || SPOUSTECE.has(s.beh) || s.formationChild) continue;
+      const m = s.airMargin !== undefined ? s.airMargin
+              : s.activationMargin !== undefined ? s.activationMargin
+              : cfg.margins[s.beh];
+      if (m === undefined) continue;
+      want.push({ gfx: s.gfx, beh: s.beh, x: Math.round(s.x),
+                  ocekavano: m + zero - Math.round(s.y) });
+    }
+  };
   const seen = new Set(), got = [];
   let guard = 0;
-  while (zero - scrollTop(g) < cfg.dist && guard++ < 60000) {
+  while (zero - scrollTop(g) < cfg.dist && guard++ < 400000) {
+    // Bez palby hrac nezniici instalace, ktere drzi scroll (0xb6ae ->
+    // fp@(166) bit 3), a mapa by od DESERT tovarny stala navzdy. Pro
+    // kontrolu aktivacnich marzi je zamek irelevantni, tak jej drzime
+    // uvolneny; scroll tim jede konstantne jako v neblokovanem useku.
+    g.inst1Factories = 0; g.levelEndHold = false;
     step(g);
+    noteWant();
     const c = scrollTop(g);
     for (const s of g.spawns) {
-      if (!s.born || seen.has(s) || SPOUSTECE.has(s.beh)) continue;
+      // spawnFormationCopies pridava klony do g.spawns pod stejnym `beh`;
+      // v mape je pritom jedina polozka, takze by rozhazely parovani
+      if (!s.born || seen.has(s) || SPOUSTECE.has(s.beh) ||
+          s.formationChild) continue;
       seen.add(s);
       got.push({ gfx: s.gfx, beh: s.beh, x: Math.round(s.x),
                  ujeto: zero - c });
@@ -414,31 +445,47 @@ def predict(dist):
         page.wait_for_selector("#gamewrap", state="visible")
         res = page.evaluate(PREDICT_JS, {"dist": dist, "margins": margins})
         browser.close()
-    want, got = res["want"], list(res["got"])
+    want, got = res["want"], res["got"]
+    # Parovani pres PORADI, ne polohu: obe strany prochazeji mapu odshora
+    # dolu, takze n-ty objekt daneho druhu v predikci je n-ty i ve
+    # skutecnosti. Podle polohy to nejde - tank a train si `x` pri vzniku
+    # prepisou (vjizdeji z okraje obrazovky).
+    from collections import defaultdict
+    byname = defaultdict(list)
+    for q in got:
+        byname[q["beh"]].append(q)
     ok = late = missing = 0
+    nalezy = []
     for w in sorted(want, key=lambda w: w["ocekavano"]):
-        # parovat je nutne i podle x - jinak se prvni polozka daneho druhu
-        # spari s libovolnou jinou a rozdil vyjde v stovkach pixelu
-        cand = [q for q in got if q["beh"] == w["beh"]
-                and abs(q["x"] - w["x"]) <= 2]
-        if not cand:
+        queue = byname[w["beh"]]
+        if not queue:
             missing += 1
-            print(f"   NEAKTIVOVAN  {w['beh']:<12} x {w['x']:4d}"
-                  f"  cekano pri {w['ocekavano']:5d} px")
+            nalezy.append(("NEAKTIVOVAN", w, None, 0))
             continue
-        q = min(cand, key=lambda q: abs(q["ujeto"] - w["ocekavano"]))
-        got.remove(q)
+        q = queue.pop(0)
         d = q["ujeto"] - w["ocekavano"]
         if abs(d) <= 1:
             ok += 1
         else:
             late += 1
+            nalezy.append(("JINDY", w, q, d))
+    extra = sum(len(v) for v in byname.values())
+    if os.environ.get("OBJDIFF_EXTRA"):
+        from collections import Counter
+        c = Counter(q["beh"] for v in byname.values() for q in v)
+        print("   navic podle druhu:", dict(c.most_common(12)))
+    for kind, w, q, d in nalezy[:20]:
+        if kind == "NEAKTIVOVAN":
+            print(f"   NEAKTIVOVAN  {w['beh']:<12} x {w['x']:4d}"
+                  f"  cekano pri {w['ocekavano']:5d} px")
+        else:
             print(f"   JINDY        {w['beh']:<12} x {w['x']:4d}"
                   f"  cekano {w['ocekavano']:5d}, aktivovan {q['ujeto']:5d}"
                   f"  ({d:+d} px)")
     print("")
     print(f"ujeto {dist} px: z mapy ocekavano {len(want)} aktivaci -> "
-          f"presne {ok}, jindy {late}, vubec {missing}")
+          f"presne {ok}, jindy {late}, vubec {missing}, navic {extra}")
+    return ok, late, missing, extra
 
 
 def main():
