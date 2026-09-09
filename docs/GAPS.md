@@ -710,6 +710,24 @@ VBL), takze casovani sceny sedi, ale obrazovka je staticka. Kontrakt v
 `tools/uitest.py` hlida poradi i delku fazi (199 / 415 / 1415 VBL), zvuk,
 text a palety.
 
+## Pauza na klavesu P - zmerena, ale mimo AMPROG.OBJ (2026-09-09)
+
+Uzivatel upozornil, ze hra ma pauzu na `P`. Overeno v harnessu primo:
+mapa se posouva 25 px za 100 VBL, po stisku `P` **0 px**, po druhem stisku
+zase 25. Je to tedy prepinac; mezernik s tim nedela nic (`Esc` naopak
+zpusobi skok mapy o tisice pixelu, coz jsme dal nezkoumali).
+
+**Kod ale nelezi v `AMPROG.OBJ`.** Ten cte klavesnici jedine v
+level-select cheatu `0x20e4`, ktery bere `fp@(-1)` a prijima jen kody
+`0x50..0x59` (F1-F10) a `0x5f` (HELP). Otisk chip RAM pred a po stisku `P`
+ukazuje zmeny kolem `fp@(-1260)`, tedy v knihovne zavadece na zapornych
+offsetech od A6.
+
+Nelze proto rozhodnout, jestli je pauza puvodni funkce Sales Curve, nebo
+pridavek crackeru - zavadec je soucasti teto diskety a cistou verzi k
+porovnani nemame. Prepis ji ma (mrazi jen logiku, render bezi dal a v
+panelu svitit "PAUZA"), s touto poznamkou v kodu.
+
 ## Junkce map a `levelPhase` (nalezeno pri revizi 2026-09-06)
 
 `g.levelPhase` se inicializuje cislem urovne (`lv`), ale `g.junctionRows`

@@ -80,6 +80,7 @@ a { color:#cfe0ff }
     <button type="button" id="btnback" title="O pul zony zpet">&#9668;&#9668;</button>
     <button type="button" id="btnfwd" title="O pul zony vpred">&#9658;&#9658;</button>
     <span id="jumplabel" style="opacity:.8"></span>
+    <b id="pauselabel" style="color:var(--orange)"></b>
     &nbsp;&middot;&nbsp; <button type="button" id="btnend" title="Preskocit na zaverecnou sekvenci (klavesa C)">konec hry</button>
     <br>
     <span title="Ulozene pozice zustavaji v tomto prohlizeci">pozice</span>
@@ -7156,6 +7157,9 @@ function startGame(lv) {
   g.player.weaponX = startPos.x; g.player.weaponY = startPos.y;
   applyWeaponTable(g.player);                 // 0x70c8: start = power2/reload11
   for (const s of g.spawns) s.armed = (s.y - scrollTop(g)) < -32;
+  g.paused = false;
+  { const el = document.getElementById("pauselabel");
+    if (el) el.textContent = ""; }
   stopModuleMusic();
   $("#levelpick").style.display = "none";
   $("#gamewrap").style.display = "";
@@ -7466,6 +7470,19 @@ function loadFromSlot(i) {
 refreshSlots();
 
 window.addEventListener("keydown", e => {
+  // P = pauza. Zmereno v harnessu: prvni stisk zastavi mapu (25 px za
+  // 100 VBL -> 0), druhy ji zase rozjede, mezernik s tim nic nedela.
+  // Kod ale nelezi v AMPROG.OBJ (ten cte klavesy jen v level-select
+  // cheatu 0x20e4) - stisk meni pamet kolem fp@(-1260), tedy v knihovne
+  // zavadece. Nelze proto rozhodnout, jestli je to puvodni funkce hry,
+  // nebo pridavek crackeru; viz docs/GAPS.md.
+  if (e.key.toLowerCase() === "p" && state.g && !state.g.over) {
+    state.g.paused = !state.g.paused;
+    const el = document.getElementById("pauselabel");
+    if (el) el.textContent = state.g.paused ? "PAUZA" : "";
+    e.preventDefault();
+    return;
+  }
   // Vyvojarska zkratka (neni v originale): C preskoci na zaverecnou
   // sekvenci 0x0f42, ke ktere se jinak lze dostat jen dohranim vsech
   // sedmi zon. Statistika 0x0da2 na ni nativne navazuje, takze se
@@ -10046,6 +10063,7 @@ function frame(now) {
   let dt = Math.min(0.1, (now - g.last) / 1000); g.last = now;
   g.frac += dt;
   let stepped = 0;
+  if (g.paused) g.frac = 0;                    // pauza mrazi jen logiku
   while (g.frac >= TICK) {
     g.frac -= TICK;
     if (!g.over) { step(g); stepped++; }
