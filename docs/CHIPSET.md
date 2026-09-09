@@ -123,3 +123,47 @@ logika (0,25 px/VBL) zustava, meni se jen zobrazeni.
 
 Stejne tak vetsi barevna hloubka: paleta je 16 registru se ctyrmi copper
 splity, ktere jsou obchazenim limitu OCS, ne hernim zamerem.
+
+
+# Faze 3: kresleni objektu (2026-09-09)
+
+`tools/blitlog.py` slozi z trace jednotlive blit operace: blitter se
+programuje po registrech a spousti zapisem do `BLTSIZE`, takze jedna
+operace je "stav registru v okamziku toho zapisu". Skript vyda minterm,
+zapnute zdroje, rozmer, moduly, ukazatele a PC.
+
+## Co SWIV s blitterem dela
+
+Zmereno na ctyrech snimcich bezne hry (TOWN, ~20 s od startu):
+**236 operaci, tedy 59 na snimek**, ve trech druzich:
+
+| minterm | zdroje | pocet | odkud | vyznam |
+|---|---|---:|---|---|
+| `0xF0` | `AD` | 120 | `AMPROG +0x4218` | `D = A`, cista kopie |
+| `0xCA` | `ABCD` | 56 | `AMPROG +0x4158` | `D = A?B:C`, **cookie-cut** - klasicky BOB s maskou |
+| `0x0A` | `ACD` | 48 | `AMPROG +0x4158` | `D = C & ~A`, vymaskovani |
+| `0xA0` | `AD` | 12 | `AMPROG +0x404c` | `D = A & C` |
+
+To je ucebnicovy BOB systém se **zalohou pozadi**: kopie `0xF0` ulozi a
+vrati pozadi, `0xCA` nakresli sprite pres masku, `0x0A` vymaskuje. Ctvrta
+cesta (`+0x404c`) je zvlastni a jeste nema jmeno.
+
+Rozmery odpovidaji spritum hry: nejcasteji 32x32 (76x), 48x33, 48x34 a
+male 16x4 a 16x7 (strely a jiskry).
+
+Blit rutina si drzi `a4 = 0xdff000` a zapisuje pres nej; smycka na
+`+0x415e` posouva ukazatel o `0x3700` = 14080 B, tedy o cely bitplan -
+kazda operace se opakuje pro vsechny ctyri roviny.
+
+## Tim je hotova mapa "co je ktery pixel"
+
+- **teren** = ctyri bitplany na `$02C1EC` (krok 14080 B), scroll posunem
+  ukazatele o 44 B na pixel;
+- **HUD** = paty bitplan na `$000048D8`, zapnuty jen v pasu `VP=52..59`;
+- **BOB** = to, co vznikne blitem `0xCA` z `AMPROG +0x4158`;
+- **hardwarove sprity** = osm kanalu nastavenych v copper listu, spravuje
+  je `AMPROG +0x5d76..0x5dce`.
+
+Pro 2,5D nebo 3D efekty to znamena, ze vrstvy jsou oddelitelne uz na urovni
+dat: teren je bitmapa, objekty jsou seznam blitu se znamou pozici a
+velikosti, strely jsou sprite kanaly. Neni potreba nic odhadovat z obrazu.
