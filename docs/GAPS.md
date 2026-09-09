@@ -646,13 +646,30 @@ nalezu. Hned to zabralo u `0x7970`, kde rodic ma `movew #176` a pres `bras`
 preskoci `moveq #127`, coz je vstup ditete - naivni zpetne hledani by
 ohlasilo chybu tam, kde zadna neni.
 
-**Otevrene: parovani pohyblivych objektu v `objdiff.py`.** Harness umi
-synchronizovat obe strany na 0 px pres ujety scroll a spolehlive rekne,
-kolik objektu ma kazda strana. Konkretni dvojice ale paruje podle polohy,
-takze pohybujici se objekt se sparuje s jinym kusem teze grafiky, ktery
-nahodou stoji blizko. Pro prukazne porovnani jednotlivych objektu je potreba
-parovat pres poradi vzniku (bobOrdinal na jedne strane, poradi ve fronte na
-druhe), ne pres polohu.
+**Rezim `--predict`: oprava marzi potvrzena proti mape.** Parovani podle
+polohy selhavalo u pohyblivych objektu, tak `objdiff.py` dostal dva dalsi
+rezimy. `--events` porovnava **okamziky aktivace** (invariantni vuci pohybu,
+krok 4 VBL = 1 px) a `--predict` je pocita **primo z mapy** jako
+`ujeto = margin + zero - y`, tedy uplne bez originalu a bez RNG. Z devíti
+sparovanych aktivaci na useku 1500 px sedi vsech devet **presne na 0 px**.
+
+Pri ladeni se ukazaly tri veci, ktere se musi vynechat, jinak nastroj hlasi
+falesne nalezy:
+- **Formace** (`wave`, `yellow`, `bird`, `blackjet`, `fish`, `goose7`,
+  `skyeye`, `skyeyea`) nastavuji `born` uz v `startMapObjectTask` na prahu
+  -256, protoze mapovy zaznam je jen spoustec; kazdy klon si pak ceka na
+  vlastni a2c6 prah. Bez vyjmuti hlasi skript systematicky **-208 px**, coz
+  je presne rozdil -256 a -48 - vypadalo to jako velky nalez a neni to nic.
+- **Deti**: vetsina "chybi v prepisu" u FLAME jsou plameny, ktere prepis ma
+  jako `hazards`, ne `spawns`. Kontrola proti `build/spawns.json` ukazala,
+  ze FLAME je v mape jen na x 95, 75, 100 a 118 - hlasene x 112, 117 a 231
+  tam nejsou, takze slo o deti.
+- **Palba**: kdyz obe strany strili, objekty umiraji v jinych okamzicich.
+  Harness proto bezi bez palby.
+
+**Zbyva:** parovani stale pouziva polohu, takze druhy, ktere si `x` pri
+vzniku prepisou (`tank` a `train` vjizdeji z okraje), skonci jako
+"NEAKTIVOVAN", i kdyz jsou v poradku. Spravne je parovat pres poradi vzniku.
 
 ## Junkce map a `levelPhase` (nalezeno pri revizi 2026-09-06)
 

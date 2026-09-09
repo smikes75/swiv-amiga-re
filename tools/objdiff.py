@@ -18,14 +18,36 @@ okamziku, kdy se zamek uvolni; kontrolni bod je "ujeto D pixelu".
 
 Parovani: gfx + poloha na obrazovce (x, y - kamera), tolerance TOL px.
 
-**Znama slabina (2026-09-09):** parovani je spolehlive jen u objektu, ktere
-stoji. Pohybujici se objekt se od aktivace posune, takze se sparuje s jinym
-kusem teze grafiky, ktery nahodou stoji blizko - a diagnostika "prepis ma,
-ale jeste neaktivoval" pak ukaze rozdil 0 px na uplne jinem objektu. Nez se
-tohle vyresi (parovanim pres poradi vzniku, ne polohu), berte za prukazne
-jen radky "prepis nema vubec" a soucty; jednotlive rozdily u pohyblivych
-druhu je treba overit rucne. Staticka kontrola marzi bez teto slabiny je
-v tools/margins.py.
+Skript ma tri rezimy:
+
+  python3 tools/objdiff.py                 snimky v pevnych bodech (nejslabsi)
+  python3 tools/objdiff.py --events 900    okamziky aktivace, original vs prepis
+  python3 tools/objdiff.py --predict 1500  okamziky aktivace proti MAPE
+
+**`--predict` je nejsilnejsi**, protoze nepotrebuje original: ocekavany
+okamzik plyne primo z mapy jako `ujeto = margin + zero - y`. Nezavisi tedy
+ani na RNG, ani na tom, jak hraje hrac. Overeno 2026-09-09: z 9 sparovanych
+aktivaci na 1500 px sedi vsech 9 **presne** (0 px), coz potvrzuje opravu
+marzi z tehoz dne.
+
+**Co se musi vynechavat a proc:**
+- *Formace* (`wave`, `yellow`, `bird`, `blackjet`, `fish`, `goose7`,
+  `skyeye`, `skyeyea`) nastavuji `born` uz v `startMapObjectTask` na prahu
+  -256, protoze mapovy zaznam je jen spoustec a kazdy klon si pak ceka na
+  vlastni a2c6 prah. Jejich `born` tedy neni aktivace ve smyslu `a2c6`.
+  Bez tohoto vyjmuti hlasi skript systematicky -208 px, coz je presne
+  rozdil -256 a -48.
+- *Klony a deti* v rezimu `--events`: jejich poloha zavisi na RNG a na
+  hraci. Vetsina "chybi v prepisu" u FLAME jsou plameny, ktere prepis ma
+  jako `hazards`, ne `spawns`.
+- Obe strany bezi **bez palby**; kdyz se strili, objekty umiraji v jinych
+  okamzicich a porovnani vzniku se v tom ztraci.
+
+**Zbyvajici slabina:** parovani pouziva polohu, takze druhy, ktere si `x`
+pri vzniku prepisou (`tank`, `train` vjizdeji z okraje), se nenajdou a
+skonci jako "NEAKTIVOVAN", i kdyz v poradku jsou. Spravne je parovat pres
+poradi vzniku. Staticka kontrola marzi bez teto slabiny je v
+tools/margins.py.
 
     python3 tools/objdiff.py            # vsechny kontrolni body
     python3 tools/objdiff.py 500 1000   # vlastni vzdalenosti
@@ -43,6 +65,75 @@ from playwright.sync_api import sync_playwright     # noqa: E402
 CHECKPOINTS = (300, 600, 900, 1200, 1500)   # ujete pixely mapy
 TOL = 3                                     # tolerance polohy pri parovani
 MARK = (0xa36a + vacmp.PROG_BASE) & 0xffff
+
+# Rezim udalosti: misto snimku v pevnych bodech sledujeme OKAMZIK AKTIVACE
+# kazdeho objektu. Ten je invariantni vuci pohybu - objekt se rodi na danem
+# miste mapy, at uz pak jede kamkoli - a tim padne slabina parovani podle
+# polohy. Krok je 4 VBL = presne 1 px scrollu.
+EVENTS_ORIG_JS = """(cfg) => {
+  const H = VA.M.HEAPU8, p = VA.fn.chipPtr(), n = VA.fn.chipSize();
+  const L = a => (H[p+a]<<24|H[p+a+1]<<16|H[p+a+2]<<8|H[p+a+3])>>>0;
+  const W = a => { const v = (H[p+a]<<8)|H[p+a+1]; return v > 0x7fff ? v-0x10000 : v; };
+  const U = a => (H[p+a]<<8)|H[p+a+1];
+  const cam = () => { let hi = L(cfg.a6 + 3530) >>> 16;
+                      return hi > 0x7fff ? hi - 0x10000 : hi; };
+  // Bez palby: kdyz obe strany strili, objekty umiraji v jinych okamzicich
+  // a porovnani vzniku se v tom ztraci. Hrac tu jen sedi (trainer ma
+  // nekonecne zivoty), takze se meri ciste chovani mapy.
+  let guard = 0;
+  while (H[p + cfg.a6 + 166] !== 0 && guard++ < 3000) VA.run(4, null);
+  const zero = cam();
+  const seen = new Set(), events = [];
+  const scan = () => {
+    const c = cam();
+    let node = cfg.a6 - 698, g = 0;
+    while (g++ < 500) {
+      const nx = L(node + 4);
+      if (!nx || nx >= n) break;
+      if (W(nx + 274) === 100 && (L(nx + 534) & 0xffff) === cfg.mark &&
+          !seen.has(nx)) {
+        seen.add(nx);
+        events.push({ ujeto: zero - c, gfx: U(nx + 368), x: W(nx + 320),
+                      ys: W(nx + 324) - c, hp: W(nx + 360), cls: U(nx + 504) });
+      }
+      node = nx;
+    }
+  };
+  scan();
+  while (zero - cam() < cfg.dist) {
+    VA.run(4, null);
+    scan();
+    // uvolnene adresy se recykluji; zapomen ty, ktere uz ve fronte nejsou
+    if (events.length % 64 === 0) {
+      const live = new Set();
+      let node = cfg.a6 - 698, g = 0;
+      while (g++ < 500) { const nx = L(node + 4);
+        if (!nx || nx >= n || live.has(nx)) break; live.add(nx); node = nx; }
+      for (const a of Array.from(seen)) if (!live.has(a)) seen.delete(a);
+    }
+  }
+  return { zero, events };
+}"""
+
+EVENTS_REMAKE_JS = """(cfg) => {
+  startGame(0);
+  const g = state.g; g.keys = {};
+  g.lives = 99;                       // protejsek traineru na strane originalu
+  const zero = scrollTop(g);
+  const seen = new Set(), events = [];
+  let guard = 0;
+  while (zero - scrollTop(g) < cfg.dist && guard++ < 60000) {
+    step(g);
+    const c = scrollTop(g);
+    for (const s of g.spawns) {
+      if (!s.born || seen.has(s)) continue;
+      seen.add(s);
+      events.push({ ujeto: zero - c, gfx: s.gfx, x: Math.round(s.x),
+                    ys: Math.round(s.y) - c, hp: s.hp | 0, beh: s.beh });
+    }
+  }
+  return { zero, events };
+}"""
 
 ORIG_JS = """(cfg) => {
   const H = VA.M.HEAPU8, p = VA.fn.chipPtr(), n = VA.fn.chipSize();
@@ -181,7 +272,182 @@ def pair(a, b):
     return pairs, left, rest
 
 
+def events_original(dist):
+    srv, port = vacmp.serve(os.path.join(ROOT, "web"))
+    try:
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch()
+            page = browser.new_page()
+            page.goto(f"http://127.0.0.1:{port}/vacmp.html")
+            page.wait_for_function("window.VA && window.VA.ready", timeout=60000)
+            page.evaluate("([r, a]) => VA.boot(r, a)", [
+                base64.b64encode(open(vacmp.ROM, "rb").read()).decode(),
+                base64.b64encode(open(vacmp.ADF, "rb").read()).decode()])
+            page.evaluate(vacmp.PLAY_PROLOGUE)
+            res = page.evaluate(EVENTS_ORIG_JS,
+                                {"a6": vacmp.A6_BASE, "mark": MARK, "dist": dist})
+            browser.close()
+    finally:
+        srv.shutdown()
+    return res
+
+
+def events_remake(dist):
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        page = browser.new_page()
+        page.goto("file://" + os.path.join(ROOT, "game.html"))
+        page.set_input_files("#fpick", os.path.join(ROOT, "SWIVFIX.ADF"))
+        page.wait_for_selector("#titlewrap", state="visible")
+        page.evaluate("window.requestAnimationFrame = () => 0")
+        page.keyboard.press(" ")
+        page.wait_for_selector("#gamewrap", state="visible")
+        res = page.evaluate(EVENTS_REMAKE_JS, {"dist": dist})
+        browser.close()
+    return res
+
+
+def compare_events(dist):
+    """Porovna okamziky aktivace. Parovani: stejne gfx a stejne x, v poradi."""
+    print("original ...", flush=True)
+    o = events_original(dist)
+    print("prepis ...", flush=True)
+    r = events_remake(dist)
+    names = {int(d["gfx"]): "%s#%d" % (d["file"], d["frame"])
+             for d in json.load(open(os.path.join(ROOT, "build", "dispatch.json")))}
+    known = map_gfx()
+    FORM = {0x0404, 0x0014, 0x0015}
+    keep = lambda e: e["gfx"] in known and e["gfx"] not in FORM
+    oe = [e for e in o["events"] if keep(e)]
+    re_ = [e for e in r["events"] if keep(e)]
+    print(f"\nujeto {dist} px: aktivaci original {len(oe)}, prepis {len(re_)}\n")
+    rest = list(re_)
+    shift, missing = [], []
+    for e in oe:
+        cand = [q for q in rest if q["gfx"] == e["gfx"] and abs(q["x"] - e["x"]) <= 2]
+        if not cand:
+            missing.append(e)
+            continue
+        q = min(cand, key=lambda q: abs(q["ujeto"] - e["ujeto"]))
+        rest.remove(q)
+        if abs(q["ujeto"] - e["ujeto"]) > 1:
+            shift.append((e, q))
+    print(f"sparovano {len(oe) - len(missing)}, chybi v prepisu {len(missing)}, "
+          f"navic v prepisu {len(rest)}, jiny okamzik {len(shift)}")
+    for e, q in shift[:15]:
+        print(f"   POZDE/BRZY {names.get(e['gfx'], hex(e['gfx'])):<18}"
+              f" x {e['x']:4d}: original pri {e['ujeto']:5d} px,"
+              f" prepis pri {q['ujeto']:5d} px  ({q['ujeto'] - e['ujeto']:+d})")
+    for e in missing[:10]:
+        print(f"   CHYBI      {names.get(e['gfx'], hex(e['gfx'])):<18}"
+              f" x {e['x']:4d} pri {e['ujeto']:5d} px")
+    for q in rest[:10]:
+        print(f"   NAVIC      {names.get(q['gfx'], hex(q['gfx'])):<18}"
+              f" x {q['x']:4d} pri {q['ujeto']:5d} px  [{q.get('beh','?')}]")
+
+
+PREDICT_JS = """(cfg) => {
+  startGame(0);
+  const g = state.g; g.keys = {}; g.lives = 99;
+  const zero = scrollTop(g);
+  // Ocekavany okamzik aktivace plyne primo z mapy: objekt se rodi pri
+  // ys >= margin, tedy pri ujeto = margin + zero - y. Zadny beh k tomu
+  // neni potreba - je to referencni hodnota, se kterou se pak porovna
+  // skutecny prubeh.
+  // Formace nastavuji born uz v startMapObjectTask (prah -256), protoze
+  // mapovy zaznam je jen spoustec - klony si pak kazdy ceka na vlastni
+  // a2c6 prah. Jejich "born" tedy neni aktivace ve smyslu a2c6 a do teto
+  // kontroly nepatri.
+  const SPOUSTECE = new Set(["wave", "yellow", "bird", "blackjet",
+                             "fish", "goose7", "skyeye", "skyeyea"]);
+  const want = [];
+  for (const s of g.spawns) {
+    if (s.gfx === undefined || !cfg.margins[s.beh]) continue;
+    if (SPOUSTECE.has(s.beh)) continue;
+    want.push({ gfx: s.gfx, beh: s.beh, x: Math.round(s.x),
+                ocekavano: cfg.margins[s.beh] + zero - Math.round(s.y) });
+  }
+  const seen = new Set(), got = [];
+  let guard = 0;
+  while (zero - scrollTop(g) < cfg.dist && guard++ < 60000) {
+    step(g);
+    const c = scrollTop(g);
+    for (const s of g.spawns) {
+      if (!s.born || seen.has(s) || SPOUSTECE.has(s.beh)) continue;
+      seen.add(s);
+      got.push({ gfx: s.gfx, beh: s.beh, x: Math.round(s.x),
+                 ujeto: zero - c });
+    }
+  }
+  return { zero, want: want.filter(w => w.ocekavano >= 0 &&
+                                        w.ocekavano <= cfg.dist), got };
+}"""
+
+
+def static_margins():
+    """Marze z game.html, klic je jmeno chovani (viz tools/margins.py)."""
+    import subprocess
+    out = subprocess.run([sys.executable, os.path.join(ROOT, "tools", "margins.py")],
+                         capture_output=True, text=True).stdout
+    m = {}
+    for line in out.splitlines():
+        f = line.split()
+        if len(f) >= 4 and f[0].isidentifier():
+            try:
+                m[f[0]] = int(f[3])
+            except ValueError:
+                pass
+    return m
+
+
+def predict(dist):
+    """Overi, ze prepis rodi mapove objekty presne tam, kde plyne z marze."""
+    margins = static_margins()
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        page = browser.new_page()
+        page.goto("file://" + os.path.join(ROOT, "game.html"))
+        page.set_input_files("#fpick", os.path.join(ROOT, "SWIVFIX.ADF"))
+        page.wait_for_selector("#titlewrap", state="visible")
+        page.evaluate("window.requestAnimationFrame = () => 0")
+        page.keyboard.press(" ")
+        page.wait_for_selector("#gamewrap", state="visible")
+        res = page.evaluate(PREDICT_JS, {"dist": dist, "margins": margins})
+        browser.close()
+    want, got = res["want"], list(res["got"])
+    ok = late = missing = 0
+    for w in sorted(want, key=lambda w: w["ocekavano"]):
+        # parovat je nutne i podle x - jinak se prvni polozka daneho druhu
+        # spari s libovolnou jinou a rozdil vyjde v stovkach pixelu
+        cand = [q for q in got if q["beh"] == w["beh"]
+                and abs(q["x"] - w["x"]) <= 2]
+        if not cand:
+            missing += 1
+            print(f"   NEAKTIVOVAN  {w['beh']:<12} x {w['x']:4d}"
+                  f"  cekano pri {w['ocekavano']:5d} px")
+            continue
+        q = min(cand, key=lambda q: abs(q["ujeto"] - w["ocekavano"]))
+        got.remove(q)
+        d = q["ujeto"] - w["ocekavano"]
+        if abs(d) <= 1:
+            ok += 1
+        else:
+            late += 1
+            print(f"   JINDY        {w['beh']:<12} x {w['x']:4d}"
+                  f"  cekano {w['ocekavano']:5d}, aktivovan {q['ujeto']:5d}"
+                  f"  ({d:+d} px)")
+    print("")
+    print(f"ujeto {dist} px: z mapy ocekavano {len(want)} aktivaci -> "
+          f"presne {ok}, jindy {late}, vubec {missing}")
+
+
 def main():
+    if sys.argv[1:2] == ["--predict"]:
+        predict(int(sys.argv[2]) if len(sys.argv) > 2 else 900)
+        return
+    if sys.argv[1:2] == ["--events"]:
+        compare_events(int(sys.argv[2]) if len(sys.argv) > 2 else 900)
+        return
     points = [int(x) for x in sys.argv[1:]] or list(CHECKPOINTS)
     print("originál ...", flush=True)
     o = original(points)
