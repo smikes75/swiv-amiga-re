@@ -37,6 +37,10 @@ createVAmiga().then(M => {
     joy: c('wasm_joystick', 'number', ['number', 'number']),
     mouse: c('wasm_mouse', 'number', ['number', 'number']),
     key: c('wasm_key', 'number', ['number', 'number']),
+    regTrace: c('wasm_regtrace', 'number', ['number']),
+    regTraceCount: c('wasm_regtrace_count', 'number', []),
+    regTracePtr: c('wasm_regtrace_ptr', 'number', []),
+    regTraceEntrySize: c('wasm_regtrace_entry_size', 'number', []),
   };
   VA.ready = true;
   document.getElementById('log').textContent = 'jadro pripraveno';
@@ -118,6 +122,24 @@ VA.runAudio = function (n) {
   }
   VA.frames = VA.fn.frames();
   return { err: '', samples: all };
+};
+
+/* Zaznam zapisu do custom registru (patch tools/vamiga-regtrace).
+   Vraci pole zaznamu { reg, value, pc, agnus, vpos, hpos }. */
+VA.regTrace = function (on) { VA.fn.regTrace(on ? 1 : 0); };
+VA.regTraceRead = function () {
+  const n = VA.fn.regTraceCount(), size = VA.fn.regTraceEntrySize();
+  const base = VA.fn.regTracePtr();
+  const H8 = VA.M.HEAPU8, dv = new DataView(H8.buffer);
+  const out = new Array(n);
+  for (let i = 0; i < n; i++) {
+    const o = base + i * size;
+    out[i] = { reg: dv.getUint16(o, true), value: dv.getUint16(o + 2, true),
+               pc: dv.getUint32(o + 4, true), agnus: H8[o + 8],
+               vpos: dv.getUint16(o + 10, true),
+               hpos: dv.getUint16(o + 12, true) };
+  }
+  return out;
 };
 
 /* Kopie zacatku chip RAM (stav hry) jako base64. */

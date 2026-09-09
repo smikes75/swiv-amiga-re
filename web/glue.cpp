@@ -188,6 +188,30 @@ EMSCRIPTEN_KEEPALIVE int wasm_key(int code, int down)
     catch (std::exception &e) { lastError = e.what(); return -1; }
 }
 
+// --- SWIV: zaznam zapisu do custom registru (patch tools/vamiga-regtrace) ---
+// Cilem je zjistit, KDO kresli: herni kod na blitter/copper/bitplany vubec
+// nesaha (0 z 14/6/26 registru), takze musi jit o kod, ktery jsme jeste
+// nenasli. Kazdy zaznam nese registr, hodnotu, PC instrukce, priznak
+// Agnus/CPU a rastrovou pozici.
+EMSCRIPTEN_KEEPALIVE int wasm_regtrace(int on)
+{
+    vamiga::regTraceOn = on != 0;
+    if (on) vamiga::regTraceCount = 0;
+    return 0;
+}
+EMSCRIPTEN_KEEPALIVE int wasm_regtrace_count()
+{
+    return (int)vamiga::regTraceCount;
+}
+EMSCRIPTEN_KEEPALIVE const void *wasm_regtrace_ptr()
+{
+    return (const void *)vamiga::regTrace;
+}
+EMSCRIPTEN_KEEPALIVE int wasm_regtrace_entry_size()
+{
+    return (int)sizeof(vamiga::RegTraceEntry);
+}
+
 EMSCRIPTEN_KEEPALIVE int wasm_warp(int on)
 {
     try { if (on) va->warpOn(1); else va->warpOff(1); return 0; }
