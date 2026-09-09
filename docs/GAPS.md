@@ -604,6 +604,23 @@ clampuje na konstantnich 123; pozadovanych 74 nehraje ani jeden. Presne
 cislo potrebuje cistsi nahravku (bez ostatnich efektu) a lepsi odhad
 frekvence nez pocitani prechodu nulou.
 
+## Rozliseni typu zivych uloh (otevrene, 2026-09-09)
+
+`tools/survey/tasks_live.py` uz kazde zive uloze originalu priradi chovani
+podle PC na `+270` (43 ze 43 objektu s prioritou 100 v TOWN). Poloha `x`/`y`
+sedi i proti snimku obrazovky.
+
+Zbyva ale poznat **typ** ulohy. Offsety `+360 hp` a `+504 trida` plati pro
+plnohodnotne objekty (`a5` v korutinach `AMPROG.OBJ`); u deti a efektovych
+uloh tam lezi neco jineho, takze vychazi `trida 8191`, `-32768`, `21064`
+nebo `hp -27862`. Pri porovnani po objektech se proto zatim smi porovnavat
+jen poloha a jmeno chovani, ne HP a trida.
+
+Nejblizsi cesta: `0x1030` alokuje zaznam po 308 bajtech pro vsechny typy, ale
+`a2c6` (0xa2c6) plni pole objektu jen u tech, ktere jim projdou. Rozliseni by
+tedy mohlo jit podle toho, zda PC ulohy lezi za volanim `a2c6`, nebo podle
+pole, ktere `a2c6` prokazatelne zapisuje (`+370` gfx, `+362` skore).
+
 ## Junkce map a `levelPhase` (nalezeno pri revizi 2026-09-06)
 
 `g.levelPhase` se inicializuje cislem urovne (`lv`), ale `g.junctionRows`

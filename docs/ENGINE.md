@@ -361,8 +361,21 @@ Also read along the way:
   `A6-1006`), `A6-1494` -> `0x0e0e` alokuje pamet a `A6-1446` -> `0x0f84`
   ulohu ukoncuje. Zaznam se alokuje po **308 bajtech**, odkaz na dalsi je na
   `+4` a priorita na `+274`; herni objekty bezi s prioritou 100.
+  Na **`+270` je aktualni PC korutiny**: pro kazdou ulohu staci najit
+  nejblizsi vstupni bod pod nim (`build/dispatch.json` pro mapove objekty,
+  `build/coroutines.json` pro deti a tasky) a vyjde jmeno chovani.
   `tools/survey/tasks_live.py` frontu projde a vypise zive objekty
-  (43 z 50 uloh v TOWN po 45 s hry).
+  (43 z 50 uloh v TOWN po 45 s hry, vsem se chovani priradilo).
+
+  Krizova kontrola proti obrazovce sedi: vrtulnik hrace jsou dve ulohy
+  `0x939c` na `x=160, y_scr=192` (telo `z=33` a stin `z=32`), FLAME na
+  `x=95, y_scr=197` je na snimku presne tam, a dva vybuchy odpovidaji
+  `child@0x8952` a `anim_task@0xab78`.
+
+  **Otevrene:** offsety `320/324/504` plati jen pro plnohodnotne objekty.
+  Deti a efektove ulohy maji jine rozlozeni - u nich vychazi trida 8191 nebo
+  hp -27862, coz jsou cizi data. Poloha `x` a `y` vypada spravne i u nich,
+  ale `hp`/`trida` se u nich cist nesmi, dokud se typ ulohy nerozlisi.
 - A level-select cheat handler reads raw keys at `0x20e4`.
 - The normal attract dispatcher starts at `0x0d64`. The browser follows its
   COVER -> Sales Curve -> HELI blueprint/scores -> JEEP blueprint/scores ->

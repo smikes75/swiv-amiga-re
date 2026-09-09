@@ -24,12 +24,17 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import vacmp                                            # noqa: E402
 from playwright.sync_api import sync_playwright         # noqa: E402
 
+PC = 270                    # aktualni PC korutiny (overeno 2026-09-09)
 HEAD_MAIN = -698            # hlava hlavni fronty vuci A6
 HEAD_ALT = -1006
 NEXT = 4                    # odkaz na dalsi ulohu
 PRIO = 274
 
 # Offsety poli herniho objektu (a5 v korutinach AMPROG.OBJ).
+# Pozor: tyto offsety plati pro plnohodnotne objekty (a5 v korutinach
+# AMPROG.OBJ). Deti a efektove ulohy maji jine rozlozeni - u nich vychazi
+# napr. trida 8191 nebo hp -27862, coz jsou cizi data, ne skutecne hodnoty.
+# Rozliseni podle typu ulohy zatim otevrene, viz docs/GAPS.md.
 FIELDS = {"x": 320, "y": 324, "z": 328, "vx": 332, "vy": 336,
           "hp": 360, "cull": 364, "flags": 367, "trida": 504}
 
@@ -44,7 +49,7 @@ WALK_JS = """(cfg) => {
     const nx = L(node + cfg.next);
     if (!nx || nx >= n) break;
     if (out.some(t => t.adr === nx)) break;
-    const rec = { adr: nx, prio: W(nx + cfg.prio) };
+    const rec = { adr: nx, prio: W(nx + cfg.prio), pc: L(nx + cfg.pc) };
     for (const [k, off] of Object.entries(cfg.fields)) rec[k] = W(nx + off);
     out.push(rec);
     node = nx;
@@ -55,8 +60,28 @@ WALK_JS = """(cfg) => {
 
 def live_tasks(page, head=HEAD_MAIN):
     return page.evaluate(WALK_JS, {"a6": vacmp.A6_BASE, "head": head,
-                                   "next": NEXT, "prio": PRIO,
+                                   "next": NEXT, "prio": PRIO, "pc": PC,
                                    "fields": FIELDS})
+
+
+def behaviour_index(root):
+    """Vstupni body korutin -> jmeno; PC ulohy patri nejblizsimu pod nim."""
+    import json
+    ent = {}
+    with open(os.path.join(root, "build", "dispatch.json")) as fh:
+        for d in json.load(fh):
+            ent[int(d["coroutine"], 16)] = "%s#%d" % (d["file"], d["frame"])
+    with open(os.path.join(root, "build", "coroutines.json")) as fh:
+        for c in json.load(fh):
+            ent.setdefault(int(c["entry"], 16), "%s@%s" % (c["kind"], c["entry"]))
+    return ent
+
+
+def behaviour_of(ent, starts, pc_abs):
+    import bisect
+    pc = pc_abs - vacmp.PROG_BASE
+    i = bisect.bisect_right(starts, pc) - 1
+    return ent[starts[i]] if i >= 0 else "?"
 
 
 def main():
@@ -79,11 +104,14 @@ def main():
             browser.close()
     finally:
         srv.shutdown()
+    ent = behaviour_index(root)
+    starts = sorted(ent)
     objects = [t for t in tasks if t["prio"] == 100]
     print(f"uloh celkem {len(tasks)}, z toho priorita 100: {len(objects)}")
     for t in objects:
-        print("  0x%05x  x %4d  y %7d  z %3d  hp %4d  trida %5d" %
-              (t["adr"], t["x"], t["y"], t["z"], t["hp"], t["trida"]))
+        print("  0x%05x  %-22s x %4d  y %7d  z %3d  hp %5d  trida %6d" %
+              (t["adr"], behaviour_of(ent, starts, t["pc"]),
+               t["x"], t["y"], t["z"], t["hp"], t["trida"]))
 
 
 if __name__ == "__main__":
