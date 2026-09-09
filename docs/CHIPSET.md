@@ -217,3 +217,30 @@ sprity vyhradne strely, vrtulnik i nepratele jsou BOBy.
 se bitplany ctou po dobehnuti snimku. Zmereno pres `wasm_step_line` na `VP`
 0, 44, 150, 260 a 300: shoda vsude 20-21 %, tedy na okamziku cteni nezavisi.
 Chyba byla v barvach, vyrezu a adresovani.
+
+
+# Faze 5: prvni vylepseni nad ramec hardwaru (2026-09-10)
+
+## Mekke stiny podle vysky
+
+Hra uz stin podle vysky odsazuje - `bobShadowAnchor` je `x + z/2, y + z`,
+tedy jednoducha 2,5D projekce. Co Amiga neumela, je **mekkost a
+pruhlednost**: blitter zna jen plnou masku, stin se kresli jako pevny
+paletovy index 0.
+
+Volitelne (`mekke stiny` v panelu, jen v plynulem rezimu) se tataz vyska
+promitne i do rozostreni a pruhlednosti:
+
+```
+blur  = min(6, z / 6)          px
+alpha = max(0.25, 0.75 - z/90)
+grow  = 1 + min(0.35, z / 120)
+```
+
+Zadna nova data k tomu nebyla potreba - `z` uz vozi kazdy stinovy zaznam,
+protoze jej hra pouziva k odsazeni. Efekt je vychozene **vypnuty**, takze
+kontrakty `compare.py`, `smoothtest.py` a `uitest.py` zustavaji zelene.
+
+Je to zaroven ukazka, k cemu byla analyza dobra: vrstvy jsou oddelene
+(stin je zaznam `kind: "shadow"`, ne pixely v terenu), takze se da sahnout
+prave na nej a nic jineho nezmenit.

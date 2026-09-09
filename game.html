@@ -89,6 +89,7 @@ a { color:#cfe0ff }
     <button type="button" id="btnload" title="Nacist pozici z vybraneho slotu">nacist</button>
     <button type="button" id="btndel" title="Smazat vybrany slot">smazat</button>
     <span id="slotinfo" style="opacity:.8"></span>
+    &nbsp;&middot;&nbsp; <label title="Stin objektu se s vyskou rozostri a zesvetli; puvodni hardware to neumel, blitter zna jen plnou masku"><input type="checkbox" id="softshchk"> m&#283;kk&#233; st&#237;ny</label>
     &nbsp;&middot;&nbsp; <label title="Svisle prolnuti pozadi: plynuly posun i pod 4x, teren je za to pri pohybu mekci"><input type="checkbox" id="blendchk"> hladk&#233; pozad&#237;</label>
   </div>
   <div id="zoomrow" role="group" aria-label="Velikost hern&#237;ho pole">
@@ -1769,6 +1770,9 @@ function standardBobRecords(spec, serialStart) {
     const shadow = bobShadowAnchor(spec.x, spec.y, wordZ);
     add(id + "-shadow", "shadow", 0xFFFF,
         spec.primary, shadow.x, shadow.y, BOB_CLEAR_INDEX0);
+    // vyska objektu se veze se zaznamem: volitelny mekky stin z ni pocita
+    // rozostreni a pruhlednost (viz renderSmoothField)
+    records[records.length - 1].z = wordZ;
   }
   return { records, nextSerial: serial };
 }
@@ -7267,6 +7271,9 @@ document.getElementById("smoothchk").onchange = e => {
 document.getElementById("blendchk").onchange = e => {
   state.blendBg = e.target.checked; updateZoomLabel();
 };
+document.getElementById("softshchk").onchange = e => {
+  state.softShadows = e.target.checked;         // jen plynuly rezim
+};
 document.getElementById("btnrestart").onclick = () => {
   if (state.g) { startGame(state.g.lv | 0); updateJumpLabel(); }
   document.getElementById("game").focus();
@@ -10045,6 +10052,23 @@ function renderSmoothField(ctx, g, S, composed, hudCv) {
     const row = Math.max(0, Math.min(rows - 1, Math.floor(dy - r.spr.oy)));
     const cv = smoothSpriteCanvas(r.spr, pal.subarray(row * 16, row * 16 + 16),
                                   r.op, c07);
+    // Volitelne vylepseni (v originale neni): stin objektu, ktery leti
+    // vysoko, je na skutecne predloze mekci a svetlejsi. Vysku uz mame -
+    // hra ji pouziva k odsazeni stinu (bobShadowAnchor: x + z/2, y + z),
+    // takze staci tutez hodnotu promitnout i do rozostreni a pruhlednosti.
+    // Amiga to neumela: blitter zna jen plnou masku, ne alfu.
+    if (state.softShadows && r.kind === "shadow") {
+      const z = Math.abs(r.z | 0);
+      const blur = Math.min(6, z / 6);
+      const grow = 1 + Math.min(0.35, z / 120);
+      ctx.save();
+      ctx.globalAlpha = Math.max(0.25, 0.75 - z / 90);
+      if (blur > 0.4) ctx.filter = "blur(" + blur.toFixed(2) + "px)";
+      const w = cv.width * grow, h = cv.height * grow;
+      ctx.drawImage(cv, dx - (w - cv.width) / 2, dy - (h - cv.height) / 2, w, h);
+      ctx.restore();
+      continue;
+    }
     ctx.drawImage(cv, dx, dy);
   }
   // HUD (5. bitplane) jako **pruhledna** vrstva: drive se sem kopirovalo
