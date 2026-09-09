@@ -354,6 +354,15 @@ Also read along the way:
   `BRA.W` entries four bytes apart. `tools/survey/vacmp.py` carries both
   constants and the two searches that re-derive them, so a different build or
   disk can be re-measured rather than assumed.
+- **Planovac uloh je v knihovne zavadece, ne v `AMPROG.OBJ`.** Skokova
+  tabulka na zapornych offsetech od `A6` obsahuje `BRA.W` po ctyrech bajtech;
+  rozlusteno 2026-09-09 z pameti behu: `A6-1474` -> `0x1030` zaklada ulohu
+  (hlava fronty `A6-698`), `A6-1470` -> `0x1052` je druha varianta (hlava
+  `A6-1006`), `A6-1494` -> `0x0e0e` alokuje pamet a `A6-1446` -> `0x0f84`
+  ulohu ukoncuje. Zaznam se alokuje po **308 bajtech**, odkaz na dalsi je na
+  `+4` a priorita na `+274`; herni objekty bezi s prioritou 100.
+  `tools/survey/tasks_live.py` frontu projde a vypise zive objekty
+  (43 z 50 uloh v TOWN po 45 s hry).
 - A level-select cheat handler reads raw keys at `0x20e4`.
 - The normal attract dispatcher starts at `0x0d64`. The browser follows its
   COVER -> Sales Curve -> HELI blueprint/scores -> JEEP blueprint/scores ->
