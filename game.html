@@ -81,6 +81,13 @@ a { color:#cfe0ff }
     <button type="button" id="btnfwd" title="O pul zony vpred">&#9658;&#9658;</button>
     <span id="jumplabel" style="opacity:.8"></span>
     &nbsp;&middot;&nbsp; <button type="button" id="btnend" title="Preskocit na zaverecnou sekvenci (klavesa C)">konec hry</button>
+    <br>
+    <span title="Ulozene pozice zustavaji v tomto prohlizeci">pozice</span>
+    <select id="slotsel" style="font:inherit"></select>
+    <button type="button" id="btnsave" title="Ulozit aktualni pozici do vybraneho slotu">ulozit</button>
+    <button type="button" id="btnload" title="Nacist pozici z vybraneho slotu">nacist</button>
+    <button type="button" id="btndel" title="Smazat vybrany slot">smazat</button>
+    <span id="slotinfo" style="opacity:.8"></span>
     &nbsp;&middot;&nbsp; <label title="Svisle prolnuti pozadi: plynuly posun i pod 4x, teren je za to pri pohybu mekci"><input type="checkbox" id="blendchk"> hladk&#233; pozad&#237;</label>
   </div>
   <div id="zoomrow" role="group" aria-label="Velikost hern&#237;ho pole">
@@ -7266,6 +7273,15 @@ document.getElementById("btnfwd").onclick = () => {
 document.getElementById("btnback").onclick = () => {
   jumpMap(state.g, -0.5); document.getElementById("game").focus();
 };
+document.getElementById("btnsave").onclick = () =>
+  saveToSlot(+document.getElementById("slotsel").value | 0);
+document.getElementById("btnload").onclick = () =>
+  loadFromSlot(+document.getElementById("slotsel").value | 0);
+document.getElementById("btndel").onclick = () => {
+  saveSlotWrite(+document.getElementById("slotsel").value | 0, null);
+  refreshSlots();
+  document.getElementById("slotinfo").textContent = "smazano";
+};
 document.getElementById("btnend").onclick = () => {
   const g = state.g;
   if (g && !g.over) { g.won = true; g.over = true; g.congrat = null; }
@@ -7354,6 +7370,100 @@ function updateJumpLabel() {
   el.textContent = (ZONE_NAMES[zone] || "?") +
     "  " + Math.round(g.mapH - 256 - y) + " px";
 }
+
+/* ---- Ulozene pozice (10 slotu, jen v tomto prohlizeci) --------------
+   Neni to snapshot cele hry: ukladame zonu, polohu v mape a stav hrace.
+   Pri nacteni se uroven rozehraje znovu od te polohy, takze neprately
+   potkate od zacatku jejich vln - je to checkpoint, ne save state. */
+const SAVE_SLOTS = 10, SAVE_KEY = "swiv.save.";
+function saveSlotRead(i) {
+  try { const raw = localStorage.getItem(SAVE_KEY + i);
+        return raw ? JSON.parse(raw) : null; }
+  catch (_e) { return null; }                  // privatni okno, blokovane uloziste
+}
+function saveSlotWrite(i, value) {
+  try {
+    if (value === null) localStorage.removeItem(SAVE_KEY + i);
+    else localStorage.setItem(SAVE_KEY + i, JSON.stringify(value));
+    return true;
+  } catch (_e) { return false; }
+}
+function slotLabel(i) {
+  const d = saveSlotRead(i);
+  if (!d) return (i + 1) + " - prazdny";
+  return (i + 1) + " - " + (ZONE_NAMES[d.zone] || "?") +
+         " " + d.ujeto + " px, " + d.score + " b";
+}
+function refreshSlots() {
+  const sel = document.getElementById("slotsel");
+  if (!sel) return;
+  const keep = sel.value;
+  sel.innerHTML = "";
+  for (let i = 0; i < SAVE_SLOTS; i++) {
+    const o = document.createElement("option");
+    o.value = String(i); o.textContent = slotLabel(i);
+    sel.appendChild(o);
+  }
+  sel.value = keep || "0";
+}
+function currentZoneIndex(g) {
+  const y = scrollTop(g);
+  let best = null, bestD = Infinity;
+  for (const s of g.spawns) {
+    const d = Math.abs(s.y - y - 128);
+    if (d < bestD) { bestD = d; best = s; }
+  }
+  return (g.lv | 0) + (best ? (best.mapIndex | 0) : 0);
+}
+function saveToSlot(i) {
+  const g = state.g, info = document.getElementById("slotinfo");
+  if (!g) return;
+  const p = g.player;
+  const data = {
+    v: 1, lv: g.lv | 0, scroll: g.scroll,
+    zone: currentZoneIndex(g), ujeto: Math.round(g.mapH - 256 - scrollTop(g)),
+    score: g.score | 0, lives: g.lives | 0, continues: g.continues | 0,
+    nextLife: g.nextLife | 0, difficulty: g.difficulty | 0,
+    shotsFired: g.shotsFired | 0, enemiesSeen: g.enemiesSeen | 0,
+    enemiesKilled: g.enemiesKilled | 0, statScrolled: g.statScrolled || 0,
+    px: p.x, py: p.y, weapon: p.weapon | 0, tokenCount: p.tokenCount | 0,
+    rank: p.rank | 0, reload: p.reload | 0, mode: p.mode | 0,
+    kdy: new Date().toISOString().slice(0, 16).replace("T", " "),
+  };
+  const ok = saveSlotWrite(i, data);
+  refreshSlots();
+  if (info) info.textContent = ok ? "ulozeno" : "ulozeni se nezdarilo";
+}
+function loadFromSlot(i) {
+  const d = saveSlotRead(i), info = document.getElementById("slotinfo");
+  if (!d) { if (info) info.textContent = "slot je prazdny"; return; }
+  startGame(d.lv | 0);
+  const g = state.g;
+  // stejna cesta jako vyvojarsky skok: scroll a pak prezbrojeni objektu
+  g.scroll = d.scroll; g.scrollPrev = d.scroll;
+  jumpMap(g, 0);
+  g.score = d.score | 0; g.lives = d.lives | 0;
+  // pozor na bitovy OR: `d.weapon | 1` z ctyrky udela petku a
+  // `d.nextLife | 10000` z 30000 udela 30512
+  g.continues = d.continues | 0;
+  g.nextLife = Number.isFinite(d.nextLife) ? d.nextLife : 10000;
+  g.difficulty = d.difficulty | 0;
+  g.shotsFired = d.shotsFired | 0; g.enemiesSeen = d.enemiesSeen | 0;
+  g.enemiesKilled = d.enemiesKilled | 0; g.statScrolled = d.statScrolled || 0;
+  const p = g.player;
+  p.x = d.px; p.y = d.py; p.weapon = d.weapon || 1;
+  p.tokenCount = d.tokenCount | 0; p.rank = d.rank | 0;
+  if (d.reload) p.reload = d.reload;
+  p.mode = d.mode | 0;
+  p.weaponX = p.x; p.weaponY = p.y;
+  updateJumpLabel();
+  if (info) info.textContent = "nacteno (" + d.kdy + ")";
+  document.getElementById("game").focus();
+}
+
+// az tady, protoze `const SAVE_SLOTS` vyse je do sve definice v docasne
+// mrtve zone a drivejsi volani spadne na "Cannot access before initialization"
+refreshSlots();
 
 window.addEventListener("keydown", e => {
   // Vyvojarska zkratka (neni v originale): C preskoci na zaverecnou
