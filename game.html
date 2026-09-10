@@ -7099,7 +7099,29 @@ function resumePlayerCollision(g) {
   if (lethal && p.alive) killPlayer(g);
 }
 
-/* ---- start urovne ---- */
+/* ---- start urovne: ozbrojeni mapovych objektu ----------------------
+   `0x3596` cte zaznamy PAM a pro kazdy objektovy zaznam vola `0x3652`.
+   Tam je v objektove vetvi na `0x3722` tento test:
+
+       3722: movew %d1,%d7          ; d1 = radek zaznamu (fp@(3586))
+       3724: subw  %fp@(3530),%d7   ; d7 = radek - kamera = ys
+       3728: bgts  0x3786           ; ys > 0 (ZNAMENKOVE) -> zaznam se zahodi
+
+   Zaznam se tedy tise preskoci a korutina nevznikne, kdyz uz je jeho radek
+   pod hornim okrajem obrazovky. Pri beznem rolovani ctec predbiha o 256
+   radku (`0x3662`), takze podminka nikdy neplati; uplatni se jedine na
+   zacatku urovne, nez ctec predbehne. Objekty v uvodnim okne opravdu
+   korutinu nedostanou - to neni chyba prepisu.
+
+   Prah je `ys <= 0`, ne `ys < -32`. Rozdil je videt jen pri vyvojarskem
+   startu jine urovne nez TOWN (TOWN ma prvnich 384 radku bez objektu):
+   DESERT +3, GRASS +1, RIVER +2, ICE +3, SCIFI +2 objekty.
+
+   Codexuv `mapObjectArmedAtStart` (`lv > 0 || screenY < -32`) ozbrojuje pri
+   startu vyssi urovne uplne vsechno vcetne uvodniho okna; to `0x3728`
+   primo vyvraci, proto se neprebira. */
+function armedAtStart(g, s) { return s.y - scrollTop(g) <= 0; }
+
 function startGame(lv) {
   stopAttract();
   $("#titlewrap").style.display = "none";
@@ -7241,7 +7263,7 @@ function startGame(lv) {
   g.player.x = startPos.x; g.player.y = startPos.y;
   g.player.weaponX = startPos.x; g.player.weaponY = startPos.y;
   applyWeaponTable(g.player);                 // 0x70c8: start = power2/reload11
-  for (const s of g.spawns) s.armed = (s.y - scrollTop(g)) < -32;
+  for (const s of g.spawns) s.armed = armedAtStart(g, s);
   g.paused = false;
   { const el = document.getElementById("pauselabel");
     if (el) el.textContent = ""; }
@@ -7443,11 +7465,11 @@ function jumpMap(g, fraction) {
     if (s.clean) { const c = s.clean; for (const k of Object.keys(s))
       if (k !== "clean") delete s[k];
       Object.assign(s, c); s.clean = c; }
-    // Presne pravidlo startGame: co uz je na obrazovce nebo za ni, se
-    // neozbroji a korutinu nikdy nedostane. Nic dalsiho nastavovat nesmime
-    // - objekt s `born` bez rozpracovaneho stavu by shodil step()
+    // Presne pravidlo startGame (0x3728): co uz je na obrazovce nebo za ni,
+    // se neozbroji a korutinu nikdy nedostane. Nic dalsiho nastavovat
+    // nesmime - objekt s `born` bez rozpracovaneho stavu by shodil step()
     // (napriklad boss bez `parts`).
-    s.armed = (s.y - scrollTop(g)) < -32;
+    s.armed = armedAtStart(g, s);
   }
   g.air.length = 0; g.hazards.length = 0; g.shots.length = 0;
   g.bullets.length = 0; g.booms.length = 0; g.tokens.length = 0;

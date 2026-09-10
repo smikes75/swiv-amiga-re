@@ -672,8 +672,15 @@ ji aplikuje jen pri startu/respawnu a pouziva MIN clamp, ne upgrade.
 
 ### Triggery chovani
 Objekty uvnitr uvodniho okna se NEaktivuji; korutiny jsou zakladany
-map readerem uz asi **256 px pred obrazem** a jejich `a2c6` je pusti podle
-vlastniho marginu. Pre-a2c6 RNG (FOD/YELLOW/BIRD clone, POPUP/PROX prah)
+map readerem uz asi **256 px pred obrazem** (`0x3662`: ctec bezi, dokud
+`kamera - 256 <= fp@(3586)`) a jejich `a2c6` je pusti podle vlastniho
+marginu. Prah uvodniho okna je `0x3728` v objektove vetvi `0x3652`:
+`radek - kamera > 0` (znamenkove) → zaznam se **tise zahodi** a korutina
+nevznikne. Plati tedy `ys <= 0`, ne `ys < -32`. Pri beznem rolovani ctec
+predbiha, takze podminka nikdy nenastane; uplatni se jedine na zacatku
+urovne. V TOWN je prvnich 384 radku bez objektu, takze na originalu neni
+co videt — rozdil je merytelny jen pri vyvojarskem startu jine urovne
+(DESERT +3, GRASS +1, RIVER +2, ICE +3, SCIFI +2 objektu). Pre-a2c6 RNG (FOD/YELLOW/BIRD clone, POPUP/PROX prah)
 se tedy spotrebuje pri prefetchi, ne az u viditelne aktivace. FODDERA a
 YELLOW pouzivaji −48, nikoli genericky wrapper −32. Browser tuto dvojici
 fazi uz ma, ale vsechny ve stejnem tiku zpusobile mapove zaznamy zatim
