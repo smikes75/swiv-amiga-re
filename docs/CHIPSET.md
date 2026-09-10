@@ -261,3 +261,28 @@ svetle barvy pretekly na 255 a bily vrtulnik hrace se slil do siluety. Ted
 se jen ztmavuje (`k = 1 - lit*t`), takze se nic neztrati.
 
 Obe vylepseni jsou vychozene vypnuta a plati jen v plynulem rezimu.
+
+
+## Hloubka ostrosti
+
+Kamera je nad hrou zaostrena na rovinu objektu, takze teren pod nimi je
+mirne mekci (`blur(0.7 / S)` pred kreslenim terenu, pak `filter = none`
+pro objekty). Amiga nic takoveho neumela: obraz je slozeny z pevnych
+bitplanu a zadny filtr mezi nimi a monitorem neexistuje.
+
+**Zmereny dopad efektu na obraz** (zmrazena hra, TOWN):
+
+| efekt | zmenenych pixelu | vyrazne |
+|---|---|---|
+| hloubka ostrosti | **32,9 %** | 8,9 % |
+| mekke stiny | 4,3 % | 2,5 % |
+| barevna hloubka | 2,7 % | 2,7 % |
+| svetlo shora | 2,5 % | 2,2 % |
+| hladke pozadi | 1,7 % | 1,6 % |
+
+Cislo je duvod, proc si uzivatel prvnich ctyr efektu nevsiml: sahaji na
+objekty nebo hrany, ktere zabiraji pár procent obrazovky. Hloubka ostrosti
+je prvni, ktera se dotkne terenu, tedy 90 % obrazu.
+
+Pouceni pro dalsi efekty: **nejdriv zmerit, jakou plochu efekt zasahne**,
+teprve potom jej nabizet jako viditelne vylepseni.

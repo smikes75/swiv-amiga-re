@@ -94,7 +94,8 @@ a { color:#cfe0ff }
   </div>
   <div id="fxbar" hidden style="margin-top:4px;font:12px monospace;color:#9ab">
     <span style="opacity:.7">efekty nad r&#225;mec hardwaru:</span>
-    <label title="Copper meni paletu skokem na konkretnim radku, takze teren ma vodorovne pasy. Interpolace mezi checkpointy je vyhladi - vypada to, jako by mapa mela mnohem vic barev."><input type="checkbox" id="deepchk"> barevn&#225; hloubka</label>
+    <label title="Kamera zaostrena na rovinu objektu: teren pod nimi je mirne mekci. Amiga obraz skladala z pevnych bitplanu, zadny filtr mezi nimi a monitorem nebyl."><input type="checkbox" id="dofchk"> hloubka ostrosti</label>
+    &nbsp;&middot;&nbsp; <label title="Copper meni paletu skokem na konkretnim radku, takze teren ma vodorovne pasy. Interpolace mezi checkpointy je vyhladi."><input type="checkbox" id="deepchk"> barevn&#225; hloubka</label>
     &nbsp;&middot;&nbsp; <label title="Stin objektu se s vyskou rozostri a zesvetli; blitter zna jen plnou masku, alfu neumi"><input type="checkbox" id="softshchk2"> m&#283;kk&#233; st&#237;ny</label>
     &nbsp;&middot;&nbsp; <label title="Objekt se ztmavuje smerem dolu, sila podle vysky; kazdy pixel BOBu je paletovy index, stinovat nejde"><input type="checkbox" id="litchk2"> sv&#283;tlo shora</label>
     &nbsp;&middot;&nbsp; <label title="Svisle prolnuti pozadi: plynuly posun i pod 4x, teren je za to pri pohybu mekci"><input type="checkbox" id="blendchk"> hladk&#233; pozad&#237;</label>
@@ -7319,6 +7320,9 @@ function setMode(fx) {
 }
 document.getElementById("modeorig").onchange = () => setMode(false);
 document.getElementById("modefx").onchange = () => setMode(true);
+document.getElementById("dofchk").onchange = e => {
+  state.depthOfField = e.target.checked;
+};
 document.getElementById("deepchk").onchange = e => {
   state.deepColor = e.target.checked;
   if (state.g) state.g.mapFrame = null;         // paleta se pocita znovu
@@ -10095,6 +10099,15 @@ function renderSmoothField(ctx, g, S, composed, hudCv) {
   ctx.save();
   ctx.imageSmoothingEnabled = false;
   ctx.scale(S, S);
+  // Hloubka ostrosti (v originale neni): kamera je nad hrou zaostrena na
+  // rovinu objektu, takze teren pod nimi je mirne mekci. Amiga nic
+  // takoveho neumela - obraz je slozeny z pevnych bitplanu a filtr mezi
+  // nimi a monitorem neexistuje. Rozostreni je zamerne male; vic uz
+  // rozbiji pixelovy charakter hry.
+  if (state.depthOfField) {
+    ctx.filter = "blur(" + (0.7 / S).toFixed(3) + "px)";
+    ctx.imageSmoothingEnabled = true;
+  }
   if (state.blendBg) {
     // Svisle prolnuti mezi dvema sousednimi polohami v bodech displeje:
     // vodorovne zustava obraz ostry, svisle se michaji nejvyse dva body.
@@ -10106,6 +10119,10 @@ function renderSmoothField(ctx, g, S, composed, hudCv) {
       ctx.globalAlpha = 1;
     }
   } else ctx.drawImage(st.cv, 0, -fy);
+  if (state.depthOfField) {                      // objekty uz ostre
+    ctx.filter = "none";
+    ctx.imageSmoothingEnabled = false;
+  }
   const cur = g.bobCur, prev = g.bobPrev;
   for (const r of composed.ordered) {
     if (!r.spr) continue;
