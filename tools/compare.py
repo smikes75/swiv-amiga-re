@@ -120,12 +120,43 @@ CHECKPOINTS = {
     # Zbytek rozdilu je STAV, ne vykreslovani: original uz devet stovek
     # sekund hraje, takze ma jine skore, jine zive objekty a explozi
     # navic. Teren i grafika tovarny v diffu sedi.
+    # ZONY MIMO TOWN A DESERT. Sem se baseline sama nedostane: `0x3cbe`
+    # scrolluje jen pri `fp@(166) == 0` a bit 3 drzi ziva instalace, kterou
+    # bez skutecneho hrani nikdo nezniici. `tools/survey/zoneshot.py` proto
+    # pousti original v harnessu ve WebAssembly a kazdy snimek mu **zhasne
+    # jen bit 3** (bit 1 nechava byt - ten drzi scroll, dokud stavitel
+    # terennich pruhu neni napred). Mapova data, palety, Copper i blitter
+    # delaji dal svou praci.
+    #
+    # Prepis se proti nim stavi jako `tools/align.py --snimek`: `startGame`
+    # dane urovne, scroll na nalezeny radek a ZADNE objekty (korutiny se
+    # nespousti). Rozdil je tedy presne tam, kde original nejake objekty ma,
+    # plus pripadna chyba terenu - a prave tu ma zarazka hlidat.
+    "grass": {"prefix": "zone", "pos": 48788, "floor": 92.7,
+              "level": 2, "row": 15963, "onlyTerrain": True},
     "desert": {"t": 900, "prefix": "deep", "floor": 95.4,
                "env": {"SWIV_BASELINE_UNLIMITED_LIVES": "1",
                        "SWIV_BASELINE_HOLD_FIRE": "1"},
                "level": 1, "untilLock": True, "extraTicks": 300,
                "row": 20663},
 }
+
+
+def zone_frame(pos):
+    """Snimek z tools/survey/zoneshot.py (build/zone/z_p<pos>.raw)."""
+    raw = os.path.join(ROOT, "build", "zone", f"z_p{pos}.raw")
+    if not os.path.exists(raw):
+        raise SystemExit(
+            f"chybi {raw}\n"
+            f"porid ho: python3 tools/survey/zoneshot.py {pos} "
+            f"--out build/zone/z")
+    from PIL import Image
+    with open(raw, "rb") as source:
+        data = source.read()
+    x, y, width, height = CROP
+    return (Image.frombytes("RGB", (716, 285), data)
+            .crop((x, y, x + width, y + height))
+            .resize(FRAME_SIZE, Image.NEAREST))
 
 
 def original_frame(t, prefix="orig", env=None):
@@ -182,7 +213,14 @@ def remake_frames(checkpoint):
                   return { x: f.x, vx: f.vx };
                 };
               }
-              if (cp.untilLock) {
+              if (cp.onlyTerrain) {
+                // Stejne jako tools/align.py: uroven se jen postavi na
+                // dany radek. `armedAtStart` zajisti, ze zadna korutina
+                // nezacne, takze v obraze nejsou zadne objekty.
+                for (let i = 0; i < 24; i++) step(g);   // dobehnuti fade-in
+                g.scroll = cp.row; g.scrollPrev = cp.row;
+                for (const s of g.spawns) s.armed = armedAtStart(g, s);
+              } else if (cp.untilLock) {
                 // Baseline bezi s UNLIMITED LIVES; bez toho by prepis
                 // skoncil driv, nez k tovarne vubec dojede.
                 const keepAlive = () => { if (g.lives < 9999) g.lives = 9999; };
@@ -315,9 +353,11 @@ def main():
     failed = False
     for name in names:
         checkpoint = CHECKPOINTS[name]
-        original = original_frame(checkpoint["t"],
-                                  checkpoint.get("prefix", "orig"),
-                                  checkpoint.get("env"))
+        original = (zone_frame(checkpoint["pos"])
+                    if checkpoint.get("prefix") == "zone"
+                    else original_frame(checkpoint["t"],
+                                        checkpoint.get("prefix", "orig"),
+                                        checkpoint.get("env")))
         frames = remake_frames(checkpoint)
         masks = region_masks(frames)
         scores = {
@@ -337,7 +377,11 @@ def main():
         floor = checkpoint["floor"]
         ok = floor is None or scores["whole"] >= floor
         status = "OK" if ok else "POD PRAHEM"
-        if checkpoint.get("untilLock"):
+        if checkpoint.get("onlyTerrain"):
+            print(f"{name}: uroven {checkpoint['level']}, original na mapove "
+                  f"pozici {checkpoint['pos']}, radek {checkpoint['row']} "
+                  f"(prepis bez objektu)")
+        elif checkpoint.get("untilLock"):
             print(f"{name}: uroven {checkpoint['level']}, original t="
                   f"{checkpoint['t']} s, zamek scrollu na radku "
                   f"{checkpoint['row']}")

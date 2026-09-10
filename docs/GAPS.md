@@ -1110,11 +1110,24 @@ neporovnal**. Tykalo se to i checkpointu `death`. Po oprave (klic z
 stridajici se pulky `JEEP 0[ 2* 0000000`, kterou nikdy predtim nikdo
 neoveril.
 
-**Co zustava otevrene:** GRASS az FINAL porad nemaji zadny checkpoint.
-Cesta k nim je stejna jako u DESERTu, ale nejdriv musi baseline projet
-tovarnu - drzeny fire ji za 900 s neznicil (t=600 i t=900 stoji na tomtez
-radku). Bude to chtit bud skriptovany pohyb, nebo zapis do pameti
-emulatoru pres harness ve WASM.
+**Zbyle zony (2026-09-11).** MEGA TRAINER zadny level select nema
+(overeno snimkem: F1 zivoty, F2 kredity, F3 zbrane, F4 spread, F5-F8
+autofire), takze se do nich hra sama nedostane. `tools/survey/zoneshot.py`
+proto pousti original v harnessu ve WebAssembly a **kazdy snimek mu
+zhasne bit 3 v `fp@(166)`** - ten, ktery nastavuje ziva instalace
+(`0xb6ae`). Bit 1 zustava: drzi scroll, dokud stavitel terennich pruhu
+(`0x3422`) neni 32 radku napred, a bez nej by se rolovalo do nepostavene
+mapy. Mapova data, palety, Copper i blitter delaji dal svou praci, takze
+pro TEREN a vykreslovani je snimek plnohodnotny; pro chovani objektu ne
+(hra bezi s trainerem a hrac strili).
+
+Pozice se cte z `fp@(3530)` (16.16, cela cast je horni slovo), takze
+snimek jde poridit presne na miste retezu. Radek pro prepis pak najde
+`tools/align.py --snimek ... --uroven N`.
+
+Checkpointy typu `zone` stavi prepis **bez jedineho objektu** (jen
+`startGame` + scroll na radek), takze rozdil lezi presne tam, kde ma
+original objekty, plus pripadna chyba terenu - a tu ma zarazka hlidat.
 
 ### Davka 4 (skok) — otevrene body
 
