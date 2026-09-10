@@ -8,7 +8,14 @@ jde o zbyle ctyri (trida, HP, skore, cost).
 
 Parser je stejne konzervativni jako v `margins.py`: kdyz mezi zapisem do
 registru a volanim lezi skok nebo cil skoku, hodnotu neuvadi misto toho, aby
-hadal. Volitelny druhy soubor umozni porovnat dve verze prepisu mezi sebou.
+hadal. Dopredne hledani `a2c6` navic konci na konci rutiny (nepodmineny
+prechod, za kterym uz nelezi zadny cil skoku ani `lea %pc@` vstupni bod) -
+bez toho se `a2c6` z NASLEDUJICI rutiny pripsala teto. Takhle hlasil
+`trackzone` (0xad30, ktera zadne `a2c6` nema - jen 0x5ee0 a 0x9ac8(0))
+cizich (30, 95, 13). Volitelny druhy soubor umozni porovnat dve verze
+prepisu mezi sebou.
+
+Zbylych sest hlaseni je zamernych a vysvetlenych primo ve vystupu.
 
     python3 tools/a2c6check.py [game-codex.html]
 """
@@ -38,11 +45,29 @@ def regs_before(lines, order, start, limit=60):
     i = 0
     while i < len(order) and order[i] < start:
         i += 1
+    # Dopredny sken musi skoncit na konci rutiny, jinak se `a2c6` nalezena
+    # az v NASLEDUJICI rutine pripise teto (napr. `trackzone` 0xad30, ktera
+    # zadnou nema - jen 0x5ee0 a 0x9ac8). Konec = nepodmineny prechod,
+    # za kterym uz nelezi zadny cil skoku videny v dosud prectenem kusu.
     call = None
+    seen_targets = set()
     for k in range(i, min(i + 240, len(order))):
-        if "bsrw 0xa2c6" in lines[order[k]]:
+        text = lines[order[k]]
+        if "bsrw 0xa2c6" in text:
             call = k
             break
+        m = re.search(r"\b0x([0-9a-f]+)$", text)
+        if m and re.match(r"(b\w+|jmp|jsr)\b", text):
+            seen_targets.add(int(m.group(1), 16))
+        # `lea %pc@(0x...),%aN` je take vstupni bod - tak se predava telo
+        # korutiny do 0x6178 (napr. `airplane` 0x7970 -> 0x797e).
+        m = re.match(r"lea %pc@\(0x([0-9a-f]+)\)", text)
+        if m:
+            seen_targets.add(int(m.group(1), 16))
+        if re.match(r"(bra\w*|jmp|rts)\b", text):
+            nxt = order[k + 1] if k + 1 < len(order) else None
+            if nxt is None or nxt not in seen_targets:
+                return None                       # rutina skoncila
     if call is None:
         return None
     targets = set()
