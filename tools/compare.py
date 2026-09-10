@@ -136,6 +136,13 @@ CHECKPOINTS = {
               "level": 2, "row": 15963, "onlyTerrain": True},
     "river": {"prefix": "zone", "pos": 45488, "floor": 92.1,
               "level": 3, "row": 12663, "onlyTerrain": True},
+    # ICE i SCIFI musely dostat jinou pozici nez prvni pokus: 40688 padlo
+    # do otevrene vody mezi SWAP plosinami, kde vypada kazdy radek stejne,
+    # a 35488 do opakujicich se sestiuhelniku. Viz docs/GAPS.md.
+    "ice": {"prefix": "zone", "pos": 42000, "floor": 88.3,
+            "level": 4, "row": 9176, "onlyTerrain": True},
+    "scifi": {"prefix": "zone", "pos": 37000, "floor": 95.0,
+              "level": 5, "row": 4175, "onlyTerrain": True},
     "desert": {"t": 900, "prefix": "deep", "floor": 95.4,
                "env": {"SWIV_BASELINE_UNLIMITED_LIVES": "1",
                        "SWIV_BASELINE_HOLD_FIRE": "1"},

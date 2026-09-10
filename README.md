@@ -113,7 +113,7 @@ Disassembly needs `m68k-elf-binutils` (`brew install m68k-elf-binutils`).
 | `.RAW` screens | ✅ 4 bitplanes + palette |
 | `.LIN` sprites | ✅ logical frames, chained multi-part composites, signed anchors |
 | `.PAM` level maps | ✅ tiles, object spawns, in-map palette script, layers, display window |
-| verification | ✅ 43-check data contract, five runtime contracts, and pixel checkpoints against the original emulated A500 — four in TOWN, one at the DESERT scroll lock, plus terrain-only ones in the later zones, which the game only reaches once `fp@(166)` bit 3 is cleared frame by frame in the WebAssembly harness |
+| verification | ✅ 43-check data contract, five runtime contracts, and **eleven pixel checkpoints against the original emulated A500** — seven in TOWN, one at the DESERT scroll lock, and terrain-only ones in GRASS, RIVER, ICE and SCIFI, which the game only reaches once `fp@(166)` bit 3 is cleared frame by frame in the WebAssembly harness |
 | `AMPROG.OBJ` (55,668 B game code) | 🟨 partially mapped (73-route dispatch + 155/155 TOWN objects, map interpreter, sound, animations, bob drawer) |
 
 Detailed write-ups live in [`docs/`](docs/):

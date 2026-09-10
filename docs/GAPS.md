@@ -1190,6 +1190,12 @@ checkpointy a tri nepouzitelne, a duvod je poucny:
 | 35488 | SCIFI | 31,8 % | 58,4 % | slaba spicka - opakujici se sestiuhelniky |
 | 32188 | FINAL | — | — | dojelo az na pozici 0, tedy konec retezu |
 
+Posledni radka tabulky stoji za zminku sama o sobe: se zhasnutym bitem 3
+projel original **cely retez az na konec** a snimek v cili uz ukazuje
+zaviraci fazi (`PLEASE WAIT` v obou pulkach HUD na cerne). Zasah do
+jedineho bitu tedy staci k tomu, aby hra dohrala sama - coz je zaroven
+kontrola, ze se tim nerozbila (jinak by nekde uvizla nebo spadla).
+
 Otevrena voda vypada na kazdem radku stejne, takze mrizkove porovnani
 dava vsude ~52 % a zadny radek nevyhraje. Ze spravne urovne jde tenhle
 pripad poznat: tentyz snimek dal proti urovni 3 jen 6,7 % a proti 5 jen
@@ -1199,6 +1205,19 @@ pripad poznat: tentyz snimek dal proti urovni 3 jen 6,7 % a proti 5 jen
 neopakujici se teren, a kde original zrovna nema plnou obrazovku
 objektu.** V ICE to znamena mimo vodni usek mezi SWAP plosinami
 (`ry 2627`..`3638`), tedy pozice nad ~40700 nebo pod ~39685.
+
+Druhy pokus to potvrdil - stejna zona, jina pozice, jiny vysledek:
+
+| pozice | zona | hruby sken | po zjemneni |
+|---:|---|---:|---:|
+| 40688 | ICE (voda) | 51,8 % | 52,5 % |
+| **42000** | **ICE (pevnina)** | 58,4 % | **88,1 %** |
+| 35488 | SCIFI (sestiuhelniky) | 31,8 % | 58,4 % |
+| **37000** | **SCIFI (struktura)** | 77,2 % | **95,4 %** |
+
+Sest ze sedmi zon tim ma pixelove pokryti proti originalu. Chybi uz jen
+FINAL: ma 384 radku a je to v podstate jen boss, takze v prepisu bez
+objektu by nebylo co porovnavat.
 
 Hloubka taky sama o sobe snizuje strop: v tuhle chvili uz original hraje
 desitky minut se super zbranemi, takze je na obrazovce vic vybuchu nez
