@@ -244,3 +244,20 @@ kontrakty `compare.py`, `smoothtest.py` a `uitest.py` zustavaji zelene.
 Je to zaroven ukazka, k cemu byla analyza dobra: vrstvy jsou oddelene
 (stin je zaznam `kind: "shadow"`, ne pixely v terenu), takze se da sahnout
 prave na nej a nic jineho nezmenit.
+
+
+## Svetlo shora
+
+Druhe volitelne vylepseni: BOB objektu se ztmavuje smerem dolu, sila podle
+tehoz `z`, ktere rídi stin (`min(0.45, 0.12 + z/160)`). Objekt u zeme je
+tim plochy, letec ma vyraznou horni hranu.
+
+Amiga to neumela z principu: kazdy pixel BOBu je paletovy index a blitter
+s nim nepocita, takze stinovani by znamenalo mit kazdy objekt nakresleny
+vickrat v ruznych odstinech - a paleta ma 16 mist.
+
+Prvni verze hranu take **rozsvecovala** (`k = 1 + lit*(0.5-t)*2`), jenze
+svetle barvy pretekly na 255 a bily vrtulnik hrace se slil do siluety. Ted
+se jen ztmavuje (`k = 1 - lit*t`), takze se nic neztrati.
+
+Obe vylepseni jsou vychozene vypnuta a plati jen v plynulem rezimu.

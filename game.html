@@ -89,6 +89,7 @@ a { color:#cfe0ff }
     <button type="button" id="btnload" title="Nacist pozici z vybraneho slotu">nacist</button>
     <button type="button" id="btndel" title="Smazat vybrany slot">smazat</button>
     <span id="slotinfo" style="opacity:.8"></span>
+    &nbsp;&middot;&nbsp; <label title="Objekty dostanou svetlo shora, sila podle vysky; original ma kazdy pixel jako paletovy index a stinovat neumi"><input type="checkbox" id="litchk"> sv&#283;tlo shora</label>
     &nbsp;&middot;&nbsp; <label title="Stin objektu se s vyskou rozostri a zesvetli; puvodni hardware to neumel, blitter zna jen plnou masku"><input type="checkbox" id="softshchk"> m&#283;kk&#233; st&#237;ny</label>
     &nbsp;&middot;&nbsp; <label title="Svisle prolnuti pozadi: plynuly posun i pod 4x, teren je za to pri pohybu mekci"><input type="checkbox" id="blendchk"> hladk&#233; pozad&#237;</label>
   </div>
@@ -1773,6 +1774,10 @@ function standardBobRecords(spec, serialStart) {
     // vyska objektu se veze se zaznamem: volitelny mekky stin z ni pocita
     // rozostreni a pruhlednost (viz renderSmoothField)
     records[records.length - 1].z = wordZ;
+  }
+  // tutez vysku dostane i hlavni zaznam - pouziva ji volitelne nasvíceni
+  for (const rec of records) {
+    if (rec.kind === "main") rec.z = wordZ;
   }
   return { records, nextSerial: serial };
 }
@@ -7271,6 +7276,9 @@ document.getElementById("smoothchk").onchange = e => {
 document.getElementById("blendchk").onchange = e => {
   state.blendBg = e.target.checked; updateZoomLabel();
 };
+document.getElementById("litchk").onchange = e => {
+  state.litObjects = e.target.checked;          // jen plynuly rezim
+};
 document.getElementById("softshchk").onchange = e => {
   state.softShadows = e.target.checked;         // jen plynuly rezim
 };
@@ -9916,9 +9924,14 @@ function smoothBobKey(r) {
   // sprite (zmereno: skoky 70 px na jeden snimek).
   return Number.isInteger(r.ordinal) ? r.id + "#" + r.ordinal : null;
 }
-function smoothSpriteCanvas(spr, palWords, op, c07) {
+/* `lit` je volitelne nasvíceni (v originale neni): sila 0 nic nedela,
+   vyssi hodnota rozsvitit horni hranu spritu a ztmavi spodni. Amiga to
+   neumela - kazdy pixel BOBu je paletovy index a blitter s nim nepocita,
+   takze stinovani by znamenalo mit kazdy objekt nakresleny vickrat. */
+function smoothSpriteCanvas(spr, palWords, op, c07, lit) {
   const cache = spr.smoothCache || (spr.smoothCache = new Map());
-  let key = op + ":" + (c07 === undefined ? "" : c07) + ":";
+  let key = op + ":" + (c07 === undefined ? "" : c07) + ":" +
+            (lit ? "L" + lit.toFixed(2) : "") + ":";
   for (let i = 0; i < 16; i++) key += palWords[i].toString(16) + ",";
   let cv = cache.get(key);
   if (cv) return cv;
@@ -9934,8 +9947,20 @@ function smoothSpriteCanvas(spr, palWords, op, c07) {
     else if (op === BOB_FILL_INDEX9) word = palWords[9];
     else word = (c === 7 && c07 !== undefined) ? c07 : palWords[c];
     const o = i * 4;
-    d[o] = ((word >> 8) & 15) * 17; d[o + 1] = ((word >> 4) & 15) * 17;
-    d[o + 2] = (word & 15) * 17; d[o + 3] = 255;
+    let r = ((word >> 8) & 15) * 17, g = ((word >> 4) & 15) * 17,
+        b = (word & 15) * 17;
+    if (lit) {
+      // Svetlo shora. Puvodne to rozsvecovalo horni hranu i ztmavovalo
+      // spodni, jenze svetle barvy (bily vrtulnik) pretekly na 255 a
+      // objekt zbelal. Ted se jen ztmavuje smerem dolu - vysledek je
+      // plastictejsi a nic se neztrati.
+      const t = spr.h > 1 ? (i / spr.w | 0) / (spr.h - 1) : 0.5;
+      const k = 1 - lit * t;
+      r = Math.max(0, Math.min(255, r * k));
+      g = Math.max(0, Math.min(255, g * k));
+      b = Math.max(0, Math.min(255, b * k));
+    }
+    d[o] = r; d[o + 1] = g; d[o + 2] = b; d[o + 3] = 255;
   }
   cv.getContext("2d").putImageData(img, 0, 0);
   cache.set(key, cv);
@@ -10050,8 +10075,14 @@ function renderSmoothField(ctx, g, S, composed, hudCv) {
     const dx = rq(lerpOK && p ? cxP + (cxC - cxP) * alpha : cxC);
     const dy = rq(lerpOK && p ? cyP + (cyC - cyP) * alpha : cyC) - scrollF;
     const row = Math.max(0, Math.min(rows - 1, Math.floor(dy - r.spr.oy)));
+    // Sila nasvíceni roste s vyskou: objekt u zeme je plochy, letec ma
+    // vyraznou horni hranu. `z` je tataz hodnota, kterou hra pouziva k
+    // odsazeni stinu, takze obe vylepseni mluvi o teze vysce.
+    const lit = state.litObjects && r.kind === "main"
+      ? Math.min(0.45, 0.12 + Math.abs(r.z | 0) / 160)
+      : 0;
     const cv = smoothSpriteCanvas(r.spr, pal.subarray(row * 16, row * 16 + 16),
-                                  r.op, c07);
+                                  r.op, c07, lit);
     // Volitelne vylepseni (v originale neni): stin objektu, ktery leti
     // vysoko, je na skutecne predloze mekci a svetlejsi. Vysku uz mame -
     // hra ji pouziva k odsazeni stinu (bobShadowAnchor: x + z/2, y + z),
