@@ -1176,3 +1176,30 @@ original objekty, plus pripadna chyba terenu - a tu ma zarazka hlidat.
   fazi `continue`/`closing` nebyla zkoumana.
 - **`+80` (nejlepsi skore slotu)** se drzi, ale nikde se nezobrazuje ani
   nezapisuje do tabulky - `0x70b0` ho plni, dalsi pouziti nezkoumano.
+
+### Zarovnani zonoveho snimku potrebuje CLENITY teren (2026-09-11)
+
+Prvni pokus vzal peti pozic rovnomerne po retezu. Vysly z toho dva dobre
+checkpointy a tri nepouzitelne, a duvod je poucny:
+
+| pozice | zona | hruby sken | po zjemneni | zaver |
+|---:|---|---:|---:|---|
+| 48788 | GRASS | 44,9 % | **92,9 %** | ostra spicka, pouzitelne |
+| 45488 | RIVER | 36,3 % | **92,4 %** | ostra spicka, pouzitelne |
+| 40688 | ICE | 51,8 % | 52,5 % | **plocho** - otevrene more |
+| 35488 | SCIFI | 31,8 % | 58,4 % | slaba spicka - opakujici se sestiuhelniky |
+| 32188 | FINAL | — | — | dojelo az na pozici 0, tedy konec retezu |
+
+Otevrena voda vypada na kazdem radku stejne, takze mrizkove porovnani
+dava vsude ~52 % a zadny radek nevyhraje. Ze spravne urovne jde tenhle
+pripad poznat: tentyz snimek dal proti urovni 3 jen 6,7 % a proti 5 jen
+5,3 %, takze uroven 4 je jista - jen v ni neni co zaostrit.
+
+**Pravidlo: zonovy checkpoint patri tam, kde ma mapa clenity a
+neopakujici se teren, a kde original zrovna nema plnou obrazovku
+objektu.** V ICE to znamena mimo vodni usek mezi SWAP plosinami
+(`ry 2627`..`3638`), tedy pozice nad ~40700 nebo pod ~39685.
+
+Hloubka taky sama o sobe snizuje strop: v tuhle chvili uz original hraje
+desitky minut se super zbranemi, takze je na obrazovce vic vybuchu nez
+terenu. Cim mensi hloubka, tim cistsi snimek.
