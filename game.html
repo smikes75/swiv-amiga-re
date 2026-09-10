@@ -95,11 +95,9 @@ a { color:#cfe0ff }
   <div id="fxbar" hidden style="margin-top:4px;font:12px monospace;color:#9ab">
     <span style="opacity:.7">efekty nad r&#225;mec hardwaru:</span>
     <label title="Kamera zaostrena na rovinu objektu: teren pod nimi je mirne mekci. Amiga obraz skladala z pevnych bitplanu, zadny filtr mezi nimi a monitorem nebyl."><input type="checkbox" id="dofchk"> hloubka ostrosti</label>
-    &nbsp;&middot;&nbsp; <label title="Copper meni paletu skokem na konkretnim radku, takze teren ma vodorovne pasy. Interpolace mezi checkpointy je vyhladi."><input type="checkbox" id="deepchk"> barevn&#225; hloubka</label>
     &nbsp;&middot;&nbsp; <label title="Stin objektu se s vyskou rozostri a zesvetli; blitter zna jen plnou masku, alfu neumi"><input type="checkbox" id="softshchk2"> m&#283;kk&#233; st&#237;ny</label>
-    &nbsp;&middot;&nbsp; <label title="Objekt se ztmavuje smerem dolu, sila podle vysky; kazdy pixel BOBu je paletovy index, stinovat nejde"><input type="checkbox" id="litchk2"> sv&#283;tlo shora</label>
-    &nbsp;&middot;&nbsp; <label title="Svisle prolnuti pozadi: plynuly posun i pod 4x, teren je za to pri pohybu mekci"><input type="checkbox" id="blendchk"> hladk&#233; pozad&#237;</label>
-    <input type="checkbox" id="litchk" hidden><input type="checkbox" id="softshchk" hidden>
+    &nbsp;&middot;&nbsp; <label title="Pomahá plynulosti pri malem zvetseni: svisle prolnuti mezi dvema polohami. Neni to vizualni efekt, pri 4x a vice je zbytecne."><input type="checkbox" id="blendchk"> prolnut&#237; pohybu</label>
+    <input type="checkbox" id="softshchk" hidden>
   </div>
   <div id="zoomrow" role="group" aria-label="Velikost hern&#237;ho pole">
     <span>velikost</span>
@@ -522,40 +520,14 @@ function compileCopperPaletteLines(checks, mapHeight, margin, top, rows,
   whiteLevel = whiteLevel || 0;
   const out = new Uint16Array(rows * 16);
   const fallback = checks.length ? checks[0].pal : new Array(16).fill(0);
-  // Volitelne vylepseni (v originale neni): Copper meni paletu skokem na
-  // konkretnim radku, takze teren ma viditelne vodorovne pasy. Puvodni
-  // duvod je limit OCS - 16 registru na cely obraz a splity jsou zpusob,
-  // jak jich dostat vic. Kdyz se mezi checkpointy interpoluje, prechod je
-  // plynuly a mapa vypada, jako by mela mnohem vic barev.
-  const smooth = !!state.deepColor;
   let ci = checks.length - 1;
   for (let sy = 0; sy < rows; sy++) {
     const ry = mapHeight + margin - (top + sy);
     while (ci >= 0 && checks[ci].y > ry) ci--;
     const pal = ci >= 0 ? checks[ci].pal : fallback;
     const row = sy * 16;
-    // sousedni checkpoint smerem nahoru v obraze (nizsi ry = dal v mape)
-    const next = smooth && ci - 1 >= 0 ? checks[ci - 1] : null;
-    let t = 0;
-    if (next) {
-      const span = checks[ci].y - next.y;
-      t = span > 0 ? Math.max(0, Math.min(1, (checks[ci].y - ry) / span)) : 0;
-    }
-    for (let color = 0; color < 16; color++) {
-      let word = pal[color] || 0;
-      if (next && t > 0) word = mixRgb12(word, next.pal[color] || 0, t);
-      out[row + color] = fadeRgb12(word, blackLevel, whiteLevel);
-    }
-  }
-  return out;
-}
-
-/* Linearni mix dvou RGB12 slov po nibblech. */
-function mixRgb12(a, b, t) {
-  let out = 0;
-  for (const shift of [8, 4, 0]) {
-    const va = (a >> shift) & 15, vb = (b >> shift) & 15;
-    out |= (Math.round(va + (vb - va) * t) & 15) << shift;
+    for (let color = 0; color < 16; color++)
+      out[row + color] = fadeRgb12(pal[color] || 0, blackLevel, whiteLevel);
   }
   return out;
 }
@@ -7323,13 +7295,6 @@ document.getElementById("modefx").onchange = () => setMode(true);
 document.getElementById("dofchk").onchange = e => {
   state.depthOfField = e.target.checked;
 };
-document.getElementById("deepchk").onchange = e => {
-  state.deepColor = e.target.checked;
-  if (state.g) state.g.mapFrame = null;         // paleta se pocita znovu
-};
-document.getElementById("litchk2").onchange = e => {
-  state.litObjects = e.target.checked;
-};
 document.getElementById("softshchk2").onchange = e => {
   state.softShadows = e.target.checked;
 };
@@ -9975,14 +9940,9 @@ function smoothBobKey(r) {
   // sprite (zmereno: skoky 70 px na jeden snimek).
   return Number.isInteger(r.ordinal) ? r.id + "#" + r.ordinal : null;
 }
-/* `lit` je volitelne nasvíceni (v originale neni): sila 0 nic nedela,
-   vyssi hodnota rozsvitit horni hranu spritu a ztmavi spodni. Amiga to
-   neumela - kazdy pixel BOBu je paletovy index a blitter s nim nepocita,
-   takze stinovani by znamenalo mit kazdy objekt nakresleny vickrat. */
-function smoothSpriteCanvas(spr, palWords, op, c07, lit) {
+function smoothSpriteCanvas(spr, palWords, op, c07) {
   const cache = spr.smoothCache || (spr.smoothCache = new Map());
-  let key = op + ":" + (c07 === undefined ? "" : c07) + ":" +
-            (lit ? "L" + lit.toFixed(2) : "") + ":";
+  let key = op + ":" + (c07 === undefined ? "" : c07) + ":";
   for (let i = 0; i < 16; i++) key += palWords[i].toString(16) + ",";
   let cv = cache.get(key);
   if (cv) return cv;
@@ -9998,20 +9958,8 @@ function smoothSpriteCanvas(spr, palWords, op, c07, lit) {
     else if (op === BOB_FILL_INDEX9) word = palWords[9];
     else word = (c === 7 && c07 !== undefined) ? c07 : palWords[c];
     const o = i * 4;
-    let r = ((word >> 8) & 15) * 17, g = ((word >> 4) & 15) * 17,
-        b = (word & 15) * 17;
-    if (lit) {
-      // Svetlo shora. Puvodne to rozsvecovalo horni hranu i ztmavovalo
-      // spodni, jenze svetle barvy (bily vrtulnik) pretekly na 255 a
-      // objekt zbelal. Ted se jen ztmavuje smerem dolu - vysledek je
-      // plastictejsi a nic se neztrati.
-      const t = spr.h > 1 ? (i / spr.w | 0) / (spr.h - 1) : 0.5;
-      const k = 1 - lit * t;
-      r = Math.max(0, Math.min(255, r * k));
-      g = Math.max(0, Math.min(255, g * k));
-      b = Math.max(0, Math.min(255, b * k));
-    }
-    d[o] = r; d[o + 1] = g; d[o + 2] = b; d[o + 3] = 255;
+    d[o] = ((word >> 8) & 15) * 17; d[o + 1] = ((word >> 4) & 15) * 17;
+    d[o + 2] = (word & 15) * 17; d[o + 3] = 255;
   }
   cv.getContext("2d").putImageData(img, 0, 0);
   cache.set(key, cv);
@@ -10139,14 +10087,8 @@ function renderSmoothField(ctx, g, S, composed, hudCv) {
     const dx = rq(lerpOK && p ? cxP + (cxC - cxP) * alpha : cxC);
     const dy = rq(lerpOK && p ? cyP + (cyC - cyP) * alpha : cyC) - scrollF;
     const row = Math.max(0, Math.min(rows - 1, Math.floor(dy - r.spr.oy)));
-    // Sila nasvíceni roste s vyskou: objekt u zeme je plochy, letec ma
-    // vyraznou horni hranu. `z` je tataz hodnota, kterou hra pouziva k
-    // odsazeni stinu, takze obe vylepseni mluvi o teze vysce.
-    const lit = state.litObjects && r.kind === "main"
-      ? Math.min(0.62, 0.22 + Math.abs(r.z | 0) / 90)
-      : 0;
     const cv = smoothSpriteCanvas(r.spr, pal.subarray(row * 16, row * 16 + 16),
-                                  r.op, c07, lit);
+                                  r.op, c07);
     // Volitelne vylepseni (v originale neni): stin objektu, ktery leti
     // vysoko, je na skutecne predloze mekci a svetlejsi. Vysku uz mame -
     // hra ji pouziva k odsazeni stinu (bobShadowAnchor: x + z/2, y + z),

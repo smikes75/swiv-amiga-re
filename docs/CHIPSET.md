@@ -286,3 +286,26 @@ je prvni, ktera se dotkne terenu, tedy 90 % obrazu.
 
 Pouceni pro dalsi efekty: **nejdriv zmerit, jakou plochu efekt zasahne**,
 teprve potom jej nabizet jako viditelne vylepseni.
+
+## Co z efektu zustalo (po zpetne vazbe 2026-09-10)
+
+Uzivatel prosel vsech pet a rozhodl:
+
+| efekt | verdikt |
+|---|---|
+| hloubka ostrosti | videt, hezke - **zustava** |
+| mekke stiny | videt, hezke - **zustava** |
+| prolnuti pohybu | neni vizualni efekt, pomahá plynulosti pri malem zvetseni - **zustava** s presnejsim popiskem |
+| svetlo shora | "vypada divne" - **odstraneno** |
+| barevna hloubka | rozdil neni videt - **odstraneno** |
+
+Odstranene efekty jsou pryc i z kodu, ne jen z UI: `litObjects` a
+`deepColor` vcetne modulace barev v `smoothSpriteCanvas` a interpolace v
+`compileCopperPaletteLines`. Nechavat prepinace, ktere nic nedelaji, je
+horsi nez efekt nemit.
+
+Proc svetlo shora nefungovalo: lineárni ztmavovani spritu smerem dolu
+funguje na velkych plochach, ale sprity v SWIV maji 16 az 48 pixelu na
+vysku a jsou kreslene s tvrdou paletou. Gradient pres tak malou plochu
+vypada jako spina, ne jako svetlo. Skutecne nasvíceni by potrebovalo znat
+normalu povrchu, kterou z indexoveho spritu neziskame.
