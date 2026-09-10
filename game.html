@@ -71,7 +71,9 @@ a { color:#cfe0ff }
   </div>
   <div id="testbar" style="margin-top:6px;font:12px monospace;color:#9ab">
     <label><input type="checkbox" id="crtchk"> CRT</label>
-    &nbsp;&middot;&nbsp; <label><input type="checkbox" id="smoothchk"> vylep&#353;eno (plynul&#253; pohyb)</label>
+    &nbsp;&middot;&nbsp; <label><input type="radio" name="mode" id="modeorig" checked> origin&#225;l</label>
+    <label><input type="radio" name="mode" id="modefx"> vylep&#353;eno</label>
+    <input type="checkbox" id="smoothchk" hidden>
     &nbsp;&middot;&nbsp; &#x2665; <input type="number" id="livesbox" value="4" min="1" max="99"
       style="width:3.5em;font:inherit">
     &nbsp;&middot;&nbsp; scroll <input type="range" id="scrollpct" min="25" max="200" step="5"
@@ -89,9 +91,14 @@ a { color:#cfe0ff }
     <button type="button" id="btnload" title="Nacist pozici z vybraneho slotu">nacist</button>
     <button type="button" id="btndel" title="Smazat vybrany slot">smazat</button>
     <span id="slotinfo" style="opacity:.8"></span>
-    &nbsp;&middot;&nbsp; <label title="Objekty dostanou svetlo shora, sila podle vysky; original ma kazdy pixel jako paletovy index a stinovat neumi"><input type="checkbox" id="litchk"> sv&#283;tlo shora</label>
-    &nbsp;&middot;&nbsp; <label title="Stin objektu se s vyskou rozostri a zesvetli; puvodni hardware to neumel, blitter zna jen plnou masku"><input type="checkbox" id="softshchk"> m&#283;kk&#233; st&#237;ny</label>
+  </div>
+  <div id="fxbar" hidden style="margin-top:4px;font:12px monospace;color:#9ab">
+    <span style="opacity:.7">efekty nad r&#225;mec hardwaru:</span>
+    <label title="Copper meni paletu skokem na konkretnim radku, takze teren ma vodorovne pasy. Interpolace mezi checkpointy je vyhladi - vypada to, jako by mapa mela mnohem vic barev."><input type="checkbox" id="deepchk"> barevn&#225; hloubka</label>
+    &nbsp;&middot;&nbsp; <label title="Stin objektu se s vyskou rozostri a zesvetli; blitter zna jen plnou masku, alfu neumi"><input type="checkbox" id="softshchk2"> m&#283;kk&#233; st&#237;ny</label>
+    &nbsp;&middot;&nbsp; <label title="Objekt se ztmavuje smerem dolu, sila podle vysky; kazdy pixel BOBu je paletovy index, stinovat nejde"><input type="checkbox" id="litchk2"> sv&#283;tlo shora</label>
     &nbsp;&middot;&nbsp; <label title="Svisle prolnuti pozadi: plynuly posun i pod 4x, teren je za to pri pohybu mekci"><input type="checkbox" id="blendchk"> hladk&#233; pozad&#237;</label>
+    <input type="checkbox" id="litchk" hidden><input type="checkbox" id="softshchk" hidden>
   </div>
   <div id="zoomrow" role="group" aria-label="Velikost hern&#237;ho pole">
     <span>velikost</span>
@@ -514,15 +521,40 @@ function compileCopperPaletteLines(checks, mapHeight, margin, top, rows,
   whiteLevel = whiteLevel || 0;
   const out = new Uint16Array(rows * 16);
   const fallback = checks.length ? checks[0].pal : new Array(16).fill(0);
+  // Volitelne vylepseni (v originale neni): Copper meni paletu skokem na
+  // konkretnim radku, takze teren ma viditelne vodorovne pasy. Puvodni
+  // duvod je limit OCS - 16 registru na cely obraz a splity jsou zpusob,
+  // jak jich dostat vic. Kdyz se mezi checkpointy interpoluje, prechod je
+  // plynuly a mapa vypada, jako by mela mnohem vic barev.
+  const smooth = !!state.deepColor;
   let ci = checks.length - 1;
   for (let sy = 0; sy < rows; sy++) {
     const ry = mapHeight + margin - (top + sy);
     while (ci >= 0 && checks[ci].y > ry) ci--;
     const pal = ci >= 0 ? checks[ci].pal : fallback;
     const row = sy * 16;
-    for (let color = 0; color < 16; color++)
-      out[row + color] = fadeRgb12(pal[color] || 0,
-                                           blackLevel, whiteLevel);
+    // sousedni checkpoint smerem nahoru v obraze (nizsi ry = dal v mape)
+    const next = smooth && ci - 1 >= 0 ? checks[ci - 1] : null;
+    let t = 0;
+    if (next) {
+      const span = checks[ci].y - next.y;
+      t = span > 0 ? Math.max(0, Math.min(1, (checks[ci].y - ry) / span)) : 0;
+    }
+    for (let color = 0; color < 16; color++) {
+      let word = pal[color] || 0;
+      if (next && t > 0) word = mixRgb12(word, next.pal[color] || 0, t);
+      out[row + color] = fadeRgb12(word, blackLevel, whiteLevel);
+    }
+  }
+  return out;
+}
+
+/* Linearni mix dvou RGB12 slov po nibblech. */
+function mixRgb12(a, b, t) {
+  let out = 0;
+  for (const shift of [8, 4, 0]) {
+    const va = (a >> shift) & 15, vb = (b >> shift) & 15;
+    out |= (Math.round(va + (vb - va) * t) & 15) << shift;
   }
   return out;
 }
@@ -7276,11 +7308,26 @@ document.getElementById("smoothchk").onchange = e => {
 document.getElementById("blendchk").onchange = e => {
   state.blendBg = e.target.checked; updateZoomLabel();
 };
-document.getElementById("litchk").onchange = e => {
-  state.litObjects = e.target.checked;          // jen plynuly rezim
+/* Rezim: originál = presne to, co delal hardware; vylepseno = plynuly
+   pohyb plus volitelne efekty, ktere Amiga neumela. Pod prepinacem se
+   rozbali jejich seznam. */
+function setMode(fx) {
+  state.smooth = fx;
+  document.getElementById("fxbar").hidden = !fx;
+  if (state.g) { state.g.bobCur = state.g.bobPrev = null; }
+  updateZoomLabel();
+}
+document.getElementById("modeorig").onchange = () => setMode(false);
+document.getElementById("modefx").onchange = () => setMode(true);
+document.getElementById("deepchk").onchange = e => {
+  state.deepColor = e.target.checked;
+  if (state.g) state.g.mapFrame = null;         // paleta se pocita znovu
 };
-document.getElementById("softshchk").onchange = e => {
-  state.softShadows = e.target.checked;         // jen plynuly rezim
+document.getElementById("litchk2").onchange = e => {
+  state.litObjects = e.target.checked;
+};
+document.getElementById("softshchk2").onchange = e => {
+  state.softShadows = e.target.checked;
 };
 document.getElementById("btnrestart").onclick = () => {
   if (state.g) { startGame(state.g.lv | 0); updateJumpLabel(); }
@@ -10079,7 +10126,7 @@ function renderSmoothField(ctx, g, S, composed, hudCv) {
     // vyraznou horni hranu. `z` je tataz hodnota, kterou hra pouziva k
     // odsazeni stinu, takze obe vylepseni mluvi o teze vysce.
     const lit = state.litObjects && r.kind === "main"
-      ? Math.min(0.45, 0.12 + Math.abs(r.z | 0) / 160)
+      ? Math.min(0.62, 0.22 + Math.abs(r.z | 0) / 90)
       : 0;
     const cv = smoothSpriteCanvas(r.spr, pal.subarray(row * 16, row * 16 + 16),
                                   r.op, c07, lit);
