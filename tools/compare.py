@@ -134,6 +134,8 @@ CHECKPOINTS = {
     # plus pripadna chyba terenu - a prave tu ma zarazka hlidat.
     "grass": {"prefix": "zone", "pos": 48788, "floor": 92.7,
               "level": 2, "row": 15963, "onlyTerrain": True},
+    "river": {"prefix": "zone", "pos": 45488, "floor": 92.1,
+              "level": 3, "row": 12663, "onlyTerrain": True},
     "desert": {"t": 900, "prefix": "deep", "floor": 95.4,
                "env": {"SWIV_BASELINE_UNLIMITED_LIVES": "1",
                        "SWIV_BASELINE_HOLD_FIRE": "1"},
