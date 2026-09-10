@@ -720,6 +720,39 @@ poskakovani stinu — a ve skoku jako jeho odpojeni az o 27 px.
 Stav prepisu: davka 1 (slot, pohyb, clamp, kolize, rozmacknuti, HUD) je
 hotova, vez/skok/SWAP/dopravnik zbyvaji — viz [PLAN-JEEP](PLAN-JEEP.md).
 
+### Lod (`0x8e26`) a SWAP plosiny
+
+Slot 2 nema jedno vozidlo, ale **dve podoby**. `0xac6a` (SWAP#0, dvojice
+A) a `0xacb6` (SWAP#1, dvojice B) po `0x9afa(32)` zapisou svou polohu do
+`fp@(3550)/(3552)`, resp. `fp@(3554)/(3556)`, a **vynuluji tu druhou** —
+plati vzdy jen pozdejsi. Pak cekaji, dokud vozidlo nenastavi `fp@(3548)`;
+teprve tehdy zapisou `fp@(3558)`, coz je strop pro `0x94f0`.
+
+Prepnuti dela `0x94c2` (z jeepu) a `0x94d0` (z lodi), volane kazdy tik
+z hlavy smycky: kdyz `y - 64 <= y protejsi plosiny`, `0x6160` zalozi
+druhy tvar a `0x6db4` ukonci tenhle. Novy tvar startuje pres spolecne
+`0x9046` a `0x90a0`/`0x8e38` jej rovnou prenese na jeho vlastni plosinu.
+V mapach jsou plosiny parove: DESERT `ry 4524` (B) a GRASS `ry 180` (A),
+RIVER `ry 1038` (B) + `ry 1900` (A), ICE `ry 2627` (B) + `ry 3638` (A).
+
+Lod se od jeepu lisi:
+
+- grafika `JEEPHELI#31` po vzniku, `#25` za jizdy (`0x8ee8` -> `0xa27c`)
+- **rychlost `+356 = 768`** = 3 px/t (jeep ma 640)
+- **nedobrzdi**: pri pustene pace `0x8f22` ubira z `+332/+336` osminu
+  (`asrl #3`), takze dojizdi; jeep rychlost rovnou nuluje (`0x91a0`)
+- **brazda** `0x9358` (JEEPHELI#33..#37): za jizdy kazdy ctvrty tik
+  (`+280`), pri stani kazdy sestnacty VBL (`fp@(11172) & 15`)
+- **vetsi houpani**: `0x8f02` losuje zlomek `(rnd & 0x7fff) + 0x8000`
+  (proti jeepovym `+0x4000`) a gravitace je `-3072` misto `-4096`
+- vez `0x89e8`, skok i kolize s terenem jsou spolecne s jeepem
+
+**Stopy jeepu** (`0x9172` -> `0xad78`): uvnitr pasma znacky `0xad30`
+(`fp@(150)`..`fp@(152)`, priznak `fp@(154)`) nechava jeep dekal `0xad98`
+= `JEEPHELI#40..#43` podle uhlu — tentyz dekal jako vez tanku (`0xa000`),
+jen mnohem hustsi: `+280` se ubira po jedne a pri podteceni pricita 3,
+tedy stopa kazde tri tiky proti dvaceti u tanku.
+
 ### Kolizni tridy (`+504`) — kdo zabije vrtulnik
 
 `a2c6` d1 → `+504`; bit 5 = sestrelitelne (`+510` = `0xa362`), bit 1 =

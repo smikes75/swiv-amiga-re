@@ -1032,7 +1032,7 @@ vypise souradnice prvnich dvanacti bodu mimo masku.
 Zmereno ve vsech sedmi zonach: mimo masku 0 az 1 px.
 
 
-## JEEP a slot 2 — DAVKY 1-4 HOTOVE (2026-09-10)
+## JEEP a slot 2 — DAVKY 1-5 HOTOVE (2026-09-10)
 
 Slot 2 se pripojuje, jeep jezdi. Rozpis vsech sesti davek je v
 [PLAN-JEEP](PLAN-JEEP.md). Otevrene po davce 1:
@@ -1047,8 +1047,9 @@ Slot 2 se pripojuje, jeep jezdi. Rozpis vsech sesti davek je v
   zmereno. Vime jen, ze se lisi hodnotou `fp@(161)` a ze `0x9046` pouziva
   `0x3dd4`. `0x94f0` zada oba, takze rozmacknuti modelujeme terenem —
   konjunkce je jim dominovana.
-- **`fp@(3558)`** (`g.jeepFloorY`) se zatim nikde nezapisuje. Nativne ji
-  plni SWAP plosiny (`0xacac`, `0xacf8`); to je davka 5.
+- ~~**`fp@(3558)`** (`g.jeepFloorY`) se zatim nikde nezapisuje.~~ Hotovo
+  v davce 5 spolu s celou dvojici plosin a druhou podobou vozidla (lod
+  `0x8e26`).
 - **Skore a zivoty slotu 2** jsou zatim jen `g.jeepScore`/`g.jeepLives`
   bez vlastniho `nextLife` a bez `0x7116`. Davka 6.
 - ~~**Vez `0x89e8`** (JEEPHELI#9..16) se nekresli ani nestrili.~~ Hotovo
@@ -1128,3 +1129,17 @@ emulatoru pres harness ve WASM.
   misto v mape.
 - **Ve vzduchu se hazardy neresi vubec** - sweep jeepu prepina na tridu
   vzdusnych objektu, ale `proxfrag` v te vetvi nekontroluje.
+
+### Davka 5 (plosiny a lod) — otevrene body
+
+- **Prepnuti nema zadny test na x.** `0x94c2`/`0x94d0` porovnavaji jen
+  radek, takze vozidlo se promeni, i kdyz je na opacne strane obrazovky
+  nez plosina. Je to tak v kodu; predpoklad je, ze v techto mistech mapa
+  prechazi z pevniny na vodu po cele sirce. Neovereno na originale.
+- **Lod se po prepnuti nikdy nevraci na snimek `#31`.** `0x8ee8` nastavi
+  `#25` za jizdy a zadna vetev ho nevraci zpet; prepis to kopiruje.
+- **Grafika plosin** je v prepisu staticka `SWAP.LIN#0/#1`. Jestli maji
+  vlastni animaci pri predani, nebylo zkoumano.
+- **`0xa252`** (vyber snimku dekalu podle uhlu) je modelovan stejnym
+  vzorcem jako u tanku (`((uhel + 16) & 0xE0) >> 5 & 3`); prima kontrola
+  proti rutine nebyla delana.

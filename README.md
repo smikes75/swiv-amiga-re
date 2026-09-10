@@ -54,9 +54,12 @@ locks the turret and lets you drive in another direction, exactly as
 own after fifteen ticks of pushing against an obstacle, which is what the
 `+282` counter in `0x9136`/`0x91c4` is for. Jumping swaps the collision
 class rather than clearing it, so the jeep hops over a tank but can still
-be hit by something airborne. The SWAP platforms and the second slot's
-own scoring are still to come, see
-[docs/PLAN-JEEP.md](docs/PLAN-JEEP.md). The attract loop
+be hit by something airborne. The SWAP platforms turn out to switch the
+whole vehicle: player two also has a boat (`0x8e26`), faster, sliding to
+a stop instead of braking, throwing a wake and riding the swell harder,
+and the paired platforms swap between the two forms as the map crosses
+from land to water. Only the second slot's own scoring is still to come,
+see [docs/PLAN-JEEP.md](docs/PLAN-JEEP.md). The attract loop
 uses the disk's COVER, Sales Curve credits, HELI/JEEP blueprints and score
 tables, FACES, embedded text, palettes, Copper gradients and fades, with
 `AMTITUNE.MOD` playing after the COVER fade.

@@ -6424,12 +6424,87 @@ def main():
                    "pozemni objekt zabil jeep ve vzduchu: %r" %
                    (skok["veVzduchu"],))
 
+            # ---- SWAP plosiny: jeep <-> lod --------------------------
+            swap = page.evaluate("""() => {
+              startGame(3);                      // RIVER ma obe plosiny
+              const g = state.g;
+              g.lives = 99999;
+              g.keys2.f = true; step(g); g.keys2.f = false;
+              const j = g.player2;
+              const udalosti = [];
+              let tvar = j.form;
+              for (let i = 0; i < 20000 && udalosti.length < 2; i++) {
+                step(g);
+                if (g.lives < 99999) g.lives = 99999;
+                g.jeepLives = 4; j.inv = Math.max(j.inv, 1);
+                if (j.form !== tvar) {
+                  tvar = j.form;
+                  udalosti.push({ tvar, x: Math.round(j.x),
+                                  padA: !!g.padA, padB: !!g.padB,
+                                  handoff: g.padHandoff,
+                                  floorSet: g.jeepFloorY !== null });
+                }
+              }
+              return { udalosti };
+            }""")
+            expect(len(swap["udalosti"]) == 2,
+                   "v RIVERu se vozidlo neprepnulo dvakrat: %r" %
+                   (swap["udalosti"],))
+            prvni, druha = swap["udalosti"]
+            # Plosiny jsou v mape RIVER na x = 270 (SWAP#1) a 303 (SWAP#0)
+            expect(prvni["tvar"] == "boat" and prvni["x"] == 270,
+                   "prvni prepnuti: %r" % (prvni,))
+            expect(druha["tvar"] == "jeep" and druha["x"] == 303,
+                   "druhe prepnuti: %r" % (druha,))
+            # 0xac98/0xace4: registrace jedne plosiny nuluje tu druhou
+            expect(prvni["padB"] and not prvni["padA"] and
+                   druha["padA"] and not druha["padB"],
+                   "dvojice plosin se nevylucuji: %r" % (swap["udalosti"],))
+            expect(prvni["handoff"] and prvni["floorSet"],
+                   "fp@(3548)/fp@(3558) se pri predani nenastavily: %r" %
+                   (prvni,))
+            # Rychlost a dojezd lodi merime v TOWN, kde je kolem startu
+            # volno - v RIVERu vozidlo po prepnuti stoji u kraje.
+            lod = page.evaluate("""() => {
+              startGame(0);
+              const g = state.g;
+              for (let i = 0; i < 60; i++) step(g);
+              g.keys2.f = true; step(g); g.keys2.f = false;
+              const j = g.player2;
+              j.inv = 1000;
+              const zmer = () => {
+                j.x = 160; j.y = 150; j.vx = 0; j.vy = 0;
+                const x0 = j.x;
+                g.keys2.r = true;
+                for (let i = 0; i < 10; i++) step(g);
+                g.keys2.r = false;
+                return +((j.x - x0) / 10).toFixed(4);
+              };
+              const jeepRychlost = zmer();
+              j.form = "boat";
+              const lodRychlost = zmer();
+              // 0x8f22: lod po pusteni paky dojizdi o osminu rychlosti.
+              step(g);
+              const lodDojizdi = j.vx;
+              j.form = "jeep";
+              zmer();
+              step(g);
+              const jeepStoji = j.vx;
+              return { jeepRychlost, lodRychlost, lodDojizdi, jeepStoji };
+            }""")
+            # +356: jeep 640 = 2,5 px/t, lod 768 = 3 px/t
+            expect(lod["jeepRychlost"] == 2.5 and lod["lodRychlost"] == 3.0,
+                   "rychlosti jeep/lod: %r / %r" %
+                   (lod["jeepRychlost"], lod["lodRychlost"]))
+            expect(0 < lod["lodDojizdi"] < 3.0 and lod["jeepStoji"] == 0,
+                   "0x8f22: lod ma dojizdet, jeep stat: %r" % (lod,))
+
             screenshot = os.environ.get("SWIV_UI_SCREENSHOT")
             if screenshot:
                 page.screenshot(path=screenshot)
             expect(not errors, "browser ohlasil chyby: " + "; ".join(errors[:6]))
             print("UI OK (%.1fs): %d dispatch zaznamu, %d CAMOGUN, "
-                  "%d novych zvukovych stavu, jeep + vez + skok, bez JS chyb" %
+                  "%d novych zvukovych stavu, jeep + vez + skok + lod, bez JS chyb" %
                   (time.time() - started, summary["dispatch"],
                    summary["camoguns"],
                    zvuky["corn"][0] + zvuky["jet"][0] + zvuky["geyser"][0]))

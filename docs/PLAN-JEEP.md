@@ -4,7 +4,7 @@ Posledni velka chybejici cast hry. Vrtulnik je hotovy, jeep existuje jen
 jako prazdna pulka HUD. Tenhle dokument shrnuje, co uz je zmerene v
 `work/prog.txt`, co presne chybi, a v jakych davkach to jde udelat.
 
-Stav k 2026-09-10: **davky 1-4 hotove**, zbyvaji 5 a 6. Vse nize je
+Stav k 2026-09-10: **davky 1-5 hotove**, zbyva 6. Vse nize je
 odecteno z disassembly, ne odhadnuto.
 
 ## 1. Jak original oddeluje oba hrace
@@ -80,7 +80,7 @@ Cela je citelna, konstanty jsou zmerene:
 | 2 | ~~Korutina `0x9090`: pohyb po zemi, clamp `0x94f0`, kolize `0x9328`, rozmacknuti `0x9314`~~ **hotovo (soucast davky 1)** | 1–2 dny |
 | 3 | ~~Vez `0x89e8` a strelba jeepu; kolizni trida bit 2~~ **hotovo** | 1 den |
 | 4 | ~~Skok `0x91e8` vcetne zmeny kolizni tridy a gravitace~~ **hotovo** | 0,5 dne |
-| 5 | SWAP plosiny (`fp@(3548)`) a dopravnik (`0x9172`, `0xad98`) — dnes mrtve hooky | 0,5 dne |
+| 5 | ~~SWAP plosiny (`fp@(3548)`) a dopravnik (`0x9172`, `0xad98`)~~ **hotovo — ukazalo se, ze k tomu patri cela druha podoba vozidla, lod `0x8e26`** | 0,5 dne (podceneno) |
 | 6 | Dva hraci naraz: skore, zivoty, respawn a continue na obou slotech | 1 den |
 
 ## 5. Otevrene otazky
@@ -174,3 +174,30 @@ Skok se ukazal bohatsi, nez rikal puvodni rozpis:
 Klavesa skoku je `q` (slot 2). U ovladace typu 2 ma i original
 samostatnou klavesu (`0x71ac` sklada bit 6 z `fp@(-28)`), u joysticku je
 to druhe tlacitko nebo dvojity tap smeru.
+
+## 9. Co presne je v davce 5
+
+Rozpis rikal "SWAP plosiny a dopravnik, 0,5 dne". Byl **spatne**: plosiny
+nejsou dekorace, ktera by neco odemykala, ale **prepinac mezi dvema
+podobami vozidla**. Slot 2 ma vedle jeepu jeste lod `0x8e26`.
+
+- **Dvojice plosin.** `0xac6a` (SWAP#0, A) a `0xacb6` (SWAP#1, B) zapisou
+  po radku 32 svou polohu do sve dvojice globalu a vynuluji tu druhou;
+  plati vzdy jen pozdejsi. Pak cekaji na `fp@(3548)` a teprve pak zapisou
+  `fp@(3558)` = strop pro `0x94f0`.
+- **Prepnuti** `0x94c2`/`0x94d0` kazdy tik: `y - 64 <= protejsi plosina`
+  -> `0x6160` zalozi druhy tvar, `0x6db4` ukonci tenhle. Novy tvar jde
+  pres `0x9046` a `0x90a0`/`0x8e38` jej prenese na jeho plosinu.
+  **Zmereno v RIVERu**: lod vznikne na `x = 270`, jeep zpatky na
+  `x = 303` — presne souradnice plosin z mapy.
+- **Lod** ma rychlost 768 (3 px/t proti 2,5), grafiku `#31`/`#25`,
+  **dojezd** (`0x8f22` ubira osminu rychlosti misto nulovani), brazdu
+  `0x9358` kazdy ctvrty tik za jizdy a kazdy sestnacty VBL pri stani,
+  a **vetsi houpani** (zlomek od `0x8000`, gravitace `-3072`).
+  Vez, skok i kolize s terenem jsou spolecne.
+- **Stopy jeepu** v pasmu `0xad30` jsou tentyz dekal jako u veze tanku,
+  jen po trech ticich misto po dvaceti.
+
+V prepisu jsou oba tvary jednim objektem s `form: "jeep" | "boat"`.
+Original misto toho ukonci jednu ulohu a zalozi druhou, ale stav, na
+kterem zalezi (zbran, zivoty, skore), stejne zije v rodici `+276`.
