@@ -4248,7 +4248,7 @@ function pickupToken(g, k) {
     p.reload = Math.max(8, (p.reload ?? 11) - 3);
   } else if (k.typ === 3) {                      // 0x983e: OCHRANA + body
     p.inv = ((p.inv || 0) + 500) & 0xFFFF;      // ADDI.W: scita se, 16bit wrap
-    awardScore(g, 500);                          // +76 += 500
+    awardScore(g, 500);                          // +76 += 500 (slot 1)
   } else if (k.typ === 4) {                      // 0x984e: plna sila
     p.weapon = 6; p.reload = 8;
     startWhiteFlash(g);                         // 0x8852: 256, potom -4/VBL
@@ -4471,7 +4471,24 @@ function updateDifficulty(g) {                  // 0x1cd4..0x1d02
   const phase = (g.levelPhase || 0) > 0 ? (g.levelPhase | 0) - 1 : 0;
   g.difficulty = Math.min(10, ((r1 + r2 + powers) >> 3) + phase);
 }
-function awardScore(g, points) {
+/* 0xa36a: skore dostane slot, jehoz bit je v `+506` - bit 6 (slot 1) ma
+   prednost pred bitem 7 (slot 2), a **kdyz neni ani jeden, nedostane
+   nikdo**. Kazdy slot ma vlastni `+76` skore, `+84` prah dalsiho zivota
+   a `+68` zasobu; `0x710c` pri prekroceni prahu prida 30000, ubere jeden
+   zivot z `+68` a pricte 6000 do `+110` (obtiznost). */
+function awardScore(g, points, slot = 1) {
+  if (slot === 2) {
+    if (!g.player2) return;
+    g.jeepScore = (g.jeepScore | 0) + points;
+    if (!Number.isFinite(g.jeepNextLife)) g.jeepNextLife = 10000;
+    if (g.jeepScore >= g.jeepNextLife) {
+      g.jeepLives = (g.jeepLives | 0) + 1;
+      g.jeepNextLife += 30000;
+      g.player2.rank = signedWord((g.player2.rank || 0) + 6000);
+      sfxExtraLife(g, g.jeepScore);
+    }
+    return;
+  }
   g.score += points;
   if (g.score >= g.nextLife) {
     g.lives++; g.nextLife += 30000;
@@ -4479,6 +4496,20 @@ function awardScore(g, points) {
       g.player.rank = signedWord((g.player.rank || 0) + 6000);// 0x7116
     sfxExtraLife(g, g.score);                               // 0x7128
   }
+}
+/* Prevede masku z `+506` na cislo slotu. Bit 6 (slot 1) ma prednost pred
+   bitem 7 (slot 2) presne jako `0xa36a`.
+
+   Vraci 0, kdyz masku nikdo nenastavil. Volajici v tom pripade davaji
+   skore slotu 1. Nativne by nedostal NIKDO - jenze `+506` nese udalost
+   i attribuci v jednom slove, takze kdyz uz callback bezi, je bit 6 nebo
+   7 prakticky vzdy nastaveny; nulova maska nastava jen u smrti, ktere
+   nejdou pres sweep. Tuhle mensinu prepis zatim nerozlisuje a pripisuje
+   ji slotu 1 - stejne jako pred davkou 6, takze se jednohracska hra
+   nikde nehnula. Viz docs/GAPS.md. */
+function creditedSlot(o) {
+  const m = o.creditMask | 0;
+  return (m & 1) ? 1 : ((m & 2) ? 2 : 0);
 }
 /* Resident collision sweep 0x6ee2 nepouziva rozmery obrazku. Porovnava
    integerove strety uzlu s inclusive half-extent 8; udalosti stejneho
@@ -4719,7 +4750,7 @@ function killSpawnCredited(g, s) {             // 0xa36a z player eventu
     for (let a = 0; a < 256; a += 16) fireCannonStraight(g, s.x, sy, a);
   }
   releaseSpawnTask(g, s);
-  awardScore(g, s.scoreValue ?? 100);
+  awardScore(g, s.scoreValue ?? 100, creditedSlot(s) || 1);
   if (s.flashOnDeath && (g.inst1Factories | 0) <= 1)
     startWhiteFlash(g);                        // 0xb8d8 (sdileno s 0xb810)
   // Zabity task jeste jednou pokracuje, aby dobehl svuj epilog za "bnes",
@@ -4770,7 +4801,8 @@ function damageSpawn(g, s) {
 }
 function killAirCredited(g, a) {
   if (!a.alive && !a.townResumeActive) return;
-  releaseAirMember(g, a); awardScore(g, a.scoreValue ?? 0);
+  releaseAirMember(g, a);
+  awardScore(g, a.scoreValue ?? 0, creditedSlot(a) || 1);
   queueTownExplosionTask(g, a.x, a.y, 33, "death-" + a.kind);
 }
 function damageAir(g, a) {
@@ -4795,7 +4827,8 @@ function damageBirdEvent(g, a) {               // 0x8696, +510 i +514
 }
 function killHazardCredited(g, h) {
   if (!h.alive && !h.townResumeActive) return;
-  releaseHazard(g, h); awardScore(g, h.scoreValue ?? 0);
+  releaseHazard(g, h);
+  awardScore(g, h.scoreValue ?? 0, creditedSlot(h) || 1);
   queueTownExplosionTask(g, h.x, h.y,
     h.kind === "minecore" || h.kind === "proxfrag" || h.kind === "laser"
       ? 33 : h.z ? Math.floor(h.z) + 1 : 1,
@@ -6457,7 +6490,7 @@ function initMill(g, s) {                      // 0x79d4 po a2c6
 function detonateMine(g, s, credited) {
   if (!s.alive && !s.townResumeActive) return;
   releaseSpawnTask(g, s);
-  if (credited) awardScore(g, 25);
+  if (credited) awardScore(g, 25, creditedSlot(s) || 1);
   queueTownExplosionTask(g, s.x, s.y, 1, "death-mine");
   addDecal(g, "MINE.LIN", 8, s.x, s.y);
   // 0x9b62 je callback zasahu hracskou strelou. Kontaktni exploze core
@@ -6483,7 +6516,7 @@ function pulseKillSpawn(g, s, credited) {
   if (!s.born || (!s.alive && !s.townResumeActive) || s.beh === "boss" ||
       s.smartImmune) return;
   releaseSpawnTask(g, s);
-  if (credited) awardScore(g, s.scoreValue ?? 100);
+  if (credited) awardScore(g, s.scoreValue ?? 100, creditedSlot(s) || 1);
   queueTownExplosionTask(g, s.x, s.y, ["mill", "airmine", "tilt"].includes(s.beh) ? 33 : 1,
                          "death-" + s.beh);
   if (["mine", "tank", "popup", "flame", "proxmine"].includes(s.beh))
@@ -6493,13 +6526,13 @@ function pulseKillSpawn(g, s, credited) {
 function pulseKillAir(g, a, credited) {
   if (!a.alive && !a.townResumeActive) return;
   releaseAirMember(g, a);
-  if (credited) awardScore(g, a.scoreValue ?? 0);
+  if (credited) awardScore(g, a.scoreValue ?? 0, creditedSlot(a) || 1);
   queueTownExplosionTask(g, a.x, a.y, 33, "death-" + a.kind);
 }
 function pulseKillHazard(g, h, credited) {
   if ((!h.alive && !h.townResumeActive) || h.consumed || h.smartImmune) return;
   releaseHazard(g, h);
-  if (credited) awardScore(g, h.scoreValue ?? 0);
+  if (credited) awardScore(g, h.scoreValue ?? 0, creditedSlot(h) || 1);
   queueTownExplosionTask(g, h.x, h.y,
     h.kind === "minecore" || h.kind === "proxfrag" || h.kind === "laser"
       ? 33 : h.z ? Math.floor(h.z) + 1 : 1,
@@ -6508,7 +6541,7 @@ function pulseKillHazard(g, h, credited) {
 function pulseKillEnemyShot(g, sh, credited) {
   if (sh.dead && !sh.townResumeActive) return;
   if (sh.kind === "hom") {
-    if (credited) awardScore(g, 7);
+    if (credited) awardScore(g, 7, creditedSlot(sh) || 1);
     queueTownExplosionTask(g, sh.x, sh.y + scrollTop(g), 33,
                            "death-homing");
   }
@@ -7000,7 +7033,8 @@ function dispatchTownShotEvent(g, task) {
       if (--o.hp === 0) { startWhiteFlash(g); killHazardCredited(g, o); }
     } else damageHazard(g, o);
   } else if (kind === "shot" && o.kind === "hom" && !o.dead) {
-    releaseEnemyShot(g, o); awardScore(g, 7);
+    releaseEnemyShot(g, o);
+    awardScore(g, 7, creditedSlot(o) || 1);
     queueTownExplosionTask(g, o.x, o.y + scrollTop(g), 33, "death-homing");
   }
 }
@@ -7012,7 +7046,8 @@ function dispatchTownContactEvent(g, task) {
   } else if (kind === "shot") {
     if (o.dead) return;
     if (o.kind === "hom") {
-      releaseEnemyShot(g, o); awardScore(g, 7);
+      releaseEnemyShot(g, o);
+    awardScore(g, 7, creditedSlot(o) || 1);
       queueTownExplosionTask(g, o.x, o.y + scrollTop(g), 33, "death-homing");
     } else if (o.kind === "eggshot") return;    // 0xa9a0: maska +508 = 0
     else releaseEnemyShot(g, o);                // 0x9632: 0x6564 s 0x6db4
@@ -7194,10 +7229,14 @@ const PLAYER_FIRE_RADIAL = [
 function fireDirection(ang) { return ((((ang | 0) + 16) & 224) >> 5) & 7; }
 function firePlayerWeapon(g, p, ang, ox, oy) {
   const pow = Math.max(1, p.weapon | 0);
+  // Vlastnik strely urcuje bit v `+506` a tim i to, komu 0xa36a pripise
+  // skore. Nativne ma kazdy slot vlastni 30slotovy pool; prepis je zatim
+  // sdili (viz docs/GAPS.md).
+  const owner = p === g.player2 ? 2 : 1;
   sfxPlayerFire(g, ox);                        // 0x8aa4 -> 0x4f3e, 1x/salva
   if (pow > 5) {
     for (const [dx, dy, vx, vy, frame] of PLAYER_FIRE_RADIAL)
-      spawnPlayerBullet(g, { x: ox + dx, y: oy + dy, vx, vy, frame });
+      spawnPlayerBullet(g, { x: ox + dx, y: oy + dy, vx, vy, frame, owner });
     return;
   }
   const dir = fireDirection(ang);
@@ -7207,7 +7246,8 @@ function firePlayerWeapon(g, p, ang, ox, oy) {
   const straight = set.odd[0];                 // 0x8ae6 pred posunem
   for (const [vx, vy, dx, dy] of entries) {
     const [sx, sy] = p.mode === 1 ? [vx, vy] : [straight[0], straight[1]];
-    spawnPlayerBullet(g, { x: ox + dx, y: oy + dy, vx: sx, vy: sy, frame });
+    spawnPlayerBullet(g, { x: ox + dx, y: oy + dy, vx: sx, vy: sy,
+                           frame, owner });
   }
 }
 
@@ -7345,7 +7385,7 @@ function startGame(lv) {
     tokensStat: 0,      // fp@(12490), nikde se nezvysuje
     statScrolled: 0,    // 0xe06: 0xe9c0 - fp@(3534), tedy ujeta vzdalenost
     joinClosed: false,
-    jeepLives: 1, jeepScore: 0, jeepTokenCount: 0,
+    jeepLives: 1, jeepScore: 0, jeepTokenCount: 0, jeepNextLife: 10000,
     townColor07Enabled: lv === 0,
     // AMPROG stav zacina v BSS; skutecny hardware jej pred kazdym během
     // scheduleru meni VHPOSR. Bez zachyceneho beam trace pouzivame nulu,
@@ -7901,6 +7941,7 @@ function tryJoinJeep(g) {
   g.continues--;
   g.jeepLives = 4;                             // 0x7076 jako u continue
   g.jeepScore = 0;
+  g.jeepNextLife = 10000;                      // +84
   const pos = findPlayerRespawn(g, null);      // 0x9046, spolecny s heli
   const p = {
     x: pos.x, y: pos.y, ang: 0, alive: true,
@@ -8103,7 +8144,14 @@ function killJeep(g) {
   spawnPlayerBurst(g, p.x, p.y);               // 0x88fc
   p.alive = false;
   g.jeepLives = Math.max(0, (g.jeepLives | 0) - 1);
-  p.respawnT = g.jeepLives > 0 ? 100 : 0;
+  if (g.jeepLives > 0) { p.respawnT = 100; return; }   // 0x714e
+  // 0x70ac: kdyz `+68` dojde, rodicovska uloha slotu skonci - jen si
+  // predtim odlozi nejlepsi skore do `+80`. Slot se tim vrati do
+  // neaktivniho stavu a da se znovu koupit za dalsi kredit.
+  g.jeepBest = Math.max(g.jeepBest | 0, g.jeepScore | 0);
+  g.player2 = null;
+  g.players = 1;
+  g.jeepLives = 1;                             // HUD zase ukaze JEEP 0
 }
 function respawnJeep(g) {
   const p = g.player2;
@@ -10253,13 +10301,21 @@ function step(g) {
      prekryvajicich se targetu; nesmime jej odstranit po prvnim z nich. */
   const collisionBullets = g.bullets.filter(b => !b.dead);
   const consumedBullets = new Set();
+  /* Vraci masku vlastniku, ne jen "trefeno": bit 0 = slot 1, bit 1 =
+     slot 2. Odpovida bitum 6 a 7 v `+506`, podle kterych `0xa36a`
+     vybira, komu skore pripsat. */
   function collectBulletEvent(x, y, node = DEFAULT_NODE) {
-    let event = false;
+    let mask = 0;
     for (const b of collisionBullets) {
       if (!nodesTouch(BOLT_NODE, b.x, b.y, node, x, y)) continue;
-      consumedBullets.add(b); event = true;
+      consumedBullets.add(b);
+      mask |= (b.owner === 2) ? 2 : 1;
     }
-    return event;
+    return mask;
+  }
+  function creditTarget(o, mask) {
+    if (mask) o.creditMask = (o.creditMask | 0) | mask;
+    return mask;
   }
 
   const pn = nodePos(g, p, p.x, p.y);            // uzel hrace z resume N
@@ -10270,7 +10326,8 @@ function step(g) {
     // Burst vypina callback bit v +508, ne class32 node ani pending +506:
     // event word se zapise a bolt zanikne, ale 0x64b6 callback neprovede.
     const tokenNode = nodeExtentKey("token");
-    if (collectBulletEvent(kn.x, kn.y, tokenNode)) tokenShotEvents.add(k);
+    if (creditTarget(k, collectBulletEvent(kn.x, kn.y, tokenNode)))
+      tokenShotEvents.add(k);
     if (p.alive && k.interactive &&
         nodesTouch(PLAYER_NODE, pn.x, pn.y, tokenNode, kn.x, kn.y))
       tokenPickupEvents.add(k);
@@ -10283,7 +10340,8 @@ function step(g) {
     if (s.beh === "boss") {
       const sn = nodePos(g, s, s.x, s.y - scrollTop(g));
       if (s.alive && s.hp > 0 &&
-          collectBulletEvent(sn.x, sn.y, nodeExtentKey("boss")))
+          creditTarget(s, collectBulletEvent(sn.x, sn.y,
+                                             nodeExtentKey("boss"))))
         bossShotEvents.add(s);
       // HP0 deti nemaji damage callback, class34 ale spotrebuje bullet.
       for (const q of s.parts || []) {
@@ -10302,7 +10360,7 @@ function step(g) {
     const sn = nodePos(g, s, s.x, s.y - scrollTop(g));
     // HP 0 s vlastnim handlerem bitu 0 (XEVIOUS#5) uzel drzi: bolt zanikne.
     if ((s.hp > 0 || s.boltPing) && !s.invulnerable &&
-        collectBulletEvent(sn.x, sn.y, nodeExtent(s))) {
+        creditTarget(s, collectBulletEvent(sn.x, sn.y, nodeExtent(s)))) {
       spawnShotEvents.add(s);
     }
   }
@@ -10311,7 +10369,8 @@ function step(g) {
   for (const a of g.air) {
     if (!a.alive) continue;
     const an = nodePos(g, a, a.x, a.y - scrollTop(g));
-    if (collectBulletEvent(an.x, an.y, nodeExtent(a))) airShotEvents.add(a);
+    if (creditTarget(a, collectBulletEvent(an.x, an.y, nodeExtent(a))))
+      airShotEvents.add(a);
   }
 
   const hazardShotEvents = new Set();
@@ -10321,7 +10380,9 @@ function step(g) {
     const blocks = h.hp > 0 || h.kind === "flameEmitter" ||
                    (h.kind === "minecore" && h.consumed);
     const hn = nodePos(g, h, h.x, h.y - scrollTop(g));
-    if (!blocks || !collectBulletEvent(hn.x, hn.y, nodeExtent(h))) continue;
+    const zas = blocks ? collectBulletEvent(hn.x, hn.y, nodeExtent(h)) : 0;
+    if (!zas) continue;
+    creditTarget(h, zas);
     if (h.hp > 0 && !h.consumed) hazardShotEvents.add(h);
   }
 
@@ -10347,7 +10408,8 @@ function step(g) {
       const overlaps = nodesTouch(nodeExtent(sh), hn.x, hn.y,
                                   PLAYER_NODE, pn.x, pn.y);
       if (!sh.dead && overlaps) {
-        contactShots.push(sh); playerAttribution.add(sh); lethalContact = true;
+        contactShots.push(sh); playerAttribution.add(sh);
+        creditTarget(sh, 1); lethalContact = true;
         lethalSources.push("shot:" + sh.kind);
       }
     }
@@ -10355,7 +10417,8 @@ function step(g) {
       const an = nodePos(g, a, a.x, a.y - scrollTop(g));
       if (a.alive && nodesTouch(PLAYER_NODE, pn.x, pn.y,
                                 nodeExtent(a), an.x, an.y)) {
-        contactAir.add(a); playerAttribution.add(a); lethalContact = true;
+        contactAir.add(a); playerAttribution.add(a);
+        creditTarget(a, 1); lethalContact = true;
         lethalSources.push("air:" + a.kind);
       }
     }
@@ -10385,7 +10448,7 @@ function step(g) {
       const sn = nodePos(g, s, s.x, s.y - scrollTop(g));
       const overlap = nodesTouch(PLAYER_NODE, pn.x, pn.y,
                                  nodeExtent(s), sn.x, sn.y);
-      if (overlap) playerAttribution.add(s);
+      if (overlap) { playerAttribution.add(s); creditTarget(s, 1); }
       if ((s.beh === "mill" || s.beh === "airmine" || s.beh === "tilt" ||
            s.beh === "fish" || s.beh === "goose7" || s.beh === "skyeye" ||
            s.beh === "jetfly" || s.beh === "airplane" || s.beh === "onerig" ||
@@ -10403,7 +10466,7 @@ function step(g) {
       const hn = nodePos(g, h, h.x, h.y - scrollTop(g));
       const overlap = nodesTouch(PLAYER_NODE, pn.x, pn.y,
                                  nodeExtent(h), hn.x, hn.y);
-      if (overlap) playerAttribution.add(h);
+      if (overlap) { playerAttribution.add(h); creditTarget(h, 1); }
       if ((h.kind === "proxfrag" || h.kind === "laser" || h.lethal) &&
           overlap) {
         contactFrag.add(h); lethalContact = true; lethalSources.push(h.kind);
@@ -10495,7 +10558,7 @@ function step(g) {
       if (s.beh === "tank" && !s.tankSetup) continue;
       const sn = nodePos(g, s, s.x, s.y - scrollTop(g));
       if (nodesTouch(PLAYER_NODE, jn.x, jn.y, nodeExtent(s), sn.x, sn.y)) {
-        hit = s.beh; break;
+        creditTarget(s, 2); hit = s.beh; break;
       }
     }
     if (!hit && !jp.airborne) {

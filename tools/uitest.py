@@ -6499,12 +6499,87 @@ def main():
             expect(0 < lod["lodDojizdi"] < 3.0 and lod["jeepStoji"] == 0,
                    "0x8f22: lod ma dojizdet, jeep stat: %r" % (lod,))
 
+            # ---- 0xa36a: skore, zivoty a zavreni slotu 2 -------------
+            skore = page.evaluate("""() => {
+              startGame(0);
+              const g = state.g;
+              for (let i = 0; i < 60; i++) step(g);
+              const kreditPred = g.continues;
+              g.keys2.f = true; step(g); g.keys2.f = false;
+              const j = g.player2;
+              const vysl = [];
+              // Tataz strela pripsana jednou slotu 1 a jednou slotu 2.
+              for (const majitel of [1, 2]) {
+                let cil = null;
+                for (let i = 0; i < 4000 && !cil; i++) {
+                  step(g); j.inv = 1000; g.player.inv = 1000;
+                  cil = g.air.find(a => a.alive && a.hp > 0 &&
+                        (a.scoreValue | 0) > 0 && a.nodeSnap &&
+                        a.nodeSnap.y > 8 && a.nodeSnap.y < 240);
+                }
+                if (!cil) { vysl.push({ nenasel: true }); continue; }
+                const p1 = g.score, p2 = g.jeepScore;
+                cil.hp = 1;
+                g.bullets.push({ x: cil.nodeSnap.x, y: cil.nodeSnap.y,
+                                 vx: 0, vy: 0, frame: 14, poolSlot: 29,
+                                 owner: majitel });
+                step(g); step(g);
+                vysl.push({ majitel, body: cil.scoreValue,
+                            p1: g.score - p1, p2: g.jeepScore - p2 });
+              }
+              // 0x710c: extra zivot slotu 2 na 10000, pak po 30000,
+              // a s nim 6000 do `+110`.
+              const rankPred = j.rank | 0, zivotyPred = g.jeepLives | 0;
+              g.jeepScore = 0; g.jeepNextLife = 10000;
+              awardScore(g, 10000, 2);
+              const extra = { zivoty: (g.jeepLives | 0) - zivotyPred,
+                              prah: g.jeepNextLife,
+                              rank: (j.rank | 0) - rankPred };
+              // Vycerpani zasoby zavre slot; HUD se vrati k promptu.
+              g.jeepLives = 1; j.inv = 0; j.alive = true;
+              g.jeepScore = 4321;
+              killJeep(g);
+              // Po zavreni musi prava pulka zase stridat prompt se
+              // statusem, tedy presne to, co vraci hudInactiveText.
+              const zavreno = { player2: !!g.player2, players: g.players,
+                                best: g.jeepBest | 0,
+                                neaktivni: hudTextsForGame(g).right ===
+                                  hudInactiveText(g, "JEEP", g.jeepLives,
+                                                  g.jeepScore,
+                                                  g.jeepTokenCount || 0) };
+              // Znovupripojeni stoji dalsi kredit.
+              const kreditPredZnovu = g.continues;
+              g.keys2.f = true; step(g); g.keys2.f = false;
+              const znovu = { player2: !!g.player2,
+                              kredit: kreditPredZnovu - g.continues,
+                              skore: g.jeepScore | 0 };
+              return { kreditPred, kreditPo: kreditPred - g.continues,
+                       vysl, extra, zavreno, znovu };
+            }""")
+            p1, p2 = skore["vysl"]
+            expect(p1 == {"majitel": 1, "body": 12, "p1": 12, "p2": 0},
+                   "strela slotu 1 pripsana spatne: %r" % (p1,))
+            expect(p2 == {"majitel": 2, "body": 12, "p1": 0, "p2": 12},
+                   "strela slotu 2 pripsana spatne: %r" % (p2,))
+            expect(skore["extra"] == {"zivoty": 1, "prah": 40000,
+                                      "rank": 6000},
+                   "extra zivot slotu 2: %r" % (skore["extra"],))
+            expect(skore["zavreno"]["player2"] is False and
+                   skore["zavreno"]["players"] == 1 and
+                   skore["zavreno"]["best"] == 4321 and
+                   skore["zavreno"]["neaktivni"],
+                   "slot 2 se po vycerpani nezavrel: %r" %
+                   (skore["zavreno"],))
+            expect(skore["znovu"] == {"player2": True, "kredit": 1,
+                                      "skore": 0},
+                   "znovupripojeni slotu 2: %r" % (skore["znovu"],))
+
             screenshot = os.environ.get("SWIV_UI_SCREENSHOT")
             if screenshot:
                 page.screenshot(path=screenshot)
             expect(not errors, "browser ohlasil chyby: " + "; ".join(errors[:6]))
             print("UI OK (%.1fs): %d dispatch zaznamu, %d CAMOGUN, "
-                  "%d novych zvukovych stavu, jeep + vez + skok + lod, bez JS chyb" %
+                  "%d novych zvukovych stavu, jeep + vez + skok + lod + skore, bez JS chyb" %
                   (time.time() - started, summary["dispatch"],
                    summary["camoguns"],
                    zvuky["corn"][0] + zvuky["jet"][0] + zvuky["geyser"][0]))

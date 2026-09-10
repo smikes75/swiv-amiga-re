@@ -4,7 +4,8 @@ Posledni velka chybejici cast hry. Vrtulnik je hotovy, jeep existuje jen
 jako prazdna pulka HUD. Tenhle dokument shrnuje, co uz je zmerene v
 `work/prog.txt`, co presne chybi, a v jakych davkach to jde udelat.
 
-Stav k 2026-09-10: **davky 1-5 hotove**, zbyva 6. Vse nize je
+Stav k 2026-09-10: **vsech sest davek hotovych.** Zbytek dokumentu
+popisuje, co v nich bylo. Vse nize je
 odecteno z disassembly, ne odhadnuto.
 
 ## 1. Jak original oddeluje oba hrace
@@ -81,7 +82,7 @@ Cela je citelna, konstanty jsou zmerene:
 | 3 | ~~Vez `0x89e8` a strelba jeepu; kolizni trida bit 2~~ **hotovo** | 1 den |
 | 4 | ~~Skok `0x91e8` vcetne zmeny kolizni tridy a gravitace~~ **hotovo** | 0,5 dne |
 | 5 | ~~SWAP plosiny (`fp@(3548)`) a dopravnik (`0x9172`, `0xad98`)~~ **hotovo — ukazalo se, ze k tomu patri cela druha podoba vozidla, lod `0x8e26`** | 0,5 dne (podceneno) |
-| 6 | Dva hraci naraz: skore, zivoty, respawn a continue na obou slotech | 1 den |
+| 6 | ~~Dva hraci naraz: skore, zivoty, respawn a continue na obou slotech~~ **hotovo** | 1 den |
 
 ## 5. Otevrene otazky
 
@@ -201,3 +202,25 @@ podobami vozidla**. Slot 2 ma vedle jeepu jeste lod `0x8e26`.
 V prepisu jsou oba tvary jednim objektem s `form: "jeep" | "boat"`.
 Original misto toho ukonci jednu ulohu a zalozi druhou, ale stav, na
 kterem zalezi (zbran, zivoty, skore), stejne zije v rodici `+276`.
+
+## 10. Co presne je v davce 6
+
+- **Attribuce `+506`.** `collectBulletEvent` uz nevraci "trefeno", ale
+  masku vlastniku (bit 0 = slot 1, bit 1 = slot 2) a kazdy cil si ji
+  odklada do `creditMask`. `creditedSlot` z ni vybira slot presne jako
+  `0xa36a`: bit 6 pred bitem 7.
+- **Strely nesou vlastnika.** `firePlayerWeapon` znacka kazdou strelu
+  podle toho, ktery slot pali. Zmereno: tataz strela da 12 bodu slotu 1,
+  nebo slotu 2, podle `owner`.
+- **Vlastni prah zivota.** Slot 2 ma `g.jeepNextLife` (start 10000, pak
+  po 30000) a extra zivot mu pricte 6000 do `rank` stejne jako slotu 1.
+- **Zavreni slotu.** Kdyz `jeepLives` dojde, `killJeep` odlozi nejlepsi
+  skore (`+80`), zahodi `g.player2` a vrati `g.players` na 1. HUD se tim
+  vrati k neaktivnimu stridani a slot jde znovu koupit za dalsi kredit.
+
+**Jedna vedoma odchylka:** `0xa36a` pri nulove masce nedava skore nikomu.
+Prepis v tom pripade pripisuje slotu 1. Duvod je, ze `+506` nese udalost
+i attribuci v jednom slove, takze kdyz uz callback bezi, je bit 6 nebo 7
+prakticky vzdy nastaveny; nulova maska nastava jen u smrti mimo sweep.
+Chovat se tam jako driv znamena, ze se jednohracska hra nikde nehnula -
+HUD je na vsech osmi checkpointech dal 100 %.

@@ -720,6 +720,36 @@ poskakovani stinu — a ve skoku jako jeho odpojeni az o 27 px.
 Stav prepisu: davka 1 (slot, pohyb, clamp, kolize, rozmacknuti, HUD) je
 hotova, vez/skok/SWAP/dopravnik zbyvaji — viz [PLAN-JEEP](PLAN-JEEP.md).
 
+### Skore a zivoty obou slotu (`0x7090`, `0xa36a`)
+
+Kazdy slot ma **vlastni sadu poli**: `+68` zasoba zivotu (start −16,
+`0x70a4` pricita `fp@(12524)` za kazdy spotrebovany, `0x711e` jeden
+vraci), `+76` skore, `+80` nejlepsi skore slotu, `+84` prah dalsiho
+zivota, `+100` sila zbrane, `+102` pickupy, `+104` rezim, `+110` rank.
+
+**Komu se skore pripise, rika `+506`.** Je to tytez slovo, ve kterem
+sweep sklada udalosti: bity 0..5 vybiraji handler (`0x64b6`), **bit 6 =
+zasah slotu 1, bit 7 = zasah slotu 2**. `0xa36a` je cte v tomto poradi:
+
+    a36e: d0 = +506
+    a372: a0 = fp@(11176)     ; slot 1
+    a376: btst #6,d0
+    a37a: bne  -> pripsat
+    a37c: a0 = fp@(11356)     ; slot 2
+    a380: btst #7,d0
+    a384: beq  -> NIKDO
+    a38c: a0@(76) += +362     ; skore objektu
+
+Bit 6 ma tedy prednost a **kdyz neni ani jeden, nedostane skore nikdo**.
+
+`0x710c` po kazdem pripsani porovna `+76` s `+84`: pri prekroceni prida
+30000, ubere jeden zivot z `+68` (`0x711e`) a pricte **6000 do `+110`**,
+cimz extra zivot zvedne obtiznost.
+
+Kdyz `+68` dojde (`0x709a`), rodicovska uloha slotu skonci: `0x70ac` jen
+odlozi skore do `+80` a vrati se. Slot tim prejde do neaktivniho stavu a
+da se znovu koupit za dalsi kredit.
+
 ### Lod (`0x8e26`) a SWAP plosiny
 
 Slot 2 nema jedno vozidlo, ale **dve podoby**. `0xac6a` (SWAP#0, dvojice

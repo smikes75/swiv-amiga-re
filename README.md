@@ -58,8 +58,12 @@ be hit by something airborne. The SWAP platforms turn out to switch the
 whole vehicle: player two also has a boat (`0x8e26`), faster, sliding to
 a stop instead of braking, throwing a wake and riding the swell harder,
 and the paired platforms swap between the two forms as the map crosses
-from land to water. Only the second slot's own scoring is still to come,
-see [docs/PLAN-JEEP.md](docs/PLAN-JEEP.md). The attract loop
+from land to water. Each slot keeps its own score, lives and extra-life
+threshold, and the engine's own attribution word decides who gets the
+points: bit 6 of `+506` is player one, bit 7 is player two, and bit 6
+wins. When a slot runs out of lives it closes and can be bought again for
+another credit. See [docs/PLAN-JEEP.md](docs/PLAN-JEEP.md) for what each
+batch contained and what is still open. The attract loop
 uses the disk's COVER, Sales Curve credits, HELI/JEEP blueprints and score
 tables, FACES, embedded text, palettes, Copper gradients and fades, with
 `AMTITUNE.MOD` playing after the COVER fade.

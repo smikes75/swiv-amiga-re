@@ -1032,7 +1032,7 @@ vypise souradnice prvnich dvanacti bodu mimo masku.
 Zmereno ve vsech sedmi zonach: mimo masku 0 az 1 px.
 
 
-## JEEP a slot 2 — DAVKY 1-5 HOTOVE (2026-09-10)
+## JEEP a slot 2 — VSECH SEST DAVEK HOTOVYCH (2026-09-10)
 
 Slot 2 se pripojuje, jeep jezdi. Rozpis vsech sesti davek je v
 [PLAN-JEEP](PLAN-JEEP.md). Otevrene po davce 1:
@@ -1050,8 +1050,9 @@ Slot 2 se pripojuje, jeep jezdi. Rozpis vsech sesti davek je v
 - ~~**`fp@(3558)`** (`g.jeepFloorY`) se zatim nikde nezapisuje.~~ Hotovo
   v davce 5 spolu s celou dvojici plosin a druhou podobou vozidla (lod
   `0x8e26`).
-- **Skore a zivoty slotu 2** jsou zatim jen `g.jeepScore`/`g.jeepLives`
-  bez vlastniho `nextLife` a bez `0x7116`. Davka 6.
+- ~~**Skore a zivoty slotu 2** jsou zatim jen `g.jeepScore`/`g.jeepLives`
+  bez vlastniho `nextLife` a bez `0x7116`.~~ Hotovo v davce 6 vcetne
+  attribuce `+506` a zavirani slotu.
 - ~~**Vez `0x89e8`** (JEEPHELI#9..16) se nekresli ani nestrili.~~ Hotovo
   v davce 3 vcetne osmismerove palby z tabulky `0x8b86` a kolizni tridy
   bit 2 (`A2C6_CLASS`, 69 chovani, 37 s bitem 2).
@@ -1143,3 +1144,22 @@ emulatoru pres harness ve WASM.
 - **`0xa252`** (vyber snimku dekalu podle uhlu) je modelovan stejnym
   vzorcem jako u tanku (`((uhel + 16) & 0xE0) >> 5 & 3`); prima kontrola
   proti rutine nebyla delana.
+
+### Davka 6 (skore obou slotu) — otevrene body
+
+- **Nulova maska `+506` pripada slotu 1, ne nikomu.** `0xa36a` pri
+  nenastavenem bitu 6 ani 7 skore nepripise. Prepis v tom pripade
+  pripisuje slotu 1, aby se jednohracska hra nehnula (HUD je dal 100 %
+  na vsech osmi checkpointech). Rozlisit to znamena projit vsechny cesty,
+  ktere `killSpawnCredited` volaji mimo sweep, a u kazde overit, jestli
+  original opravdu nedava nic.
+- **Sdileny pool strel.** Nativne ma kazdy slot vlastnich 30 slotu
+  (`0x6028`); prepis je sdili, takze intenzivni palba jednoho hrace muze
+  druhemu ubrat sloty. Pri sile 5 a dvou hracich je to 10 strel z 30.
+- **TOKENy sbira jen slot 1.** Bonus typu 3 (`0x983e`, 500 bodu) i
+  ostatni pickupy jsou v prepisu navazane na `g.player`.
+- **Continue okno je jen pro slot 1.** Slot 2 se po vycerpani zavre a
+  hrac ho koupi znovu pres PRESS FIRE; nativni interakce dvou slotu ve
+  fazi `continue`/`closing` nebyla zkoumana.
+- **`+80` (nejlepsi skore slotu)** se drzi, ale nikde se nezobrazuje ani
+  nezapisuje do tabulky - `0x70b0` ho plni, dalsi pouziti nezkoumano.
