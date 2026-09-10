@@ -912,6 +912,26 @@ opt-in: hodi se, kdyz se do okna vejde jen 2x nebo 3x, kde jinak cast
 tiku stoji. Kontrakt `tools/smoothtest.py` meri vychozi cestu (bez
 prolnuti); pro prolnutou zatim kontrakt neni.
 
+## Harvest z `game-codex.html`: aktivace pres high word (2026-09-10)
+
+Codex upozornoval, ze `0x9ad6` porovnava **samostatne WORDy** objektu a
+kamery (`cmpw`), kdezto prepis pocital floatovy rozdil, a ze to muze
+aktivovat task o 1 az 3 VBL pozdeji.
+
+**Zmereno pred prevzetim:** ze 453 aktivaci klonu formaci v TOWN by se ani
+jedna nerozhodla jinak - klony maji pri vzniku celociselne `y` a `scrollTop`
+uz je `floor`. Zlomkove `y` v prepisu ovsem existuje (air 14,6 %, spawn
+10,4 %, strely 79,7 % vzorku), takze situace, kdy by se rozdil projevil,
+teoreticky nastat muze.
+
+Prevzato tedy proto, ze **disassembly to tak dela**, ne kvuli merenemu
+dopadu - ten je nulovy. `airMemberAtMargin` v `activateAirMember`. Vsech pet
+kontraktu zustava zelenych.
+
+Zbytek Codexova souboru (model `worldSpace` pro strely, prepracovane EGG a
+TILT, `mapObjectArmedAtStart`) je 58 funkci a chce revizi objekt po objektu
+proti disassembly - samostatna davka, ne harvest jedne zmeny.
+
 ## Prevzato z `game-codex.html` (2026-09-07)
 
 Codex publikoval `game-codex.html` - odbocku z `game.html` z predchoziho

@@ -4373,8 +4373,16 @@ function yellowTarget(g, playerOverride) {     // 0x72a6
   const n = b < 128 ? b : 255 - b;
   return { x: 96 + n, y: 128 + n };
 }
+/* 0x9ad6 porovnava samostatne WORDy: `W(y) - margin` proti `W(kamera)`,
+   ne floatovy rozdil. Na klony formaci to dnes nema vliv (zmereno: ze 453
+   aktivaci by se ani jedna nerozhodla jinak, protoze pri vzniku maji
+   celociselne `y`), ale zlomkove `y` v prepisu existuje - u strel 80 % - a
+   verne je to takto. Nalez pochazi z `game-codex.html`. */
+function airMemberAtMargin(y, cameraY, margin) {
+  return signedWord(positionWord(y) - positionWord(cameraY)) >= margin;
+}
 function activateAirMember(g, a, p) {
-  if (!a.pending || a.y - scrollTop(g) < -48) return false;
+  if (!a.pending || !airMemberAtMargin(a.y, scrollTop(g), -48)) return false;
   a.pending = false;
   // BIRD po a2c6 nevola guard 0x8822; ostatni dve formace ano.
   if (a.kind === "bird") {
