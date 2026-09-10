@@ -1031,3 +1031,24 @@ vypise souradnice prvnich dvanacti bodu mimo masku.
 
 Zmereno ve vsech sedmi zonach: mimo masku 0 az 1 px.
 
+
+## JEEP a slot 2 — DAVKA 1 HOTOVA (2026-09-10)
+
+Slot 2 se pripojuje, jeep jezdi. Rozpis vsech sesti davek je v
+[PLAN-JEEP](PLAN-JEEP.md). Otevrene po davce 1:
+
+- **BOB polovina sond `0x9328` a `0x94f0`.** Nativne obe sahaji do
+  obrazovkoveho bufferu (`0x3dd4`, `fp@(161) = 0`), ktery vedle terenu
+  obsahuje i BOBy posledniho renderu — stejne jako `0x9046`, ktery prepis
+  uz deli na `heliTerrainBlocked` + `heliBobBlocked`. Davka 1 zapojuje
+  jen terenni polovinu, takze jeep zatim projede skrz nepratele. Sklada
+  se to az v davce 3 spolu s kolizni tridou bit 2.
+- **Ktery z paru `0x3dd4`/`0x3dce` miri do ktereho bufferu**, neni
+  zmereno. Vime jen, ze se lisi hodnotou `fp@(161)` a ze `0x9046` pouziva
+  `0x3dd4`. `0x94f0` zada oba, takze rozmacknuti modelujeme terenem —
+  konjunkce je jim dominovana.
+- **`fp@(3558)`** (`g.jeepFloorY`) se zatim nikde nezapisuje. Nativne ji
+  plni SWAP plosiny (`0xacac`, `0xacf8`); to je davka 5.
+- **Skore a zivoty slotu 2** jsou zatim jen `g.jeepScore`/`g.jeepLives`
+  bez vlastniho `nextLife` a bez `0x7116`. Davka 6.
+- **Vez `0x89e8`** (JEEPHELI#9..16) se nekresli ani nestrili. Davka 3.

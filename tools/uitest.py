@@ -6210,12 +6210,64 @@ def main():
             expect(congrat["palety"] == [0x2ABC, 0x2ADC],
                    "palety CONGRAT: %r" % (congrat["palety"],))
 
+            # ---- 0x6f46/0x9090: slot 2 a jeep ------------------------
+            jeep = page.evaluate("""() => {
+              // Cista hra, at join nezavisi na tom, co se stalo driv.
+              startGame(0);
+              const g = state.g;
+              for (let i = 0; i < 60; i++) step(g);
+              const pred = { continues: g.continues, players: g.players,
+                             hud: hudTextsForGame(g).right };
+              g.keys2.f = true; step(g); g.keys2.f = false;
+              const j = g.player2;
+              if (!j) return { pred, joined: false };
+              const p1 = { x: g.player.x, y: g.player.y };
+              const mereni = (klavesy, tiku) => {
+                const x0 = j.x, y0 = j.y;
+                for (const k of klavesy) g.keys2[k] = true;
+                for (let i = 0; i < tiku; i++) step(g);
+                for (const k of klavesy) g.keys2[k] = false;
+                return [+((j.x - x0) / tiku).toFixed(6),
+                        +((j.y - y0) / tiku).toFixed(6)];
+              };
+              return { pred, joined: true, p1,
+                       spawn: { x: j.x, y: j.y }, inv: j.inv,
+                       continues: g.continues, players: g.players,
+                       lives: g.jeepLives, ordinal: j.bobOrdinal,
+                       hud: hudTextsForGame(g).right,
+                       vpravo: mereni(["r"], 10),
+                       nahoru: mereni(["u"], 10),
+                       diagonalne: mereni(["r", "u"], 10) };
+            }""")
+            expect(jeep["pred"]["players"] == 1 and
+                   jeep["pred"]["hud"] == "PRESS FIRE",
+                   "slot 2 pred pripojenim: %r" % (jeep["pred"],))
+            expect(jeep["joined"], "fire slotu 2 nepripojil jeep")
+            expect(jeep["continues"] == jeep["pred"]["continues"] - 1,
+                   "pripojeni slotu 2 nespotrebovalo kredit")
+            expect(jeep["players"] == 2 and jeep["lives"] == 4,
+                   "slot 2 po pripojeni: %r" % (jeep,))
+            expect(jeep["hud"].startswith("JEEP 3["),
+                   "aktivni prava pulka HUD: %r" % (jeep["hud"],))
+            # 0x9046 sonduje obrazovkovy buffer, ve kterem uz vrtulnik JE
+            expect((jeep["spawn"]["x"], jeep["spawn"]["y"]) !=
+                   (jeep["p1"]["x"], jeep["p1"]["y"]),
+                   "jeep vznikl presne na vrtulniku: %r" % (jeep,))
+            # +356 = 640 -> 2,5 px/t kardinalne, 181*640/65536 diagonalne
+            expect(jeep["vpravo"] == [2.5, 0] and jeep["nahoru"] == [0, -2.5],
+                   "rychlost jeepu neni 640/256: %r %r" %
+                   (jeep["vpravo"], jeep["nahoru"]))
+            diag = round(181 * 640 / 65536, 6)
+            expect(jeep["diagonalne"] == [diag, -diag],
+                   "diagonala jeepu neni 181*640/65536: %r" %
+                   (jeep["diagonalne"],))
+
             screenshot = os.environ.get("SWIV_UI_SCREENSHOT")
             if screenshot:
                 page.screenshot(path=screenshot)
             expect(not errors, "browser ohlasil chyby: " + "; ".join(errors[:6]))
             print("UI OK (%.1fs): %d dispatch zaznamu, %d CAMOGUN, "
-                  "%d novych zvukovych stavu, bez JS chyb" %
+                  "%d novych zvukovych stavu, jeep 2,5 px/t, bez JS chyb" %
                   (time.time() - started, summary["dispatch"],
                    summary["camoguns"],
                    zvuky["corn"][0] + zvuky["jet"][0] + zvuky["geyser"][0]))

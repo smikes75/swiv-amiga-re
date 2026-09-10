@@ -47,7 +47,7 @@ a { color:#cfe0ff }
   <a href="https://github.com/smikes75/swiv-amiga-re">repo</a>.</p>
   <p>Insert your own S.W.I.V. disk image (.adf). Nothing is uploaded.</p>
   <a class="btn" id="insert">&#128190; Insert disk</a>
-  <p><small>arrows/WASD move &middot; space fires &middot; sound on first click</small></p>
+  <p><small>P1 heli: arrows + space &middot; P2 jeep: WASD + shift (joins for a credit) &middot; sound on first click</small></p>
 </div>
 
 <div id="titlewrap" style="display:none">
@@ -2126,6 +2126,15 @@ function composeTownBobs(g, top) {
     // JEEPHELI#9..16 patri jeepu/lodi 0x89e8, nikoli vrtulniku 0x9410.
   }
 
+  // 0x9096: jeep je jediny snimek JEEPHELI#23, bez animatoru. Vez
+  // (JEEPHELI#9..16) kresli az jeji vlastni task 0x89e8 - davka 3.
+  const jp = g.player2;
+  if (jp && jp.alive)
+    bob("player2", "JEEPHELI.LIN", JEEP_FRAME, jp.x, jp.y, 32, {
+      ordinal: jp.bobOrdinal,
+      primaryOp: (jp.inv & 8) ? BOB_FILL_INDEX9 : null,
+    });
+
   // Scheduler tasky bezi v creation order. Pri shodnem depth key ale
   // 0x481a vlozi novejsi BOB pred starsi; proto nejdriv enqueueujeme
   // actor batch podle stabilniho task ordinalu, ne podle JS kontejneru.
@@ -3564,11 +3573,13 @@ function stepPlayerHeliAnim(p) {
   if (p.heliAnimFresh) p.heliAnimFresh = false;
   else p.heliAnimPos = ((p.heliAnimPos | 0) + 1) & 7;
 }
-function playerMoveVelocity(a) {
+function playerMoveVelocity(a, speed = 768) {
   // 0x6a6a vraci pro diagonalu 181/256; 181*768/65536 = 543/256.
-  const d = 543 / 256;
-  return [[3, 0], [d, d], [0, 3], [-d, d],
-          [-3, 0], [-d, -d], [0, -3], [d, -d]][(a >> 5) & 7];
+  // +356 je rychlost v 16.16: vrtulnik 768 (0x9476), jeep 640 (0x9118)
+  // a jeep ve skoku 896 (0x920e).
+  const c = speed / 256, d = 181 * speed / 65536;
+  return [[c, 0], [d, d], [0, c], [-d, d],
+          [-c, 0], [-d, -d], [0, -c], [d, -d]][(a >> 5) & 7];
 }
 
 /* 0x85f0/0x861e: attach countdown1 se zpracuje uz v prvnim 0x62d2
@@ -4112,7 +4123,8 @@ function damageBoss(g, boss) {
    256/pocet, pocatecni uhel nahodny, kazdy bonus je korutina TOKEN 0x96d8. */
 function dropBossTokens(g, boss, perPlayer) {
   // 0xc9a2/0xc9aa: prispiva kazdy ZIJICI hrac, ne pocet hracu ve hre.
-  const living = g.player.alive ? 1 : 0;   // druhy hrac v prepisu zatim neni
+  const living = (g.player && g.player.alive ? 1 : 0) +
+                 (g.player2 && g.player2.alive ? 1 : 0);
   const count = perPlayer * living;
   if (count <= 0) return;
   const stepAng = (256 / count) | 0;
@@ -4784,23 +4796,25 @@ function damageHazard(g, h) {
 }
 /* 0x737e..0x73ea: stejny text, ktery nativni renderer sklada do BPL5.
    Skore je sest internich cislic a literalni nula, tedy zobrazene x10. */
-function hudStatusText(g, prefix = "HELI") {
+function hudStatusTextFor(prefix, lives, score, tokenCount) {
   // g.lives drzi pocet zaznamu pred aktualnim spawnem; 0x709a jeden
   // spotrebuje. Proto startovni 4 zobrazi HELI 3 a posledni aktivni stroj
-  // pri g.lives === 1 korektne zobrazi HELI 0.
-  const lives = Math.max(0, Math.trunc(g.lives || 0) - 1);
-  const tokenCount = (g.player && g.player.tokenCount) || 0;
-  const weapon = 2 + Math.trunc(tokenCount / 5);
-  const score = String(Math.max(0, Math.trunc(g.score || 0))).padStart(6, "0") + "0";
-  return prefix + " " + lives + "[ " + weapon + "* " + score;
+  // pri lives === 1 korektne zobrazi HELI 0.
+  const l = Math.max(0, Math.trunc(lives || 0) - 1);
+  const weapon = 2 + Math.trunc((tokenCount || 0) / 5);
+  const sc = String(Math.max(0, Math.trunc(score || 0))).padStart(6, "0") + "0";
+  return prefix + " " + l + "[ " + weapon + "* " + sc;
+}
+function hudStatusText(g, prefix = "HELI") {
+  return hudStatusTextFor(prefix, g.lives, g.score,
+                          (g.player && g.player.tokenCount) || 0);
 }
 function hudInactiveText(g, prefix, lives, score, tokenCount = 0) {
   // 0x740c: inactive slot strida po 128 VBL dynamicky stav a prompt.
   // Citac fp@(-68) bezi od bootu; g.vblBase je jeho faze pri startu
   // urovne (baseline tape: 172..199 mod 256, viz docs/TOWN-PARITY.md).
   if (((g.tick | 0) + (g.vblBase | 0)) & 0x80)
-    return hudStatusText({ lives, score,
-      player: { tokenCount } }, prefix);
+    return hudStatusTextFor(prefix, lives, score, tokenCount);
   if (g.joinClosed) return "PLEASE WAIT";
   if ((g.continues | 0) <= 0) return "NO CREDITS";
   return "PRESS FIRE";
@@ -4809,12 +4823,18 @@ function hudTextsForGame(g) {
   const inactive = g.playerPhase === "continue" ||
                    g.playerPhase === "closing" ||
                    g.playerPhase === "stats";
+  const [heli, jeep] = PLAYER_SLOTS;
   const left = inactive
-    ? hudInactiveText(g, "HELI", g.lives | 0, g.score | 0,
+    ? hudInactiveText(g, heli.hud, g.lives | 0, g.score | 0,
                       (g.player && g.player.tokenCount) || 0)
-    : hudStatusText(g);
-  const right = hudInactiveText(g, "JEEP", g.jeepLives ?? 1,
-                                g.jeepScore ?? 0, g.jeepTokenCount || 0);
+    : hudStatusText(g, heli.hud);
+  // 0x7156: pripojeny slot 2 ma aktivni status stejne jako slot 1.
+  const j = g.player2;
+  const right = j
+    ? hudStatusTextFor(jeep.hud, g.jeepLives ?? 1, g.jeepScore ?? 0,
+                       j.tokenCount || 0)
+    : hudInactiveText(g, jeep.hud, g.jeepLives ?? 1,
+                      g.jeepScore ?? 0, g.jeepTokenCount || 0);
   return { left, right };
 }
 function spawnBoom(g, x, y, kind = "small", z = 1, ordinal = null) {
@@ -6502,9 +6522,9 @@ function applyWeaponTable(p) {
 /* 0x3dd4: opaque mask JEEPHELI#0 proti nulam terrain control plane1.
    Descriptor +410 je pri 0x9046 jeste nula, takze start i respawn vzdy
    testuji prave frame0, nikoli prave zobrazenou fazi rotoru. */
-function heliTerrainBlocked(g, x, screenY) {
+function heliTerrainBlocked(g, x, screenY, frame = 0) {
   if (!g.terrainOpen) return false;             // izolovane stare fixture
-  const spr = indexedFrameFor(state, "JEEPHELI.LIN", 0);
+  const spr = indexedFrameFor(state, "JEEPHELI.LIN", frame);
   if (!spr) return false;
   const W = g.mapW || 320;
   const H = Math.floor(g.terrainOpen.length / W);
@@ -6550,21 +6570,27 @@ function heliBobBlocked(g, x, screenY, bobs) {
   }
   return false;
 }
-function respawnBobField(g) {
+function respawnBobField(g, self) {
   if (!g.mapIndex || !g.spawns || !Number.isInteger(g.mapH)) return null;
   // Novy hrac v bufferu originalu jeste neni (jeho BOB vznikne az po
-  // 0x9046); vlastni BOB proto pri sondovani skryjeme.
-  const p = g.player, wasAlive = p ? p.alive : false;
+  // 0x9046); vlastni BOB proto pri sondovani skryjeme. Druhy hrac se
+  // naopak skryt nesmi - v nativnim bufferu je a kandidata blokuje.
+  const p = self === undefined ? g.player : self;
+  const wasAlive = p ? p.alive : false;
   if (p) p.alive = false;
   try { return composeTownBobs(g, Math.floor(g.scroll)).index; }
   catch (e) { return null; }                    // izolovane fixture
   finally { if (p) p.alive = wasAlive; }
 }
 /* 0x9046: sloupce jsou vnejsi smycka. Pri plnem zablokovani vsech
-   16*12 kandidatu zustane puvodni nekontrolovany fallback (288,192). */
-function findPlayerRespawn(g) {
+   16*12 kandidatu zustane puvodni nekontrolovany fallback (288,192).
+   `self` je hrac, ktery se prave rodi (jeho BOB v bufferu jeste neni);
+   maska sondy je vzdy JEEPHELI#0, protoze descriptor +410 je pri 0x9046
+   jeste nula - plati to i pro jeep, ktery si sice 0x6d7c vola driv
+   (0x9096), ale +410 tim nenastavi. */
+function findPlayerRespawn(g, self) {
   let probes = 0;
-  const bobs = respawnBobField(g);
+  const bobs = respawnBobField(g, self);
   for (let x = 160; x <= 280; x += 8) {
     for (let y = 192; y >= 104; y -= 8) {
       probes++;
@@ -7245,7 +7271,11 @@ function startGame(lv) {
     lives: +(new URLSearchParams(location.search).get("lives")) ||
            +(document.getElementById("livesbox").value) || 4,
     scrollMul: (+document.getElementById("scrollpct").value || 100) / 100,
-    keys: {},
+    keys: {}, keys2: {},
+    // 0x6f46 slot 2; vznika az pripojenim (tryJoinJeep).
+    player2: null,
+    // fp@(3558): 0x1d6a ji nastavuje na -1 = zadny strop.
+    jeepFloorY: null,
     // 0x3092 vola po zalozeni hracskych korutin 0x2868 = fade z cerne,
     // tedy uroven 256 a smer +1: 16 snimku do plne palety.
     // 0x1028 nastavuje fp@(11168) = -4 pro gameplay; drivejsi 0 znamenala,
@@ -7433,10 +7463,29 @@ document.getElementById("scrollpct").oninput = e => {
 
 /* ---- vstup ---- */
 const KEYMAP = { ArrowLeft: "l", ArrowRight: "r", ArrowUp: "u", ArrowDown: "d",
-  a: "l", d: "r", w: "u", s: "d", " ": "f", z: "f", y: "f" };
+  " ": "f", z: "f", y: "f" };
+/* Original ma dva joysticky, prohlizec ne - rozdeleni klaves proto neni
+   otazka vernosti. WASD + levy shift patri slotu 2; dokud se ale
+   nepripoji, ovladaji stejne jako sipky slot 1, aby hrani o samote
+   zustalo, jak bylo. */
+const KEYMAP2 = { a: "l", d: "r", w: "u", s: "d", Shift: "f" };
+function applyKey(g, e, down) {
+  const k1 = KEYMAP[e.key];
+  if (k1) { g.keys[k1] = down; return true; }
+  const k2 = KEYMAP2[e.key] || KEYMAP2[e.key.toLowerCase()];
+  if (!k2) return false;
+  g.keys2[k2] = down;
+  // Dokud slot 2 nehraje, ovladaji WASD i slot 1. Uvolneni klavesy se ale
+  // musi propsat vzdy: jinak by po pripojeni slotu 2 zustal slot 1
+  // s drzenou klavesou a odjel sam (tataz past jako pri ztrate fokusu).
+  if (!down || !g.player2) g.keys[k2] = down;
+  return true;
+}
 // Prepnuti okna s drzenou klavesou nechalo klavesu "zmacknutou" a stroj
 // odjel sam; pri ztrate fokusu se proto stav klaves vycisti.
-window.addEventListener("blur", () => { if (state.g) state.g.keys = {}; });
+window.addEventListener("blur", () => {
+  if (state.g) { state.g.keys = {}; state.g.keys2 = {}; }
+});
 /* ---- Vyvojarske ovladani (neni soucast originalu) -------------------
    Skok po mape meni jen scroll a znovu nastavi `armed` podle nove polohy,
    tedy stejnym pravidlem jako startGame. Zive objekty se zahodi, aby po
@@ -7617,12 +7666,10 @@ window.addEventListener("keydown", e => {
     e.preventDefault();
     return;
   }
-  const k = KEYMAP[e.key];
-  if (k && state.g) { state.g.keys[k] = true; e.preventDefault(); }
+  if (state.g && applyKey(state.g, e, true)) e.preventDefault();
 });
 window.addEventListener("keyup", e => {
-  const k = KEYMAP[e.key];
-  if (k && state.g) state.g.keys[k] = false;
+  if (state.g) applyKey(state.g, e, false);
 });
 
 /* ---- logika (50 Hz) ---- */
@@ -7640,6 +7687,126 @@ function nodePos(g, o, liveX, liveY) {
   return s && s.tick === (g.tick | 0) - 1 ? s : { x: liveX, y: liveY };
 }
 function snapNode(g, o, x, y) { o.nodeSnap = { x, y, tick: g.tick | 0 }; }
+
+/* ---- 0x6f46: dva sloty hracu ---------------------------------------
+   `+56` (vozidlo) se zapisuje jen tady (`0x6f94`), takze slot 1 je vzdy
+   vrtulnik a slot 2 vzdy jeep - hrat jeepa samotneho jde pouze
+   pripojenim druheho slotu. `+66` je typ ovladace (dispatch `0x7184`),
+   `+60` odkaz na druhy slot, `+40` jmeno pro tabulku skore (`0x6fb0`
+   pred nej lepi `Lazy `). `0x7156` podle `+56` zaklada bud `0x9410`,
+   nebo `0x9090`; rodicovsky task `0x7090` je pro oba spolecny. */
+const PLAYER_SLOTS = [
+  { slot: 0, vehicle: 1, control: 1, name: "Heli", hud: "HELI" },
+  { slot: 1, vehicle: 0, control: 2, name: "Jeep", hud: "JEEP" },
+];
+
+const JEEP_FRAME = 23;          // 0x9096: gfx 0x2e00 = JEEPHELI#23
+const JEEP_SPEED = 640;         // 0x9118: +356 (vrtulnik ma 768)
+
+/* 0x94f0: vlastni clamp jeepu (vrtulnik ma 0x954c). Poradi je zavazne -
+   nejdriv strop `fp@(3558)`, teprve pak pas kamery:
+     0x9510  y >= fp@(3558)  ->  y = fp@(3558)
+     0x951e  y <  kamera+4   ->  y = kamera+4
+     0x952e  y >= kamera+252 ->  y = kamera+252
+   `fp@(3558)` je y posledni SWAP plosiny (`0xacac`/`0xacf8`); `0x1d6a`
+   ji inicializuje na -1, takze dokud zadna neprojela, nema ucinek. */
+function clampJeep(g, p) {
+  p.x = Math.max(4, Math.min(316, p.x));
+  if (Number.isFinite(g.jeepFloorY)) {
+    const limit = g.jeepFloorY - scrollTop(g);
+    if (p.y >= limit) p.y = limit;
+  }
+  p.y = Math.max(4, Math.min(252, p.y));
+}
+
+/* 0x9328: kolize jeepu s terenem se netestuje na aktualni poloze, ale
+   o krok dopredu - rychlost `+332/+336` se zdvojnasobi, priplacne k
+   `x/y`, sahne se na masku a zase odecte.
+
+   Nativne sahaji obe sondy do obrazovkoveho bufferu (`0x3dd4`, `fp@(161)`
+   = 0), ktery vedle terenu obsahuje i BOBy posledniho renderu - stejne
+   jako `0x9046`, ktery prepis uz deli na `heliTerrainBlocked` +
+   `heliBobBlocked`. Davka 1 zapojuje jen terenni polovinu; blokovani
+   BOBy nepratel je otevrene (viz docs/GAPS.md). */
+function jeepBlockedAhead(g, p, vx, vy) {
+  return heliTerrainBlocked(g, p.x + 2 * vx, p.y + 2 * vy, JEEP_FRAME);
+}
+
+/* 0x9314: rozmacknuti. `0x94f0` po clampu sahne na `0x3dd4` i `0x3dce`;
+   `0x3dce` je tataz sonda proti terennimu pasu, takze konjunkce je
+   dominovana terenem a modelujeme ji jim. */
+function jeepCrushed(g, p) {
+  return heliTerrainBlocked(g, p.x, p.y, JEEP_FRAME);
+}
+
+/* 0x7156 pro slot 2. Pripojeni stoji kredit stejne jako continue
+   (`0x702c`); dokud je join zavreny (`0x1dea`), nejde. */
+function tryJoinJeep(g) {
+  if (g.player2 || g.joinClosed || g.over) return false;
+  if (!g.keys2 || !g.keys2.f) return false;
+  if (remainingContinues(g) <= 0) return false;
+  g.continues--;
+  g.jeepLives = 4;                             // 0x7076 jako u continue
+  g.jeepScore = 0;
+  const pos = findPlayerRespawn(g, null);      // 0x9046, spolecny s heli
+  const p = {
+    x: pos.x, y: pos.y, ang: 0, alive: true,
+    // 0x90f6: vychozi uhel veze 192; vez sama je davka 3.
+    turret: 192,
+    inv: 200,                                  // 0x90ce: +108 = 200
+    cool: 0, rank: 0, volley: 0,
+    weapon: 1, tokenCount: 0, mode: 0, reload: 12,
+    respawnT: 0, weaponX: pos.x, weaponY: pos.y,
+    collisionEventWord: 0, collisionLethal: false,
+  };
+  applyWeaponTable(p);                         // 0x70c8
+  assignBobOrdinal(g, p);
+  g.player2 = p;
+  g.players = 2;
+  return true;
+}
+
+/* 0x9090 bez veze (`0x89e8`), skoku (`0x91e8`) a SWAP plosin - to jsou
+   davky 3 az 5. Poradi uvnitr tiku kopiruje telo korutiny: 0x94c2 a
+   0x94f0 jsou PRED nactenim vstupu (`0x911e`..`0x913e`). */
+function stepJeep(g) {
+  const p = g.player2;
+  if (!p || !p.alive) return;
+  incrementPlayerRank(p);                      // 0x70f6 pres 0x7090
+  clampJeep(g, p);                             // 0x94f0 pred vstupem
+  const nib = (g.keys2.u ? 1 : 0) | (g.keys2.d ? 2 : 0) |
+              (g.keys2.l ? 4 : 0) | (g.keys2.r ? 8 : 0);
+  const ja = JOY_ANGLE[nib];                   // 0x958a, tabulka 0x959e
+  if (ja >= 0) {
+    p.ang = ja;
+    const [vx, vy] = playerMoveVelocity(ja, JEEP_SPEED);
+    // 0x9254: kdyz je krok blokovany, rychlost se vynuluje (0x9260)
+    if (!jeepBlockedAhead(g, p, vx, vy)) { p.x += vx; p.y += vy; }
+  }
+  if (p.inv > 0) p.inv = Math.max(0, p.inv - 1);   // 0x92a0
+  if (jeepCrushed(g, p)) { killJeep(g); return; }
+  p.weaponX = p.x; p.weaponY = p.y;
+}
+
+/* 0x9306 pro slot 2: ochrana `+108` smrt blokuje. Respawn ceka stejnych
+   100 VBL jako u vrtulniku (`0x714e`). */
+function killJeep(g) {
+  const p = g.player2;
+  if (!p || !p.alive || p.inv > 0) return;
+  spawnPlayerBurst(g, p.x, p.y);               // 0x88fc
+  p.alive = false;
+  g.jeepLives = Math.max(0, (g.jeepLives | 0) - 1);
+  p.respawnT = g.jeepLives > 0 ? 100 : 0;
+}
+function respawnJeep(g) {
+  const p = g.player2;
+  if (!p) return;
+  const pos = findPlayerRespawn(g, p);
+  p.x = pos.x; p.y = pos.y; p.ang = 0; p.turret = 192;
+  p.weaponX = p.x; p.weaponY = p.y;
+  p.alive = true; p.inv = 200; p.cool = 0; p.respawnT = 0;
+  applyWeaponTable(p);
+}
 
 function step(g) {
   advanceTownSfxClock(g);                      // CIAB IRQ 0x4abc pred schedulerem
@@ -7696,6 +7863,12 @@ function step(g) {
   // Player task je v priority100 FIFO prvni. Event z collision sweepu N
   // proto zabije HELI pri resume N+1 jeste pred vstupem, pohybem a palbou.
   resumePlayerCollision(g);
+
+  // Slot 2 se pripojuje kdykoli behem hry (0x7156 zaklada 0x9090).
+  tryJoinJeep(g);
+  const j = g.player2;
+  if (j && !j.alive && (j.respawnT | 0) > 0 && --j.respawnT === 0)
+    respawnJeep(g);
 
   if (p.alive) {
     incrementPlayerRank(p);                    // player task pred enemy tasky
@@ -7778,6 +7951,8 @@ function step(g) {
     p.weaponX = p.x; p.weaponY = p.y;
     stepPlayerHeliAnim(p);
   }
+
+  stepJeep(g);                                 // 0x9090, slot 2
 
   // Ostatni tasky, ktere minuly VBL skoncily na 0x643a, provedou pred svym
   // dalsim coroutine krokem orphan/smart/event housekeeping. Snapshot brani

@@ -38,9 +38,17 @@ locally) and insert your `.adf`. Screens, 900+ sprite frames with
 selectable palettes, all seven levels assembled from the map data,
 a smooth fly-over mode, music metadata, and the file catalogue.
 
-**Playable transcription:** open `game.html` and insert the same ADF. The
+**Playable transcription:** open `game.html` and insert the same ADF, or
+play it at
+[smikes75.github.io/swiv-amiga-re/game.html](https://smikes75.github.io/swiv-amiga-re/game.html)
+— the page is static and the disk never leaves the browser. The
 native attract loop starts automatically; Space, Enter, Z or a click starts
-TOWN directly, while `L` opens the development level picker. The attract loop
+TOWN directly, while `L` opens the development level picker.
+Player 1 flies the helicopter with the arrows and Space; player 2 joins for
+a credit with WASD and Shift and drives the jeep (`0x9090`), which is
+transcribed as far as movement, its own clamp and terrain collision — the
+turret, the jump and the SWAP platforms are still to come, see
+[docs/PLAN-JEEP.md](docs/PLAN-JEEP.md). The attract loop
 uses the disk's COVER, Sales Curve credits, HELI/JEEP blueprints and score
 tables, FACES, embedded text, palettes, Copper gradients and fades, with
 `AMTITUNE.MOD` playing after the COVER fade.

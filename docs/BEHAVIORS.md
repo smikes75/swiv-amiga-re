@@ -645,6 +645,44 @@ sebrani jadra s uz aktivnim stitem (`0x98ec`).
 - dvojity tap smeru (`0x7246`) / druhe tlacitko je **skok jeepu**
   (`0x91e8`), vrtulniku se netyka
 
+### Hrac — jeep (`0x9090`, slot 2)
+
+Sloty zaklada `0x6f46`: `fp@(11176)` = Heli (`+56 = 1`, ovladac `+66 = 1`),
+`fp@(11356)` = Jeep (`+56 = 0`, ovladac 2). `+56` se zapisuje **jen tam**
+(`0x6f94`), takze jeep je vzdy slot 2. `+60` odkazuje na druhy slot, `+40`
+drzi jmeno do tabulky skore (`0x6fb0` pred nej lepi `Lazy `).
+
+- grafika `JEEPHELI#23` (`0x2e00` → `0x6d7c`), spawn spolecnym `0x9046`
+- `+108 = 200` ochrana, `+358 = 192` vychozi uhel veze, `+280 = 1`,
+  `+282 = 15`
+- **rychlost `+356 = 640`** = 2,5 px/t; smer ze stejne tabulky `0x959e`
+  pres `0x958a` jako vrtulnik, diagonala `181*640/65536`
+- clamp `0x94f0` (vrtulnik ma `0x954c`) v poradi: strop `fp@(3558)`,
+  pak `kamera+4`, pak `kamera+252`. `fp@(3558)` je y posledni SWAP
+  plosiny (`0xacac`/`0xacf8`), `0x1d6a` ji nastavuje na −1
+- kolize s terenem `0x9328`: rychlost `+332/+336` se zdvojnasobi,
+  priplacne k `x/y`, sahne na masku a zase odecte — tedy **pohled o krok
+  dopredu**, ne test aktualni polohy
+- rozmacknuti `0x9314`: po clampu blokuje `0x3dd4` i `0x3dce` → exploze
+  `0x88fc`. Jeep tedy umira i tim, ze ho scroll pritlaci k terenu
+- pasmo dopravniku `0x9172`: pri `fp@(154)` a `y` mezi `fp@(150)` a
+  `fp@(152)` odecita `fp@(-76)` od `+280` a spousti `0xad98`
+- SWAP handoff `0x90a0`: kdyz `fp@(3552) − fp@(3542) < 240`, jeep se
+  prenese na `fp@(3550)/(3552)` a nastavi `fp@(3548)`
+- vez je dite `0x89e8` (`0x6144`) a **otaci se**, narozdil od vrtulniku
+  se zamcenym smerem nahoru
+
+**Skok `0x91e8`** (bit 6 vstupu nebo vyprseni `+282`): `+504` zhasne bit 4
+a rozsviti bit 3 — ve vzduchu se meni kolizni trida a pozemni objekty
+jeep netrefi. `+356 = 896`, stoupani `+340 = 0x0001d000`, gravitace
+`+352 = −4096`; uhel veze `+358` se pres skok zachova (uklada se na
+zasobnik na `0x9228`, vraci na `0x9250`), zatimco rizeni smer meni.
+Dopad: `+340 = 0xa000`, `+352 = −4096`, `+504 |= 16`. Zvuk `0x4dc6`
+s `d0 = x`.
+
+Stav prepisu: davka 1 (slot, pohyb, clamp, kolize, rozmacknuti, HUD) je
+hotova, vez/skok/SWAP/dopravnik zbyvaji — viz [PLAN-JEEP](PLAN-JEEP.md).
+
 ### Kolizni tridy (`+504`) — kdo zabije vrtulnik
 
 `a2c6` d1 → `+504`; bit 5 = sestrelitelne (`+510` = `0xa362`), bit 1 =

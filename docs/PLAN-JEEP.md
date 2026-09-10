@@ -4,7 +4,7 @@ Posledni velka chybejici cast hry. Vrtulnik je hotovy, jeep existuje jen
 jako prazdna pulka HUD. Tenhle dokument shrnuje, co uz je zmerene v
 `work/prog.txt`, co presne chybi, a v jakych davkach to jde udelat.
 
-Stav k 2026-09-10: **nic z toho jeste neni naprogramovano.** Vse nize je
+Stav k 2026-09-10: **davka 1 hotova**, zbytek jeste ne. Vse nize je
 odecteno z disassembly, ne odhadnuto.
 
 ## 1. Jak original oddeluje oba hrace
@@ -76,7 +76,7 @@ Cela je citelna, konstanty jsou zmerene:
 
 | # | obsah | odhad |
 |---|---|---|
-| 1 | Druhy slot: `0x6f46` tabulka, `+56` dispatch v `0x7156`, pripojeni pres fire, HUD aktivni pulka | 1 den |
+| 1 | ~~Druhy slot: `0x6f46` tabulka, `+56` dispatch v `0x7156`, pripojeni pres fire, HUD aktivni pulka~~ **hotovo** | 1 den |
 | 2 | Korutina `0x9090`: pohyb po zemi, clamp `0x94f0`, kolize `0x9328`, rozmacknuti `0x9314` | 1–2 dny |
 | 3 | Vez `0x89e8` a strelba jeepu; kolizni trida bit 2 na vsech pozemnich objektech | 1 den |
 | 4 | Skok `0x91e8` vcetne zmeny kolizni tridy a gravitace | 0,5 dne |
@@ -90,3 +90,22 @@ Cela je citelna, konstanty jsou zmerene:
   Neni to otazka vernosti, ale ergonomie — rozhodne uzivatel.
 - **Kolizni trida bit 2.** `a2c6` d1 ji uz nese u vsech objektu, takze
   data mame; jde jen o to zapojit druhou vetev vyhodnoceni.
+
+## 6. Co presne je v davce 1
+
+- `PLAYER_SLOTS` podle `0x6f46` vcetne `+56`/`+66`/jmen
+- pripojeni slotu 2 na fire za kredit (`tryJoinJeep`), `g.players = 2`
+- aktivni prava pulka HUD pres spolecne `hudStatusTextFor`
+- jeep se rodi pres `0x9046`, **ale se zapnutym BOBem vrtulniku** -
+  `respawnBobField` skryva jen toho hrace, ktery se prave rodi. Diky tomu
+  jeep nevznikne na vrtulniku (zmereno: 160/152 proti 160/192)
+- pohyb tabulkou `0x959e` rychlosti `+356 = 640`: 2,5 px/t kardinalne,
+  181*640/65536 = 1,767578 px/t diagonalne (kontrakt v `tools/uitest.py`)
+- clamp `0x94f0` vcetne stropu `fp@(3558)` (`g.jeepFloorY`)
+- kolize `0x9328` pohledem o krok dopredu a rozmacknuti `0x9314`
+- smrt a respawn po 100 VBL, `g.jeepLives`
+- bonusy bosse `0xc9a2` uz pocitaji oba zijici hrace
+
+**Rozdeleni klaves** (neni v originale, ten ma dva joysticky): sipky +
+mezernik = slot 1, WASD + levy shift = slot 2. Dokud slot 2 nehraje,
+ovladaji WASD dal slot 1, aby se hrani o samote nezmenilo.
