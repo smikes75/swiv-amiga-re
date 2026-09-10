@@ -4,7 +4,7 @@ Posledni velka chybejici cast hry. Vrtulnik je hotovy, jeep existuje jen
 jako prazdna pulka HUD. Tenhle dokument shrnuje, co uz je zmerene v
 `work/prog.txt`, co presne chybi, a v jakych davkach to jde udelat.
 
-Stav k 2026-09-10: **davky 1-3 hotove**, zbytek jeste ne. Vse nize je
+Stav k 2026-09-10: **davky 1-4 hotove**, zbyvaji 5 a 6. Vse nize je
 odecteno z disassembly, ne odhadnuto.
 
 ## 1. Jak original oddeluje oba hrace
@@ -79,7 +79,7 @@ Cela je citelna, konstanty jsou zmerene:
 | 1 | ~~Druhy slot: `0x6f46` tabulka, `+56` dispatch v `0x7156`, pripojeni pres fire, HUD aktivni pulka~~ **hotovo** | 1 den |
 | 2 | ~~Korutina `0x9090`: pohyb po zemi, clamp `0x94f0`, kolize `0x9328`, rozmacknuti `0x9314`~~ **hotovo (soucast davky 1)** | 1–2 dny |
 | 3 | ~~Vez `0x89e8` a strelba jeepu; kolizni trida bit 2~~ **hotovo** | 1 den |
-| 4 | Skok `0x91e8` vcetne zmeny kolizni tridy a gravitace | 0,5 dne |
+| 4 | ~~Skok `0x91e8` vcetne zmeny kolizni tridy a gravitace~~ **hotovo** | 0,5 dne |
 | 5 | SWAP plosiny (`fp@(3548)`) a dopravnik (`0x9172`, `0xad98`) — dnes mrtve hooky | 0,5 dne |
 | 6 | Dva hraci naraz: skore, zivoty, respawn a continue na obou slotech | 1 den |
 
@@ -150,3 +150,27 @@ z bitu - kontakt resi vlastnimi hazardy.
 Sweep jeepu je zamerne SAMOSTATNY, aby cesta vrtulniku zustala presne ta,
 na ktere stoji `compare.py`. Vrtulnik proto porad pouziva svuj rucne
 overeny seznam chovani, ne tuhle tabulku.
+
+## 8. Co presne je v davce 4
+
+Skok se ukazal bohatsi, nez rikal puvodni rozpis:
+
+- **Automaticky spoustec.** `+282` neni jen timeout: `0x91c4` ho drzi na
+  15, dokud jeep NENI zablokovany. Kdyz do prekazky tlaci, `0x9136` ho
+  ubira a po patnacti ticich jeep sam vyskoci. Stani na miste dava 5
+  (`0x91a0`). Rucni skok je bit 6 vstupu.
+- **Prohozeni kolizni tridy, ne jen jeji vypnuti.** `+504` bit 4 -> bit 3
+  vymeni handler: `0x654c` da `+518` (udalost 1 = vzdusne objekty),
+  `0x6558` zpatky `+522` (udalost 2 = pozemni). Ve vzduchu tedy jeep
+  prehopne tank, ale muze do nej narazit letec.
+- **Vyska `+328`** se integruje v `0x62d2`: rychlost += zrychleni, pak
+  poloha += rychlost, a pri podteceni pod nulu se vsechny tri longy
+  vynuluji naraz. Zmereno: skok trva **58 tiku** a ma vrchol **27,3 px**.
+- **Chveni na zemi.** `0x9154` losuje jen DOLNI slovo `+340`, tedy
+  zlomek rychlosti, a drzi gravitaci. Jeep se tim chveje o 0 az ~4 px a
+  **spotrebovava jedno cteni PRNG za tik**. Protoze `z` posouva jen stin
+  (`0x6364`), je to videt jako poskakovani stinu pod vozem.
+
+Klavesa skoku je `q` (slot 2). U ovladace typu 2 ma i original
+samostatnou klavesu (`0x71ac` sklada bit 6 z `fp@(-28)`), u joysticku je
+to druhe tlacitko nebo dvojity tap smeru.

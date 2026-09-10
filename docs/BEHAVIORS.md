@@ -689,13 +689,33 @@ zaznamu LICHE tabulky i pro sudou silu (`0x8ae6` ji cte pred posunem,
 = 8..15. Vrtulnik jde toutez rutinou s uhlem 192, takze mu vzdy vyjde
 smer 6 a snimek 14.
 
-**Skok `0x91e8`** (bit 6 vstupu nebo vyprseni `+282`): `+504` zhasne bit 4
-a rozsviti bit 3 — ve vzduchu se meni kolizni trida a pozemni objekty
-jeep netrefi. `+356 = 896`, stoupani `+340 = 0x0001d000`, gravitace
+**Skok `0x91e8`.** Spousti ho bit 6 vstupu (druhe tlacitko / dvojity tap
+`0x7246`) **nebo podteceni citace `+282`**. Ten je klic k automatice:
+`0x91c4` ho drzi na 15, dokud jeep NENI zablokovany; kdyz do prekazky
+tlaci, `0x9136` ho kazdy tik ubira a po patnacti ticich jeep sam
+vyskoci a prehoupne se pres ni. Stani na miste jej nastavi na 5
+(`0x91a0`).
+
+`+504` zhasne bit 4 a rozsviti bit 3, cimz se **prohodi, ktery event
+jeep zabije**: `0x654c` instaluje `+518` (udalost 1 = vzdusne objekty),
+zatimco na zemi drzi `0x6558` slot `+522` (udalost 2 = pozemni). Ve
+vzduchu tedy jeep prehopne tank, ale muze do nej narazit letec.
+
+`+356 = 896` (3,5 px/t), stoupani `+340 = 0x0001d000`, gravitace
 `+352 = −4096`; uhel veze `+358` se pres skok zachova (uklada se na
 zasobnik na `0x9228`, vraci na `0x9250`), zatimco rizeni smer meni.
 Dopad: `+340 = 0xa000`, `+352 = −4096`, `+504 |= 16`. Zvuk `0x4dc6`
-s `d0 = x`.
+s `d0 = x`. Zmerena delka skoku je 58 tiku s vrcholem 27,3 px.
+
+**Vyska `+328` a chveni na zemi.** Integruje ji `0x62d2` (`0x62fe`..
+`0x6336`): rychlost se nejdriv zvysi o zrychleni, pak se pricte k poloze,
+a kdyz `+328` podtece pod nulu, vynuluji se vsechny tri longy naraz
+(`0x632c`) — to je dopad. Na zemi `0x9154` losuje DOLNI slovo `+340`,
+tedy jen zlomkovou cast rychlosti (`(rnd & 0x7fff) + 0x4000`), a drzi
+`+352` na −4096. Jeep se proto viditelne chveje na pruzinach (0 az ~4 px,
+podle losu) a **spotrebovava jedno cteni PRNG za tik**. Vzhledem k tomu,
+ze `z` posouva jen stin (`0x6364`), ne sprite, je to videt jako drobne
+poskakovani stinu — a ve skoku jako jeho odpojeni az o 27 px.
 
 Stav prepisu: davka 1 (slot, pohyb, clamp, kolize, rozmacknuti, HUD) je
 hotova, vez/skok/SWAP/dopravnik zbyvaji — viz [PLAN-JEEP](PLAN-JEEP.md).

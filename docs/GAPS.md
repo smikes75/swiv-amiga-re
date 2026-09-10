@@ -1032,7 +1032,7 @@ vypise souradnice prvnich dvanacti bodu mimo masku.
 Zmereno ve vsech sedmi zonach: mimo masku 0 az 1 px.
 
 
-## JEEP a slot 2 — DAVKY 1-3 HOTOVE (2026-09-10)
+## JEEP a slot 2 — DAVKY 1-4 HOTOVE (2026-09-10)
 
 Slot 2 se pripojuje, jeep jezdi. Rozpis vsech sesti davek je v
 [PLAN-JEEP](PLAN-JEEP.md). Otevrene po davce 1:
@@ -1113,3 +1113,18 @@ Cesta k nim je stejna jako u DESERTu, ale nejdriv musi baseline projet
 tovarnu - drzeny fire ji za 900 s neznicil (t=600 i t=900 stoji na tomtez
 radku). Bude to chtit bud skriptovany pohyb, nebo zapis do pameti
 emulatoru pres harness ve WASM.
+
+### Davka 4 (skok) — otevrene body
+
+- **Chveni na zemi cte PRNG kazdy tik** (`0x9154` -> `0x883c`). V
+  originale to znamena, ze dvouhracska hra ma JINY tok RNG nez sam
+  vrtulnik. Prepis to napodobuje, ale zadny kontrakt to nemeri -
+  compare.py bezi single-player, takze se to nikde neprojevi.
+- **Dvojity tap smeru** (`0x7246`) jako druha cesta ke skoku neni
+  modelovany; prepis ma jen samostatnou klavesu `q` (coz odpovida
+  ovladaci typu 2, `0x71ac`).
+- **Automaticky skok pri zablokovani** je zapojeny, ale kontrakt meri
+  jen rucni spousteni. Test pres skutecny teren by chtel najit blokujici
+  misto v mape.
+- **Ve vzduchu se hazardy neresi vubec** - sweep jeepu prepina na tridu
+  vzdusnych objektu, ale `proxfrag` v te vetvi nekontroluje.

@@ -217,10 +217,13 @@ an exact reuse pattern still needs scanline DMA-slot phase.
   so its ordering against other tasks created in the same VBL is unverified.
 - Nothing in the effect table is unhooked any more; what remains open is the
   exact CIA/beam phase behind the sub-millisecond onset differences already
-  listed above.
-- `AMHITUNE.MOD` is decoded and included in the effect-census tests, but no
-  runtime scene currently starts it or switches to it. Its native
-  high-score/post-game call site remains to be connected.
+  listed above. `0x4DC6` was the last routine still without a runtime caller,
+  and it turned out to belong to the jeep: `0x920A` fires it at the start of
+  the jump with `D0 = x`, so it pans with the vehicle.
+- `AMHITUNE.MOD` is connected: the post-game statistics screen `0x0DA2`
+  selects it through the engine's own `0x5EA` module switch when the score
+  reached the table (`0xF0C -> 0x3040` sets `fp@(10798) = 2`), and otherwise
+  returns to `AMTITUNE`.
 - GOOSE hit renders each IRQ rewrite as an atomic 24-byte scratch snapshot;
   exact in-place DMA/CPU overlap needs the original beam and Paula pointer
   phase.

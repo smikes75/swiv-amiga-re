@@ -6361,12 +6361,75 @@ def main():
                    trida["kontakt"]["zivoty"] == 3,
                    "pozemni objekt jeep nezabil: %r" % (trida["kontakt"],))
 
+            # ---- 0x91e8: skok jeepu ----------------------------------
+            skok = page.evaluate("""() => {
+              startGame(0);
+              const g = state.g;
+              for (let i = 0; i < 100; i++) step(g);
+              g.keys2.f = true; step(g); g.keys2.f = false;
+              const j = g.player2;
+              j.inv = 0;
+              // Na zemi drzi 0x9154 jeep na malem chveni z PRNG.
+              const zem = [];
+              for (let i = 0; i < 40; i++) { step(g); j.inv = 0; zem.push(j.z); }
+              const r = { zemMax: +Math.max(...zem).toFixed(2),
+                          zemMin: +Math.min(...zem).toFixed(2) };
+              // Skok: 0x9214 vz, 0x921c gravitace -> pevna delka i vrchol.
+              g.keys2.j = true; step(g); g.keys2.j = false;
+              r.vzletl = j.airborne;
+              const vysky = [];
+              let n = 0;
+              while (j.airborne && n < 300) {
+                step(g); j.inv = 0; vysky.push(j.z); n++;
+              }
+              r.tiku = n;
+              r.vrchol = +Math.max(...vysky).toFixed(2);
+              r.poDopadu = { airborne: j.airborne, z: j.z, jumpT: j.jumpT };
+              // 0x91ee: ve vzduchu jeep pozemni objekt NEzabije.
+              let zemni = null;
+              for (let i = 0; i < 3000 && !zemni; i++) {
+                step(g); j.inv = 0;
+                zemni = g.spawns.find(s => s.born && s.alive &&
+                                      classKillsJeep(s.beh) &&
+                                      !classIsAirborne(s.beh));
+              }
+              if (!zemni) return { ...r, nenasel: true };
+              g.jeepLives = 4;
+              g.keys2.j = true; step(g); g.keys2.j = false;
+              j.inv = 0;
+              zemni.x = j.x; zemni.y = j.y + scrollTop(g);
+              step(g); j.inv = 0; step(g);
+              r.veVzduchu = { beh: zemni.beh, airborne: j.airborne,
+                              zije: j.alive };
+              return r;
+            }""")
+            expect(skok["vzletl"], "bit 6 vstupu jeep nevyskocil")
+            # +340 = 0x1d000, +352 = -4096 -> 58 tiku a vrchol ~27,3 px
+            expect(skok["tiku"] == 58,
+                   "delka skoku %r tiku misto 58" % (skok["tiku"],))
+            expect(27.0 < skok["vrchol"] < 27.6,
+                   "vrchol skoku %r px" % (skok["vrchol"],))
+            expect(skok["poDopadu"]["airborne"] is False and
+                   skok["poDopadu"]["z"] == 0 and
+                   skok["poDopadu"]["jumpT"] == 15,
+                   "stav po dopadu: %r" % (skok["poDopadu"],))
+            # 0x9154: chveni na zemi je male a nikdy nejde pod nulu
+            expect(skok["zemMin"] == 0 and 0 < skok["zemMax"] < 6,
+                   "chveni na zemi %r..%r px" %
+                   (skok["zemMin"], skok["zemMax"]))
+            expect(not skok.get("nenasel"),
+                   "nenasel se pozemni objekt pro test kolizni tridy")
+            expect(skok["veVzduchu"]["airborne"] and
+                   skok["veVzduchu"]["zije"],
+                   "pozemni objekt zabil jeep ve vzduchu: %r" %
+                   (skok["veVzduchu"],))
+
             screenshot = os.environ.get("SWIV_UI_SCREENSHOT")
             if screenshot:
                 page.screenshot(path=screenshot)
             expect(not errors, "browser ohlasil chyby: " + "; ".join(errors[:6]))
             print("UI OK (%.1fs): %d dispatch zaznamu, %d CAMOGUN, "
-                  "%d novych zvukovych stavu, jeep + vez + trida 36, bez JS chyb" %
+                  "%d novych zvukovych stavu, jeep + vez + skok, bez JS chyb" %
                   (time.time() - started, summary["dispatch"],
                    summary["camoguns"],
                    zvuky["corn"][0] + zvuky["jet"][0] + zvuky["geyser"][0]))

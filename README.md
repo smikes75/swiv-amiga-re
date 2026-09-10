@@ -50,8 +50,13 @@ its own clamp, terrain collision, the rotating turret (`0x89e8`) with
 eight-direction fire from the engine's own tables, and the ground
 collision class that kills the jeep but not the helicopter. Holding fire
 locks the turret and lets you drive in another direction, exactly as
-`0x8a32` reads the raw button bit. The jump and the SWAP platforms are
-still to come, see [docs/PLAN-JEEP.md](docs/PLAN-JEEP.md). The attract loop
+`0x8a32` reads the raw button bit. Q jumps — and so does the jeep on its
+own after fifteen ticks of pushing against an obstacle, which is what the
+`+282` counter in `0x9136`/`0x91c4` is for. Jumping swaps the collision
+class rather than clearing it, so the jeep hops over a tank but can still
+be hit by something airborne. The SWAP platforms and the second slot's
+own scoring are still to come, see
+[docs/PLAN-JEEP.md](docs/PLAN-JEEP.md). The attract loop
 uses the disk's COVER, Sales Curve credits, HELI/JEEP blueprints and score
 tables, FACES, embedded text, palettes, Copper gradients and fades, with
 `AMTITUNE.MOD` playing after the COVER fade.

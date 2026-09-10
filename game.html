@@ -47,7 +47,7 @@ a { color:#cfe0ff }
   <a href="https://github.com/smikes75/swiv-amiga-re">repo</a>.</p>
   <p>Insert your own S.W.I.V. disk image (.adf). Nothing is uploaded.</p>
   <a class="btn" id="insert">&#128190; Insert disk</a>
-  <p><small>P1 heli: arrows + space &middot; P2 jeep: WASD + shift (joins for a credit) &middot; sound on first click</small></p>
+  <p><small>P1 heli: arrows + space &middot; P2 jeep: WASD + shift, Q jumps (joins for a credit) &middot; sound on first click</small></p>
 </div>
 
 <div id="titlewrap" style="display:none">
@@ -7551,14 +7551,17 @@ const KEYMAP = { ArrowLeft: "l", ArrowRight: "r", ArrowUp: "u", ArrowDown: "d",
 /* Original ma dva joysticky, prohlizec ne - rozdeleni klaves proto neni
    otazka vernosti. WASD + levy shift patri slotu 2; dokud se ale
    nepripoji, ovladaji stejne jako sipky slot 1, aby hrani o samote
-   zustalo, jak bylo. */
-const KEYMAP2 = { a: "l", d: "r", w: "u", s: "d", Shift: "f" };
+   zustalo, jak bylo. `q` je skok jeepu - u ovladace typu 2 ma i original
+   samostatnou klavesu (`0x71ac` sklada bit 6 z `fp@(-28)`), u joysticku
+   to je druhe tlacitko nebo dvojity tap smeru (`0x7246`). */
+const KEYMAP2 = { a: "l", d: "r", w: "u", s: "d", Shift: "f", q: "j" };
 function applyKey(g, e, down) {
   const k1 = KEYMAP[e.key];
   if (k1) { g.keys[k1] = down; return true; }
   const k2 = KEYMAP2[e.key] || KEYMAP2[e.key.toLowerCase()];
   if (!k2) return false;
   g.keys2[k2] = down;
+  if (k2 === "j") return true;                 // skok ma jen jeep
   // Dokud slot 2 nehraje, ovladaji WASD i slot 1. Uvolneni klavesy se ale
   // musi propsat vzdy: jinak by po pripojeni slotu 2 zustal slot 1
   // s drzenou klavesou a odjel sam (tataz past jako pri ztrate fokusu).
@@ -7818,6 +7821,7 @@ const A2C6_CLASS = {
   yellow: 34
 };
 function classKillsJeep(beh) { return ((A2C6_CLASS[beh] | 0) & 4) !== 0; }
+function classIsAirborne(beh) { return ((A2C6_CLASS[beh] | 0) & 2) !== 0; }
 
 const JEEP_FRAME = 23;          // 0x9096: gfx 0x2e00 = JEEPHELI#23
 const JEEP_SPEED = 640;         // 0x9118: +356 (vrtulnik ma 768)
@@ -7833,6 +7837,11 @@ const JEEP_TURRET_OFFSET = [[-7, 0], [-5, -5], [0, -7], [5, -5],
 /* 0x8a52: grafika veze je `JEEPHELI#9` posunuta o smer, tedy #9..#16
    v poradi vpravo, vpravo-dolu, dolu, ... jako `fireDirection`. */
 const JEEP_TURRET_FRAME = 9;
+const JEEP_JUMP_SPEED = 896;      // 0x920e: +356 ve skoku (3,5 px/t)
+const JEEP_JUMP_VZ = 0x0001d000 / 65536;   // 0x9214: pocatecni +340
+const JEEP_LAND_VZ = 0x0000a000 / 65536;   // 0x9274: odraz po dopadu
+const JEEP_GRAVITY = -4096 / 65536;        // 0x921c/0x916a: +352
+const JEEP_JUMP_HOLD = 15;        // 0x91e8/0x91c4: +282
 
 /* 0x94f0: vlastni clamp jeepu (vrtulnik ma 0x954c). Poradi je zavazne -
    nejdriv strop `fp@(3558)`, teprve pak pas kamery:
@@ -7883,7 +7892,8 @@ function tryJoinJeep(g) {
   const p = {
     x: pos.x, y: pos.y, ang: 0, alive: true,
     turret: 192,                               // 0x90f6 / 0x89e8
-    z: 0,                                      // 0x9046 nuluje +328
+    z: 0, vz: 0, az: 0,                        // 0x9046 nuluje +328
+    airborne: false, jumpT: 15,                // 0x90c4: +282 = 15
     inv: 200,                                  // 0x90ce: +108 = 200
     cool: 0, rank: 0, volley: 0,
     weapon: 1, tokenCount: 0, mode: 0, reload: 12,
@@ -7910,16 +7920,73 @@ function stepJeep(g) {
   const nib = (g.keys2.u ? 1 : 0) | (g.keys2.d ? 2 : 0) |
               (g.keys2.l ? 4 : 0) | (g.keys2.r ? 8 : 0);
   const ja = JOY_ANGLE[nib];                   // 0x958a, tabulka 0x959e
+
+  // 0x912e: bit 6 vstupu (druhe tlacitko / dvojity tap 0x7246) skoci
+  // hned. 0x9136: jinak se kazdy tik ubira z `+282` a pri podteceni
+  // skoci taky - citac ale `0x91c4` drzi na 15, dokud jeep NENI
+  // zablokovany. Tlacenim do prekazky tedy jeep po patnacti ticich
+  // sam vyskoci a prehoupne se pres ni.
+  if (!p.airborne && (g.keys2.j || (p.jumpT | 0) < 0)) startJeepJump(g, p);
+
+  const speed = p.airborne ? JEEP_JUMP_SPEED : JEEP_SPEED;
+  let blocked = false;
   if (ja >= 0) {
-    p.ang = ja;
-    const [vx, vy] = playerMoveVelocity(ja, JEEP_SPEED);
-    // 0x9254: kdyz je krok blokovany, rychlost se vynuluje (0x9260)
-    if (!jeepBlockedAhead(g, p, vx, vy)) { p.x += vx; p.y += vy; }
+    // 0x9228/0x9250: ve skoku se `+358` na dobu vypoctu rychlosti
+    // podstrci smer paky a pak se vrati - hlaven si tedy uhel drzi,
+    // zatimco rizeni meni smer letu.
+    if (!p.airborne) p.ang = ja;
+    const [vx, vy] = playerMoveVelocity(ja, speed);
+    blocked = jeepBlockedAhead(g, p, vx, vy);
+    if (!blocked) { p.x += vx; p.y += vy; }    // 0x9254 -> 0x9260
   }
+  if (!p.airborne) {
+    p.jumpT = blocked ? (p.jumpT | 0) - 1
+                      : (ja >= 0 ? JEEP_JUMP_HOLD : 5);   // 0x91c4 / 0x91a0
+  }
+  stepJeepAltitude(g, p);
   if (p.inv > 0) p.inv = Math.max(0, p.inv - 1);   // 0x92a0
-  if (jeepCrushed(g, p)) { killJeep(g); return; }
+  if (!p.airborne && jeepCrushed(g, p)) { killJeep(g); return; }
   stepJeepTurret(g, p, nib);
   p.weaponX = p.x; p.weaponY = p.y;
+}
+
+/* 0x91e8: zacatek skoku. `+504` zhasne bit 4 a rozsviti bit 3, cimz se
+   PROHODI, ktery event jeep zabije: `0x654c` instaluje `+518` (udalost 1
+   = vzdusne objekty), zatimco na zemi drzi `0x6558` slot `+522`
+   (udalost 2 = pozemni). Ve vzduchu tedy jeep prehopne tank, ale muze
+   narazit do letce. */
+function startJeepJump(g, p) {
+  p.airborne = true;
+  p.jumpT = JEEP_JUMP_HOLD;
+  p.vz = JEEP_JUMP_VZ;                         // 0x9214
+  p.az = JEEP_GRAVITY;                         // 0x921c
+  sfxPlayerTransition(g, p.x);                 // 0x920a -> 0x4dc6
+}
+
+/* Vyskove integrovani je `0x62d2` (0x62fe..0x6336): rychlost se nejdriv
+   zvysi o zrychleni, pak se pricte k poloze, a kdyz `+328` podtece pod
+   nulu, vynuluji se vsechny tri longy naraz (`0x632c`). Tim je dopad.
+
+   Na zemi `0x9154` losuje DOLNI slovo `+340`, tedy jen zlomkovou cast
+   rychlosti (`(rnd & 0x7fff) + 0x4000`), a drzi `+352` na −4096. Jeep se
+   proto viditelne chveje na pruzinach a spotrebovava jedno cteni PRNG
+   za tik. Nas prepis ma jeepa jen ve dvou hracich, takze se to na
+   single-player kontraktech neprojevi. */
+function stepJeepAltitude(g, p) {
+  if (!p.airborne && (p.z || 0) === 0) {       // 0x9154: tstl +328
+    p.vz = (((random32(g) & 0x7fff) + 0x4000) & 0xffff) / 65536;
+    p.az = JEEP_GRAVITY;
+  }
+  p.vz = (p.vz || 0) + (p.az || 0);            // 0x630c: rychlost += zrychleni
+  p.z = (p.z || 0) + p.vz;                     // 0x6312: poloha += rychlost
+  if (p.z < 0) {                               // 0x632a: podteceni = dopad
+    p.z = 0; p.vz = 0; p.az = 0;
+    if (p.airborne) {                          // 0x9274..0x9284
+      p.airborne = false;
+      p.vz = JEEP_LAND_VZ; p.az = JEEP_GRAVITY;
+      p.jumpT = JEEP_JUMP_HOLD;
+    }
+  }
 }
 
 /* 0x89e8: vez jeepu. `0x8a32` testuje bit 7 vstupu, coz je podle `0x7272`
@@ -10318,16 +10385,21 @@ function step(g) {
   const jp = g.player2;
   if (jp && jp.alive && !(jp.inv | 0)) {
     const jn = nodePos(g, jp, jp.x, jp.y);
+    // 0x91ee/0x9284: ve skoku se `+504` prehodi z bitu 4 na bit 3, cimz
+    // se vymeni i handler - `0x654c` da `+518` (udalost 1, vzdusne),
+    // `0x6558` zpatky `+522` (udalost 2, pozemni). Jeep tedy prehopne
+    // tank, ale ve vzduchu ho muze srazit letec.
+    const zabiji = jp.airborne ? classIsAirborne : classKillsJeep;
     let hit = null;
     for (const s of g.spawns) {
-      if (!s.born || !s.alive || !classKillsJeep(s.beh)) continue;
+      if (!s.born || !s.alive || !zabiji(s.beh)) continue;
       if (s.beh === "tank" && !s.tankSetup) continue;
       const sn = nodePos(g, s, s.x, s.y - scrollTop(g));
       if (nodesTouch(PLAYER_NODE, jn.x, jn.y, nodeExtent(s), sn.x, sn.y)) {
         hit = s.beh; break;
       }
     }
-    if (!hit) {
+    if (!hit && !jp.airborne) {
       for (const h of g.hazards) {
         if (!h.alive || h.kind !== "proxfrag") continue;
         const hn = nodePos(g, h, h.x, h.y - scrollTop(g));
