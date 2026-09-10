@@ -6738,19 +6738,65 @@ const CONGRAT_TEXT = 0x1058;
 function congratRaw(name) {
   return cloneIntroRaw(introRaw(name));
 }
+/* REACTOR animace prvni faze. Tri ulohy z 0x0f80:
+     0x13ea  staticky dil na (102, 126), z 1, REACTOR#13
+     0x134e  emitor na (99, 130), REACTOR#14; pres 0x137c vypusti dvacet
+             deti 0x1412 s rozestupem 6 VBL, pak 0x1398 raketu
+     0x1412  castice: y -= 22, pak jedna ze tri anim sad podle 0x2d62
+             (#27-30, #31-34, #35-38) a rychlost z tehoz generatoru
+     0x12d2  raketa: x += 1, y -= 3, z 2; anim 0x012F0 (#12 dolu na #1,
+             perioda 2), pak 0x0131C (#0 nahoru na #12) a konec faze
+   Animacni sady jsou z docs/ANIMS.md (tools/animscan.py). */
+const REACTOR_PARTICLE_SETS = [[27, 28, 29, 30], [31, 32, 33, 34],
+                               [35, 36, 37, 38]];
+const REACTOR_ROCKET_DOWN = [12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1];
+const REACTOR_ROCKET_UP = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+
 function beginCongrat(g) {
   // 0xf50/0xf6c: CONGRAT2 s paletou 0x2abc, jeste pred fade z cerne.
-  g.congrat = { phase: "reactor", vbl: 0, raw: congratRaw("CONGRAT2.RAW") };
+  g.congrat = { phase: "reactor", vbl: 0, raw: congratRaw("CONGRAT2.RAW"),
+                parts: [], emitted: 0, rocket: null };
   sfxCongrat(g);                               // 0xf94 -> 0x51d4
+}
+function stepReactor(g, c) {
+  // 0x137c: dvacet deti s rozestupem 6 VBL
+  if (c.emitted < 20 && c.vbl % 6 === 0) {
+    const r = random32(g);
+    c.parts.push({ x: 99 + (((r >>> 8) & 31) - 16), y: 130,
+                   vx: (((r >>> 16) & 31) - 16) / 16,
+                   set: REACTOR_PARTICLE_SETS[r % 3],
+                   pos: 0, at: 0, t: 0 });
+    c.emitted++;
+  }
+  for (const p of c.parts) {
+    p.y -= 22 / 16;                            // 0x1412: y -= 22 za dobu zivota
+    p.x += p.vx;
+    if (++p.at >= 3) { p.at = 0; p.pos = (p.pos + 1) % p.set.length; }
+    p.t++;
+  }
+  c.parts = c.parts.filter(p => p.t < 70 && p.y > -8);
+  // 0x1398: raketa startuje az po vsech dvaceti
+  if (c.emitted >= 20 && !c.rocket && c.vbl > 20 * 6)
+    c.rocket = { x: 99, y: 130, seq: REACTOR_ROCKET_DOWN, pos: 0, at: 0,
+                 per: 2, up: false };
+  const k = c.rocket;
+  if (k) {
+    k.x += 1 / 16; k.y -= 3 / 16;              // 0x12d8/0x12dc
+    if (++k.at >= k.per) {
+      k.at = 0;
+      if (k.pos + 1 < k.seq.length) k.pos++;
+      else if (!k.up) { k.up = true; k.seq = REACTOR_ROCKET_UP;
+                        k.pos = 0; k.per = 6; }
+    }
+  }
 }
 function stepCongrat(g) {
   const c = g.congrat;
   if (!c || c.done) return;
   c.vbl++;
   if (c.phase === "reactor") {
-    // Nativne konci, az raketa 0x12d2 dobehne animaci a na 0x1346 nastavi
-    // fp@(12352). Bez prepsane animace drzime zmerenou delku jejiho
-    // skriptu: 20 deti po 6 VBL (0x137c) + 80 VBL rakety (0x139c).
+    stepReactor(g, c);
+    // 0x1346: fazi ukonci raketa, az dobehne svou animaci
     if (c.vbl >= 20 * 6 + 80) { c.phase = "white"; c.vbl = 0; }
   } else if (c.phase === "white") {
     // 0xfaa: plna bila, pak 0xfd2..0xfe8 fp@(11166) roste o 16 z 8 na 256.
@@ -6773,7 +6819,24 @@ function renderCongrat(ctx, g) {
   // 0xf90 je fade z cerne; v bile fazi je obraz naopak prosvicen.
   const black = c.phase === "reactor" ? Math.max(0, 256 - c.vbl * 16) : 0;
   if (!c.rgba) c.rgba = new Uint8ClampedArray(320 * 256 * 4);
-  colorizeAttractRaw(c.raw, palette, black, [], c.rgba);
+  // REACTOR se kresli do kopie indexu, aby se predloha neposkodila
+  let raw = c.raw;
+  if (c.phase === "reactor" && (c.parts.length || c.rocket)) {
+    if (!c.work || c.work.pixels.length !== c.raw.pixels.length)
+      c.work = { pixels: new Uint8Array(c.raw.pixels.length),
+                 paletteWords: c.raw.paletteWords, w: 320, h: 256 };
+    c.work.pixels.set(c.raw.pixels);
+    const put = (frame, x, y) => {
+      const spr = indexedFrameFor(state, "REACTOR.LIN", frame);
+      if (spr) blitIndexedCookie(c.work.pixels, 320, 256,
+                                 spr, Math.round(x), Math.round(y));
+    };
+    for (const p of c.parts) put(p.set[p.pos], p.x, p.y);
+    if (c.rocket) put(c.rocket.seq[c.rocket.pos], c.rocket.x, c.rocket.y);
+    put(13, 102, 126);                         // 0x13ea staticky dil
+    raw = c.work;
+  }
+  colorizeAttractRaw(raw, palette, black, [], c.rgba);
   ctx.putImageData(new ImageData(c.rgba, 320, 256), 0, 0);
 }
 

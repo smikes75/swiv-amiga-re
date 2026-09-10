@@ -695,8 +695,13 @@ a zvuk `0x51d4` (ctyri hlasy priority 127 na periodach 400, 480, 413 a 441;
 hlasitost je `citac >> 7`, takze nabiha velmi pomalu). Tim je **posledni
 nepripojeny zvuk ve hre pripojen**.
 
-**Zbyva REACTOR animace.** Nativne prvni fazi ukoncuje raketa `0x12d2`, ktera
-na `0x1346` nastavi `fp@(12352)`; do te doby bezi dva tasky:
+**REACTOR animace prepsana 2026-09-10.** Prvni faze uz neni staticky obrazek:
+reaktor (REACTOR#13 na 102,126), emitor, ktery po 6 VBL vypousti dvacet
+castic s nahodnou sadou snimku (#27-30, #31-34, #35-38 z `docs/ANIMS.md`), a
+raketa, ktera po nich startuje z (99,130), stoupá `x += 1/16, y -= 3/16` a
+prehraje `0x012F0` (#12 dolu na #1) a `0x0131C` (#0 nahoru na #12).
+
+Puvodni popis uloh (zustava jako reference):
 - `0x13ea` staticky dil na (102, 126), z 1, gfx `0x1a55`, `+367 |= 1`;
 - `0x134e` na (99, 130) s anim `0x1c55`, ktery pres `0x137c` vytvori dvacet
   deti `0x1412` s rozestupem 6 VBL, pak `0x1398` vypusti raketu `0x12d2`
