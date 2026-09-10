@@ -4,7 +4,7 @@ Posledni velka chybejici cast hry. Vrtulnik je hotovy, jeep existuje jen
 jako prazdna pulka HUD. Tenhle dokument shrnuje, co uz je zmerene v
 `work/prog.txt`, co presne chybi, a v jakych davkach to jde udelat.
 
-Stav k 2026-09-10: **davka 1 hotova**, zbytek jeste ne. Vse nize je
+Stav k 2026-09-10: **davky 1-3 hotove**, zbytek jeste ne. Vse nize je
 odecteno z disassembly, ne odhadnuto.
 
 ## 1. Jak original oddeluje oba hrace
@@ -77,8 +77,8 @@ Cela je citelna, konstanty jsou zmerene:
 | # | obsah | odhad |
 |---|---|---|
 | 1 | ~~Druhy slot: `0x6f46` tabulka, `+56` dispatch v `0x7156`, pripojeni pres fire, HUD aktivni pulka~~ **hotovo** | 1 den |
-| 2 | Korutina `0x9090`: pohyb po zemi, clamp `0x94f0`, kolize `0x9328`, rozmacknuti `0x9314` | 1–2 dny |
-| 3 | Vez `0x89e8` a strelba jeepu; kolizni trida bit 2 na vsech pozemnich objektech | 1 den |
+| 2 | ~~Korutina `0x9090`: pohyb po zemi, clamp `0x94f0`, kolize `0x9328`, rozmacknuti `0x9314`~~ **hotovo (soucast davky 1)** | 1–2 dny |
+| 3 | ~~Vez `0x89e8` a strelba jeepu; kolizni trida bit 2~~ **hotovo** | 1 den |
 | 4 | Skok `0x91e8` vcetne zmeny kolizni tridy a gravitace | 0,5 dne |
 | 5 | SWAP plosiny (`fp@(3548)`) a dopravnik (`0x9172`, `0xad98`) — dnes mrtve hooky | 0,5 dne |
 | 6 | Dva hraci naraz: skore, zivoty, respawn a continue na obou slotech | 1 den |
@@ -109,3 +109,44 @@ Cela je citelna, konstanty jsou zmerene:
 **Rozdeleni klaves** (neni v originale, ten ma dva joysticky): sipky +
 mezernik = slot 1, WASD + levy shift = slot 2. Dokud slot 2 nehraje,
 ovladaji WASD dal slot 1, aby se hrani o samote nezmenilo.
+
+## 7. Co presne je v davce 3
+
+**Vez `0x89e8`.** Vazane dite (`0x6144`, `+367 |= 13`), ktere `0x62d2`
+polohuje na rodice plus jeden krok vlastni rychlosti - `+332/+336` z
+tabulky `0x8a80` je tedy pevny ofset. Ofset miri OPACNE nez hlaven
+(zaklad vezicky vzadu), coz sedi se stredy snimku `JEEPHELI#9..#16`:
+#9 ma `ox -4` pri sirce 19 (hlaven doprava), #15 `oy -13` pri vysce 20
+(hlaven nahoru).
+
+Klicova mechanika je na `0x8a32`: testuje se **bit 7** vstupu, coz podle
+`0x7272` neni pulz palby, ale SYROVY stav tlacitka (bit 5 je az kadenci
+hradlovany pulz). S drzenou palbou se proto vez neotaci a jen strili;
+po pusteni zase sleduje paku. Kdyz je paka na stredu, vez si vezme uhel
+rodice (`0x8a3e`), tedy posledni smer jizdy.
+
+**Palba ve vsech osmi smerech.** `0x8b86` je osm smerovych podtabulek
+pro `0x8aa0`, kazda s peti zaznamy pro lichou silu a ctyrmi pro sudou;
+zaznam je `(vx, vy, dx, dy)`. Rezim `+104` pouzije rychlost sveho
+zaznamu, rezim 0 rychlost PRVNIHO zaznamu LICHE tabulky i pro sudou silu
+(`0x8ae6` ji cte pred posunem, `0x8b28` ji drzi po celou salvu). Snimek
+strely je `((d2 << 4) + 0x1001) >> 9`, tedy 8..15 podle smeru.
+
+Tabulka je vytezena z AMPROG.OBJ a **reprodukuje presne ty hodnoty, ktere
+v prepisu drive staly rucne opsane pro smer nahoru** (usti `(0,-8)`,
+`(-4,0)`, `(4,0)`, `(-8,8)`, `(8,8)`, spread `(0,-9)`, `(-1,-8)`, ...)
+i radial `0x8dd6`. Vrtulnik ted jde stejnou rutinou s uhlem zamcenym na
+192, takze mu z ni vzdy vyjde tentyz smer 6 a snimek 14.
+
+**Kolizni trida bit 2 (`+522`).** `a2c6` d1 → `+504`: bit 1 = vzdusny
+(zabije vrtulnik), bit 2 = pozemni (zabije jeep), bit 5 = sestrelitelne.
+Trida 34 ohrozuje jen vrtulnik, 36 jen jeep, 38 oba, 32 ani jednoho.
+Tabulka `A2C6_CLASS` ma 69 chovani, z toho 37 s bitem 2; sest chovani,
+u kterych se konzervativni parser zastavi na cili skoku, je docteno
+rucne z binarky (inst2 36, inst3 38, inst4turret 38, inst5 38, plat 36,
+tank 36). Trida `0x8000` (geyser, orb, piston, inst3emit) nema ani jeden
+z bitu - kontakt resi vlastnimi hazardy.
+
+Sweep jeepu je zamerne SAMOSTATNY, aby cesta vrtulniku zustala presne ta,
+na ktere stoji `compare.py`. Vrtulnik proto porad pouziva svuj rucne
+overeny seznam chovani, ne tuhle tabulku.

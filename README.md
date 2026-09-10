@@ -45,10 +45,13 @@ play it at
 native attract loop starts automatically; Space, Enter, Z or a click starts
 TOWN directly, while `L` opens the development level picker.
 Player 1 flies the helicopter with the arrows and Space; player 2 joins for
-a credit with WASD and Shift and drives the jeep (`0x9090`), which is
-transcribed as far as movement, its own clamp and terrain collision — the
-turret, the jump and the SWAP platforms are still to come, see
-[docs/PLAN-JEEP.md](docs/PLAN-JEEP.md). The attract loop
+a credit with WASD and Shift and drives the jeep (`0x9090`): movement,
+its own clamp, terrain collision, the rotating turret (`0x89e8`) with
+eight-direction fire from the engine's own tables, and the ground
+collision class that kills the jeep but not the helicopter. Holding fire
+locks the turret and lets you drive in another direction, exactly as
+`0x8a32` reads the raw button bit. The jump and the SWAP platforms are
+still to come, see [docs/PLAN-JEEP.md](docs/PLAN-JEEP.md). The attract loop
 uses the disk's COVER, Sales Curve credits, HELI/JEEP blueprints and score
 tables, FACES, embedded text, palettes, Copper gradients and fades, with
 `AMTITUNE.MOD` playing after the COVER fade.

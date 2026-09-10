@@ -2126,14 +2126,26 @@ function composeTownBobs(g, top) {
     // JEEPHELI#9..16 patri jeepu/lodi 0x89e8, nikoli vrtulniku 0x9410.
   }
 
-  // 0x9096: jeep je jediny snimek JEEPHELI#23, bez animatoru. Vez
-  // (JEEPHELI#9..16) kresli az jeji vlastni task 0x89e8 - davka 3.
+  // 0x9096: jeep je jediny snimek JEEPHELI#23, bez animatoru. `0x9046`
+  // nechava `+328` nulove a jeep si z nej nic nenastavi (vrtulnik ma
+  // 0x941a z = 32), takze jeep jezdi po zemi.
   const jp = g.player2;
-  if (jp && jp.alive)
-    bob("player2", "JEEPHELI.LIN", JEEP_FRAME, jp.x, jp.y, 32, {
+  if (jp && jp.alive) {
+    bob("player2", "JEEPHELI.LIN", JEEP_FRAME, jp.x, jp.y, jp.z | 0, {
       ordinal: jp.bobOrdinal,
       primaryOp: (jp.inv & 8) ? BOB_FILL_INDEX9 : null,
     });
+    // 0x89e8: vazane dite se stejnou polohou plus pevny ofset; bit 0
+    // v +367 mu bere vlastni stin, bit 2 mu dava blikani rodice.
+    const dir = fireDirection(jp.turret);
+    const [tx, ty] = JEEP_TURRET_OFFSET[dir];
+    bob("jeep-turret", "JEEPHELI.LIN", JEEP_TURRET_FRAME + dir,
+        jp.x + tx, jp.y + ty, jp.z | 0, {
+          ordinal: jp.turretOrdinal,
+          castShadow: false,
+          primaryOp: (jp.inv & 8) ? BOB_FILL_INDEX9 : null,
+        });
+  }
 
   // Scheduler tasky bezi v creation order. Pri shodnem depth key ale
   // 0x481a vlozi novejsi BOB pred starsi; proto nejdriv enqueueujeme
@@ -7125,6 +7137,78 @@ function resumePlayerCollision(g) {
   if (lethal && p.alive) killPlayer(g);
 }
 
+/* ---- 0x8aa0: palba hrace ve vsech osmi smerech ----------------------
+   `0x8b86` je osm smerovych podtabulek. Kazda ma pet zaznamu pro lichou
+   silu a ctyri pro sudou (`0x8af0` posune ukazatel o 40 B); zaznam je
+   `(vx, vy, dx, dy)` - rychlost strely a ofset usti.
+
+   Rezim `+104` (TOKEN typ 1) pouzije rychlost sveho zaznamu (`0x8b02`).
+   Rezim 0 pouzije rychlost PRVNIHO zaznamu LICHE tabulky i pro sudou
+   silu - `0x8ae6` ji cte jeste pred posunem a `0x8b28` pak prectenou
+   dvojici drzi po celou salvu.
+
+   Smer je `d2 = (uhel + 16) & 224`, tedy zaokrouhleni na osminu kruhu;
+   snimek strely je `((d2 << 4) + 0x1001) >> 9` = 8..15 podle smeru
+   (`0x8ac8`). Vrtulnik ma uhel zamceny na 192 (`0x939c`), takze u nej
+   z toho vzdy vyjde smer 6 a snimek 14 - presne ty hodnoty, ktere tu
+   drive stály rucne opsane.
+
+   Vygenerovano z AMPROG.OBJ; shoda s puvodnimi rucnimi tabulkami pro
+   smer nahoru i s radialem `0x8dd6` je overena. */
+const PLAYER_FIRE = [
+  // 0 = vpravo (uhel 0), snimek strely 8
+  { odd: [[9,0,8,0],[8,-1,0,-4],[8,1,0,4],[7,-2,-8,-8],[7,2,-8,8]],
+    even: [[8,-1,4,-2],[8,1,4,2],[7,-2,-4,-6],[7,2,-4,6]] },
+  // 1 = vpravo-dolu (uhel 32), snimek strely 9
+  { odd: [[6,6,6,6],[6,5,3,-3],[5,6,-3,3],[6,4,0,-12],[4,6,-12,0]],
+    even: [[6,5,5,2],[5,6,2,5],[6,4,2,-7],[4,6,-7,2]] },
+  // 2 = dolu (uhel 64), snimek strely 10
+  { odd: [[0,9,0,8],[-1,8,-4,0],[1,8,4,0],[-2,7,-8,-8],[2,7,8,-8]],
+    even: [[-1,8,-2,4],[1,8,2,4],[-2,7,-6,-4],[2,7,6,-4]] },
+  // 3 = vlevo-dolu (uhel 96), snimek strely 11
+  { odd: [[-6,6,-6,6],[-6,5,-3,-3],[-5,6,3,3],[-6,4,0,-12],[-4,6,12,0]],
+    even: [[-6,5,-5,2],[-5,6,-2,5],[-6,4,-2,-7],[-4,6,7,2]] },
+  // 4 = vlevo (uhel 128), snimek strely 12
+  { odd: [[-9,0,-8,0],[-8,-1,0,-4],[-8,1,0,4],[-7,-2,8,-8],[-7,2,8,8]],
+    even: [[-8,-1,-4,-2],[-8,1,-4,2],[-7,-2,4,-6],[-7,2,4,6]] },
+  // 5 = vlevo-nahoru (uhel 160), snimek strely 13
+  { odd: [[-6,-6,-6,-6],[-6,-5,-3,3],[-5,-6,3,-3],[-6,-4,0,12],[-4,-6,12,0]],
+    even: [[-6,-5,-5,-2],[-5,-6,-2,-5],[-6,-4,-2,7],[-4,-6,7,-2]] },
+  // 6 = nahoru (uhel 192), snimek strely 14
+  { odd: [[0,-9,0,-8],[-1,-8,-4,0],[1,-8,4,0],[-2,-7,-8,8],[2,-7,8,8]],
+    even: [[-1,-8,-2,-4],[1,-8,2,-4],[-2,-7,-6,4],[2,-7,6,4]] },
+  // 7 = vpravo-nahoru (uhel 224), snimek strely 15
+  { odd: [[6,-6,6,-6],[6,-5,3,3],[5,-6,-3,-3],[6,-4,0,12],[4,-6,-12,0]],
+    even: [[6,-5,5,-2],[5,-6,2,-5],[6,-4,2,7],[4,-6,-7,-2]] },
+];
+/* 0x8b52/0x8dd6: plna sila (`+100` > 5) je osmismerna a smer hrace
+   neresi. `(dx, dy, vx, vy, snimek)`. */
+const PLAYER_FIRE_RADIAL = [
+  [0, -4, 0, -9, 14], [-3, -3, -6, -6, 13],
+  [3, -3, 6, -6, 15], [-4, 0, -9, 0, 12],
+  [4, 0, 9, 0, 8], [-3, 3, -6, 6, 11],
+  [3, 3, 6, 6, 9], [0, 4, 0, 9, 10],
+];
+function fireDirection(ang) { return ((((ang | 0) + 16) & 224) >> 5) & 7; }
+function firePlayerWeapon(g, p, ang, ox, oy) {
+  const pow = Math.max(1, p.weapon | 0);
+  sfxPlayerFire(g, ox);                        // 0x8aa4 -> 0x4f3e, 1x/salva
+  if (pow > 5) {
+    for (const [dx, dy, vx, vy, frame] of PLAYER_FIRE_RADIAL)
+      spawnPlayerBullet(g, { x: ox + dx, y: oy + dy, vx, vy, frame });
+    return;
+  }
+  const dir = fireDirection(ang);
+  const set = PLAYER_FIRE[dir];
+  const frame = 8 + dir;                       // ((d2 << 4) + 0x1001) >> 9
+  const entries = (pow & 1 ? set.odd : set.even).slice(0, pow);
+  const straight = set.odd[0];                 // 0x8ae6 pred posunem
+  for (const [vx, vy, dx, dy] of entries) {
+    const [sx, sy] = p.mode === 1 ? [vx, vy] : [straight[0], straight[1]];
+    spawnPlayerBullet(g, { x: ox + dx, y: oy + dy, vx: sx, vy: sy, frame });
+  }
+}
+
 /* ---- start urovne: ozbrojeni mapovych objektu ----------------------
    `0x3596` cte zaznamy PAM a pro kazdy objektovy zaznam vola `0x3652`.
    Tam je v objektove vetvi na `0x3722` tento test:
@@ -7700,8 +7784,55 @@ const PLAYER_SLOTS = [
   { slot: 1, vehicle: 0, control: 2, name: "Jeep", hud: "JEEP" },
 ];
 
+/* ---- a2c6 d1 -> `+504`: kolizni trida ------------------------------
+   Bit 1 (2) = vzdusny objekt, dotek zabije VRTULNIK (`+514` = `0xa362`).
+   Bit 2 (4) = pozemni objekt, dotek zabije JEEP (`+522`).
+   Bit 5 (32) = sestrelitelne (`+510`).
+
+   Trida 34 tedy ohrozuje jen vrtulnik, 36 jen jeep, 38 oba a 32 ani
+   jednoho. Vytezeno z AMPROG.OBJ (`tools/a2c6check.py` cte tytez
+   registry); sest chovani, u kterych se konzervativni parser zastavi na
+   cili skoku, je docteno rucne: inst2 36, inst3 38, inst4turret 38,
+   inst5 38, plat 36, tank 36 (tank ma jeste vetev s 32).
+
+   Trida 0x8000 (geyser, orb, piston, inst3emit) nema ani jeden z bitu -
+   ty objekty resi kontakt vlastnimi hazardy. `trackzone` zadne `a2c6`
+   nema, proto v tabulce neni.
+
+   Vrtulnik svou stranu NEcte odsud: ma vlastni rucne overeny seznam
+   chovani, na kterem stoji kontrakt compare.py, a nema smysl ho ted
+   prepisovat. */
+const A2C6_CLASS = {
+  airmine: 34, airplane: 34, bird: 34, blackjet: 34, blinklight: 0,
+  bos: 34, boss: 0, bunny: 34, camogun: 36, corn: 36, dada: 34,
+  destrain: 36, diagun: 36, edge: 34, egg: 32, eggnest: 36, factory: 38,
+  fish: 34, flame: 36, flattank: 36, frog: 36, geyser: 32768, goose7: 34,
+  hover: 36, inst2: 36, inst2gun: 32, inst3: 38, inst3emit: 32768,
+  inst4boss: 32, inst4core: 38, inst4turret: 38, inst5: 38, jet0: 36,
+  jet1: 36, junhatch: 0, juntank: 36, lakegun: 36, lakesub: 36, mama: 34,
+  mill: 34, mine: 36, onerig: 34, orb: 32768, piston: 32768, plat: 36,
+  popup: 36, proxmine: 36, pyramid: 38, rig: 36, roto: 36, seaplane: 36,
+  ski: 36, skyeye: 34, skyeyea: 34, swappad: 0, swappad0: 0, tank: 36,
+  tap: 36, tilt: 34, tinytruck: 36, train: 36, trilo: 36, truck: 36,
+  vtol: 36, wave: 34, xevdrift: 34, xevplane: 36, xevswarm: 34,
+  yellow: 34
+};
+function classKillsJeep(beh) { return ((A2C6_CLASS[beh] | 0) & 4) !== 0; }
+
 const JEEP_FRAME = 23;          // 0x9096: gfx 0x2e00 = JEEPHELI#23
 const JEEP_SPEED = 640;         // 0x9118: +356 (vrtulnik ma 768)
+/* 0x8a80: ofset veze vuci jeepu podle smeru. Miri OPACNE nez hlaven -
+   zaklad vezicky sedi vzadu a hlaven pres nej prechazi dopredu, coz sedi
+   se stredy snimku #9..#16 (#9 ma ox -4 pri sirce 19, tedy hlaven
+   doprava; #15 ma oy -13 pri vysce 20, tedy hlaven nahoru).
+   Vez je vazane dite (`0x6144`, `+367 |= 13`): `0x62d2` zkopiruje polohu
+   rodice a integruje presne jeden krok teto "rychlosti", takze je to
+   pevny ofset. Bit 0 = bez vlastniho stinu, bit 2 = blika s rodicem. */
+const JEEP_TURRET_OFFSET = [[-7, 0], [-5, -5], [0, -7], [5, -5],
+                            [7, 0], [5, 5], [0, 7], [-5, 5]];
+/* 0x8a52: grafika veze je `JEEPHELI#9` posunuta o smer, tedy #9..#16
+   v poradi vpravo, vpravo-dolu, dolu, ... jako `fireDirection`. */
+const JEEP_TURRET_FRAME = 9;
 
 /* 0x94f0: vlastni clamp jeepu (vrtulnik ma 0x954c). Poradi je zavazne -
    nejdriv strop `fp@(3558)`, teprve pak pas kamery:
@@ -7751,8 +7882,8 @@ function tryJoinJeep(g) {
   const pos = findPlayerRespawn(g, null);      // 0x9046, spolecny s heli
   const p = {
     x: pos.x, y: pos.y, ang: 0, alive: true,
-    // 0x90f6: vychozi uhel veze 192; vez sama je davka 3.
-    turret: 192,
+    turret: 192,                               // 0x90f6 / 0x89e8
+    z: 0,                                      // 0x9046 nuluje +328
     inv: 200,                                  // 0x90ce: +108 = 200
     cool: 0, rank: 0, volley: 0,
     weapon: 1, tokenCount: 0, mode: 0, reload: 12,
@@ -7761,6 +7892,8 @@ function tryJoinJeep(g) {
   };
   applyWeaponTable(p);                         // 0x70c8
   assignBobOrdinal(g, p);
+  // Vez je samostatny task zalozeny hned za jeepem (0x90fc -> 0x6144).
+  p.turretOrdinal = assignBobOrdinal(g, {});
   g.player2 = p;
   g.players = 2;
   return true;
@@ -7785,7 +7918,35 @@ function stepJeep(g) {
   }
   if (p.inv > 0) p.inv = Math.max(0, p.inv - 1);   // 0x92a0
   if (jeepCrushed(g, p)) { killJeep(g); return; }
+  stepJeepTurret(g, p, nib);
   p.weaponX = p.x; p.weaponY = p.y;
+}
+
+/* 0x89e8: vez jeepu. `0x8a32` testuje bit 7 vstupu, coz je podle `0x7272`
+   SYROVY stav tlacitka palby (bit 5 je az kadenci hradlovany pulz).
+   S drzenou palbou se tedy vez NEOTACI a jen strili; po pusteni zase
+   sleduje paku. To je ta puvodni mechanika: zamkni si smer a jed jinam.
+
+   Kdyz je paka na stredu, vez si vezme uhel rodice (`0x8a3e`), tedy
+   posledni smer jizdy. Vysledek se zaokrouhli na osminu kruhu
+   (`(uhel + 16) & 224`, `0x8a46`). */
+function stepJeepTurret(g, p, nib) {
+  const fireHeld = !!g.keys2.f;
+  if (!fireHeld) {
+    const ja = JOY_ANGLE[nib];                 // 0x8a38 -> 0x958a
+    p.turret = ((ja >= 0 ? ja : (p.ang | 0)) + 16) & 224;
+  }
+  // 0x7278: kadence z `+98`; pri dvou hracich ji `0x728a` zdola omezi
+  // na 10, coz u jeepu plati vzdy (existuje jen ve dvojici).
+  const cad = Math.max(p.reload ?? 11, 10);
+  if (p.cool > 0) p.cool--;
+  if (fireHeld && p.cool <= 0) {
+    p.cool = cad;
+    p.volley = (p.volley || 0) + 1;
+    const [tx, ty] = JEEP_TURRET_OFFSET[fireDirection(p.turret)];
+    // 0x8aa0 cte polohu DITETE, tedy jeep + ofset veze.
+    firePlayerWeapon(g, p, p.turret, p.x + tx, p.y + ty);
+  }
 }
 
 /* 0x9306 pro slot 2: ochrana `+108` smrt blokuje. Respawn ceka stejnych
@@ -7916,37 +8077,10 @@ function step(g) {
     if (p.cool > 0) p.cool--;
     if (g.keys.f && p.cool <= 0) {
       p.cool = cad;
-      const EVEN = [[-2, -4], [2, -4], [-6, 4], [6, 4]];
-      const ODD = [[0, -8], [-4, 0], [4, 0], [-8, 8], [8, 8]];
       p.volley = (p.volley || 0) + 1;
       // 0x939c pali pred kopirovanim parentovy pozice: origin je snapshot
-      // z konce predchozi aktivace child tasku.
-      const ox = p.weaponX ?? p.x, oy = p.weaponY ?? p.y;
-      sfxPlayerFire(g, ox);                    // 0x8aa0 -> 0x4f3e, 1x/salva
-      if (pow > 5) {
-        // 0x8b52/0x8dd6: osmismerova plna sila v pevnem poradi.
-        const RADIAL = [
-          [0, -4, 0, -9, 14], [-3, -3, -6, -6, 13],
-          [3, -3, 6, -6, 15], [-4, 0, -9, 0, 12],
-          [4, 0, 9, 0, 8], [-3, 3, -6, 6, 11],
-          [3, 3, 6, 6, 9], [0, 4, 0, 9, 10],
-        ];
-        for (const [dx, dy, vx, vy, frame] of RADIAL)
-          spawnPlayerBullet(g, { x: ox + dx, y: oy + dy, vx, vy, frame });
-      } else {
-        const muzzles = (pow & 1 ? ODD : EVEN).slice(0, pow);
-        // TOKEN typ1 prepne 0x939c na spread skript: stejne usti, ale
-        // postupne dvojice leti (±1,-8) a (±2,-7). Stred zustava (0,-9).
-        const FAN = pow & 1
-          ? [[0, -9], [-1, -8], [1, -8], [-2, -7], [2, -7]]
-          : [[-1, -8], [1, -8], [-2, -7], [2, -7]];
-        for (let i = 0; i < muzzles.length; i++) {
-          const [dx, dy] = muzzles[i];
-          const [vx, vy] = p.mode === 1 ? FAN[i] : [0, -9];
-          spawnPlayerBullet(g, { x: ox + dx, y: oy + dy, vx, vy,
-                                 frame: 14 });
-        }
-      }
+      // z konce predchozi aktivace child tasku. Uhel je zamceny na 192.
+      firePlayerWeapon(g, p, 192, p.weaponX ?? p.x, p.weaponY ?? p.y);
     }
     p.weaponX = p.x; p.weaponY = p.y;
     stepPlayerHeliAnim(p);
@@ -10156,6 +10290,7 @@ function step(g) {
 
   // 0x6430: uzly pro pristi sweep = pozice publikovane v tomto fieldu.
   snapNode(g, p, p.x, p.y);
+  if (g.player2) snapNode(g, g.player2, g.player2.x, g.player2.y);
   for (const k of g.tokens) snapNode(g, k, k.x, k.y - scrollTop(g));
   for (const s of g.spawns) {
     snapNode(g, s, s.x, s.y - scrollTop(g));
@@ -10173,6 +10308,35 @@ function step(g) {
     queueTownCollisionEvent(p, TOWN_EVENT_PLAYER_CONTACT);
     p.collisionLethal = true;
     p.lethalSource = lethalSources.join(",");
+  }
+
+  /* `+522`: jeep zabiji objekty s bitem 2 kolizni tridy, tedy prave ty,
+     ktere vrtulniku neublizi (trida 36) plus obousmerna 38. Sweep je
+     samostatny, aby cesta vrtulniku zustala presne ta, na ktere stoji
+     compare.py. Strely nepratel a vzdusne objekty (trida 34) jeep
+     neohrozi; hazardy zatim jen `proxfrag` (strepy PROXMINE, trida 38). */
+  const jp = g.player2;
+  if (jp && jp.alive && !(jp.inv | 0)) {
+    const jn = nodePos(g, jp, jp.x, jp.y);
+    let hit = null;
+    for (const s of g.spawns) {
+      if (!s.born || !s.alive || !classKillsJeep(s.beh)) continue;
+      if (s.beh === "tank" && !s.tankSetup) continue;
+      const sn = nodePos(g, s, s.x, s.y - scrollTop(g));
+      if (nodesTouch(PLAYER_NODE, jn.x, jn.y, nodeExtent(s), sn.x, sn.y)) {
+        hit = s.beh; break;
+      }
+    }
+    if (!hit) {
+      for (const h of g.hazards) {
+        if (!h.alive || h.kind !== "proxfrag") continue;
+        const hn = nodePos(g, h, h.x, h.y - scrollTop(g));
+        if (nodesTouch(PLAYER_NODE, jn.x, jn.y, nodeExtent(h), hn.x, hn.y)) {
+          hit = h.kind; break;
+        }
+      }
+    }
+    if (hit) { jp.lethalSource = hit; killJeep(g); }
   }
 
   for (const bm of g.booms) bm.t++;

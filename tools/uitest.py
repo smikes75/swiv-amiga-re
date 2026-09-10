@@ -6262,12 +6262,111 @@ def main():
                    "diagonala jeepu neni 181*640/65536: %r" %
                    (jeep["diagonalne"],))
 
+            # ---- 0x89e8: vez jeepu -----------------------------------
+            vez = page.evaluate("""() => {
+              startGame(0);
+              const g = state.g;
+              for (let i = 0; i < 60; i++) step(g);
+              g.keys2.f = true; step(g); g.keys2.f = false;
+              const j = g.player2;
+              const r = { start: j.turret };
+              const otoc = klavesy => {
+                for (const k of klavesy) g.keys2[k] = true;
+                for (let i = 0; i < 3; i++) step(g);
+                for (const k of klavesy) g.keys2[k] = false;
+                return j.turret;
+              };
+              r.vpravo = otoc(["r"]);
+              // 0x8a32: s DRZENOU palbou se vez neotaci (bit 7 = syrovy
+              // stav tlacitka), jen strili.
+              g.keys2.f = true;
+              g.keys2.d = true;
+              for (let i = 0; i < 3; i++) step(g);
+              g.keys2.d = false; g.keys2.f = false;
+              r.zamcena = j.turret;
+              r.poPusteni = otoc(["d"]);
+              // Salva v danem smeru: snimek i rychlost z tabulky 0x8b86.
+              const salva = (klavesy, sila) => {
+                otoc(klavesy);
+                j.weapon = sila; j.mode = 0; j.cool = 0;
+                g.bullets.length = 0;
+                const y0 = j.y, x0 = j.x, s0 = scrollTop(g);
+                g.keys2.f = true; step(g); g.keys2.f = false;
+                const d = scrollTop(g) - s0;
+                return g.bullets.map(b => [
+                  Math.round(b.x - x0 - b.vx),
+                  Math.round(b.y - y0 - b.vy + d),
+                  b.vx, b.vy, b.frame]);
+              };
+              r.nahoru = salva(["u"], 1);
+              r.vpravoSalva = salva(["r"], 1);
+              r.dolu2 = salva(["d"], 2);
+              return r;
+            }""")
+            expect(vez["start"] == 192, "vychozi uhel veze: %r" % (vez["start"],))
+            expect(vez["vpravo"] == 0 and vez["poPusteni"] == 64,
+                   "vez nesleduje paku: %r" % (vez,))
+            expect(vez["zamcena"] == 0,
+                   "vez se otocila i s drzenou palbou: %r" % (vez["zamcena"],))
+            # 0x8a80 ofset veze + usti z 0x8b86; snimek ((d2<<4)+0x1001)>>9
+            expect(vez["nahoru"] == [[0, -1, 0, -9, 14]],
+                   "salva nahoru: %r" % (vez["nahoru"],))
+            expect(vez["vpravoSalva"] == [[1, 0, 9, 0, 8]],
+                   "salva vpravo: %r" % (vez["vpravoSalva"],))
+            expect(vez["dolu2"] == [[-2, -3, 0, 9, 10], [2, -3, 0, 9, 10]],
+                   "salva dolu pri sile 2: %r" % (vez["dolu2"],))
+
+            # ---- +522: kolizni trida bit 2 zabiji jeep ---------------
+            trida = page.evaluate("""() => {
+              startGame(0);
+              const g = state.g;
+              g.keys2.f = true; step(g); g.keys2.f = false;
+              const j = g.player2;
+              const hodnoty = Object.values(A2C6_CLASS);
+              const r = {
+                pocet: hodnoty.length,
+                sBitem2: hodnoty.filter(v => v & 4).length,
+                sady: [...new Set(hodnoty)].sort((a, b) => a - b),
+                train: classKillsJeep("train"),      // 36 = jen jeep
+                bird: classKillsJeep("bird"),        // 34 = jen vrtulnik
+                factory: classKillsJeep("factory"),  // 38 = oba
+                egg: classKillsJeep("egg"),          // 32 = ani jeden
+              };
+              // dynamicky: pozemni objekt polozeny na jeep ho zabije
+              let zem = null;
+              for (let i = 0; i < 3000 && !zem; i++) {
+                step(g); j.inv = 0;
+                zem = g.spawns.find(s => s.born && s.alive &&
+                                    classKillsJeep(s.beh));
+              }
+              if (!zem) return { ...r, nenasel: true };
+              g.jeepLives = 4;
+              zem.x = j.x; zem.y = j.y + scrollTop(g); j.inv = 0;
+              step(g); j.inv = 0; step(g);
+              return { ...r, kontakt: { beh: zem.beh, zije: j.alive,
+                                        zdroj: j.lethalSource,
+                                        zivoty: g.jeepLives } };
+            }""")
+            expect(trida["pocet"] == 69 and trida["sBitem2"] == 37,
+                   "tabulka trid: %d chovani, %d s bitem 2" %
+                   (trida["pocet"], trida["sBitem2"]))
+            expect(trida["sady"] == [0, 32, 34, 36, 38, 32768],
+                   "neocekavane hodnoty tridy: %r" % (trida["sady"],))
+            expect(trida["train"] and not trida["bird"] and
+                   trida["factory"] and not trida["egg"],
+                   "bit 2 rozlisuje spatne: %r" % (trida,))
+            expect(not trida.get("nenasel"),
+                   "za 3000 tiku se nenarodil zadny pozemni objekt")
+            expect(trida["kontakt"]["zije"] is False and
+                   trida["kontakt"]["zivoty"] == 3,
+                   "pozemni objekt jeep nezabil: %r" % (trida["kontakt"],))
+
             screenshot = os.environ.get("SWIV_UI_SCREENSHOT")
             if screenshot:
                 page.screenshot(path=screenshot)
             expect(not errors, "browser ohlasil chyby: " + "; ".join(errors[:6]))
             print("UI OK (%.1fs): %d dispatch zaznamu, %d CAMOGUN, "
-                  "%d novych zvukovych stavu, jeep 2,5 px/t, bez JS chyb" %
+                  "%d novych zvukovych stavu, jeep + vez + trida 36, bez JS chyb" %
                   (time.time() - started, summary["dispatch"],
                    summary["camoguns"],
                    zvuky["corn"][0] + zvuky["jet"][0] + zvuky["geyser"][0]))

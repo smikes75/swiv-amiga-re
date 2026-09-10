@@ -672,6 +672,23 @@ drzi jmeno do tabulky skore (`0x6fb0` pred nej lepi `Lazy `).
 - vez je dite `0x89e8` (`0x6144`) a **otaci se**, narozdil od vrtulniku
   se zamcenym smerem nahoru
 
+**Vez `0x89e8`.** Vazane dite (`+367 |= 13`), ktere `0x62d2` polohuje na
+rodice plus jeden krok vlastni rychlosti; `+332/+336` z tabulky `0x8a80`
+je tedy pevny ofset a miri OPACNE nez hlaven (zaklad vezicky vzadu).
+Grafika je `JEEPHELI#9` + smer (`0x8a52`), tedy #9..#16 v poradi vpravo,
+vpravo-dolu, dolu, ... `0x8a32` testuje **bit 7** vstupu, coz je podle
+`0x7272` SYROVY stav tlacitka palby (bit 5 je az kadenci hradlovany
+pulz): s drzenou palbou se vez neotaci a jen strili, po pusteni zase
+sleduje paku. Na stredu paky prebira uhel rodice (`0x8a3e`).
+
+**Palba `0x8aa0` ma osm smeru.** `0x8b86` je osm podtabulek, kazda pet
+zaznamu pro lichou silu a ctyri pro sudou; zaznam `(vx, vy, dx, dy)`.
+Rezim `+104` pouzije rychlost sveho zaznamu, rezim 0 rychlost prvniho
+zaznamu LICHE tabulky i pro sudou silu (`0x8ae6` ji cte pred posunem,
+`0x8b28` ji drzi po celou salvu). Snimek strely `((d2 << 4) + 0x1001) >> 9`
+= 8..15. Vrtulnik jde toutez rutinou s uhlem 192, takze mu vzdy vyjde
+smer 6 a snimek 14.
+
 **Skok `0x91e8`** (bit 6 vstupu nebo vyprseni `+282`): `+504` zhasne bit 4
 a rozsviti bit 3 — ve vzduchu se meni kolizni trida a pozemni objekty
 jeep netrefi. `+356 = 896`, stoupani `+340 = 0x0001d000`, gravitace

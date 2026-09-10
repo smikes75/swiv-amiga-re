@@ -1032,7 +1032,7 @@ vypise souradnice prvnich dvanacti bodu mimo masku.
 Zmereno ve vsech sedmi zonach: mimo masku 0 az 1 px.
 
 
-## JEEP a slot 2 — DAVKA 1 HOTOVA (2026-09-10)
+## JEEP a slot 2 — DAVKY 1-3 HOTOVE (2026-09-10)
 
 Slot 2 se pripojuje, jeep jezdi. Rozpis vsech sesti davek je v
 [PLAN-JEEP](PLAN-JEEP.md). Otevrene po davce 1:
@@ -1051,7 +1051,16 @@ Slot 2 se pripojuje, jeep jezdi. Rozpis vsech sesti davek je v
   plni SWAP plosiny (`0xacac`, `0xacf8`); to je davka 5.
 - **Skore a zivoty slotu 2** jsou zatim jen `g.jeepScore`/`g.jeepLives`
   bez vlastniho `nextLife` a bez `0x7116`. Davka 6.
-- **Vez `0x89e8`** (JEEPHELI#9..16) se nekresli ani nestrili. Davka 3.
+- ~~**Vez `0x89e8`** (JEEPHELI#9..16) se nekresli ani nestrili.~~ Hotovo
+  v davce 3 vcetne osmismerove palby z tabulky `0x8b86` a kolizni tridy
+  bit 2 (`A2C6_CLASS`, 69 chovani, 37 s bitem 2).
+- **Hazardy proti jeepu** jsou zapojene jen castecne: sweep jeepu zna
+  `proxfrag` (strepy PROXMINE, trida 38), ale ne dalsi kinds. Objekty
+  tridy `0x8000` (geyser, orb, piston, inst3emit) resi kontakt vlastnimi
+  hazardy, takze jeep jimi zatim projede.
+- **Vrtulnik `A2C6_CLASS` necte.** Ma vlastni rucne overeny seznam
+  chovani, na kterem stoji `compare.py`; sjednotit ho s bitem 1 tridy by
+  bylo hezke, ale je to zmena v overene ceste a chce vlastni mereni.
 
 
 ## Porovnani s originalem: 4 -> 8 checkpointu, prvni mimo TOWN (2026-09-10)
