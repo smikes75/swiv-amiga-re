@@ -90,16 +90,52 @@ CHECKPOINTS = {
     "respawn": {"t": 23, "row": 3151, "floor": 99.5, "ticks": 390,
                 "vblBase": 186,
                 "fodder": [{"x": 257, "vx": -0.8125}, {"x": 195, "vx": 0.7}]},
+    # Dalsi tri okamziky TOWN. `ticks` a `row` nasel `tools/align.py`
+    # strojove; row sedi na vzorec 3249 - ceil(T/4) u vsech tri, coz je
+    # nezavisla kontrola, ze zarovnani naslo skutecny posun a ne sum.
+    # Shoda je nizsi nez u prvnich ctyr, protoze RNG originalu nezname a
+    # `fodder` popisuje jen prvni dve vlny - vsechno dalsi, co se rodi
+    # losovanim, lezi jinde. Zarazka proto hlida hlavne teren a HUD.
+    "t26": {"t": 26, "row": 3118, "floor": 93.9, "ticks": 521,
+            "vblBase": 186,
+            "fodder": [{"x": 257, "vx": -0.8125}, {"x": 195, "vx": 0.7}]},
+    "t28": {"t": 28, "row": 3092, "floor": 96.6, "ticks": 627,
+            "vblBase": 186,
+            "fodder": [{"x": 257, "vx": -0.8125}, {"x": 195, "vx": 0.7}]},
+    "t30": {"t": 30, "row": 3066, "floor": 94.7, "ticks": 729,
+            "vblBase": 186,
+            "fodder": [{"x": 257, "vx": -0.8125}, {"x": 195, "vx": 0.7}]},
+    # PRVNI CHECKPOINT MIMO TOWN. Do DESERTu se baseline dostane jen
+    # s UNLIMITED LIVES a DRZENYM FIRE (bez palby hrac nic nezniici);
+    # snimky t=600 i t=900 ukazuji tuze scenu, protoze mapa u tovarny
+    # INST1 stoji - `0x3cbe` scrolluje jen pri `fp@(166) == 0` a bit 3
+    # drzi zivá instalace.
+    #
+    # Prepis se sem nedostane casem, ale VLASTNIM behem: `startGame(1)`
+    # bez vstupu a cekani, az `g.scrollHeld`. Zastavi se na radku 20663 -
+    # presne tam, kde stejny radek nasel nezavisle `tools/align.py`
+    # hledanim v obraze originalu. To je hlavni vysledek checkpointu:
+    # model zamku scrollu sedi na radek.
+    #
+    # Zbytek rozdilu je STAV, ne vykreslovani: original uz devet stovek
+    # sekund hraje, takze ma jine skore, jine zive objekty a explozi
+    # navic. Teren i grafika tovarny v diffu sedi.
+    "desert": {"t": 900, "prefix": "deep", "floor": 95.4,
+               "env": {"SWIV_BASELINE_UNLIMITED_LIVES": "1",
+                       "SWIV_BASELINE_HOLD_FIRE": "1"},
+               "level": 1, "untilLock": True, "extraTicks": 300,
+               "row": 20663},
 }
 
 
-def original_frame(t):
-    raw = os.path.join(CACHE, f"orig_t{t}.raw")
+def original_frame(t, prefix="orig", env=None):
+    raw = os.path.join(CACHE, f"{prefix}_t{t}.raw")
     if not os.path.exists(raw):
         os.makedirs(CACHE, exist_ok=True)
         subprocess.run([os.path.join(ROOT, "tools", "baseline.sh"),
-                        os.path.join(CACHE, "orig"), str(t)],
-                       check=True, capture_output=True)
+                        os.path.join(CACHE, prefix), str(t)],
+                       check=True, capture_output=True,
+                       env={**os.environ, **(env or {})})
     from PIL import Image
     with open(raw, "rb") as source:
         data = source.read()
@@ -133,9 +169,9 @@ def remake_frames(checkpoint):
             page.keyboard.press(" ")
             page.wait_for_selector("#gamewrap", state="visible")
             encoded = page.evaluate("""(cp) => {
-              // Cerstvy start TOWN a `ticks` kroku bez vstupu; tape-zavisle
+              // Cerstvy start urovne a kroky bez vstupu; tape-zavisle
               // vstupy (faze VBL citace, RNG prvni vlny) dodava checkpoint.
-              startGame(0);
+              startGame(cp.level | 0);
               const g = state.g, p = g.player;
               g.scrollMul = 1;
               g.vblBase = cp.vblBase | 0;
@@ -146,10 +182,27 @@ def remake_frames(checkpoint):
                   return { x: f.x, vx: f.vx };
                 };
               }
-              for (let i = 0; i < cp.ticks; i++) step(g);
-              // radek je v souradnicich prvni mapy (nad ni jsou dalsi zony)
-              if (Math.floor(g.scroll) - (g.rowOffset | 0) !== cp.row)
-                throw new Error("scroll " + g.scroll + " != row " + cp.row);
+              if (cp.untilLock) {
+                // Baseline bezi s UNLIMITED LIVES; bez toho by prepis
+                // skoncil driv, nez k tovarne vubec dojede.
+                const keepAlive = () => { if (g.lives < 9999) g.lives = 9999; };
+                keepAlive();
+                let i = 0;
+                for (; i < 40000 && !g.scrollHeld; i++) { step(g); keepAlive(); }
+                if (!g.scrollHeld)
+                  throw new Error("scroll se nezastavil ani po " + i + " ticich");
+                for (let k = 0; k < (cp.extraTicks | 0); k++) {
+                  step(g); keepAlive();
+                }
+                if (Math.floor(g.scroll) !== cp.row)
+                  throw new Error("zamek na radku " + Math.floor(g.scroll) +
+                                  " != " + cp.row);
+              } else {
+                for (let i = 0; i < cp.ticks; i++) step(g);
+                // radek je v souradnicich prvni mapy (nad ni dalsi zony)
+                if (Math.floor(g.scroll) - (g.rowOffset | 0) !== cp.row)
+                  throw new Error("scroll " + g.scroll + " != row " + cp.row);
+              }
 
               const canvas = document.querySelector('#game');
               const now = performance.now();
@@ -170,8 +223,14 @@ def remake_frames(checkpoint):
               p.alive = false;
               const withoutHeli = render();
 
-              const hudKey = hudStatusText(g) + '\\0PRESS FIRE';
-              g.hudPlaneKey = hudKey;
+              // Klic musi odpovidat tomu, co prave vraci hudTextsForGame:
+              // neaktivni pulka se po 128 VBL prepina mezi promptem a
+              // statusem, takze natvrdo psane 'PRESS FIRE' sedelo jen na
+              // checkpointech t17/t19/t23. Jinde se prazdna plane
+              // nepouzila, HUD se neodmaskoval a jeho pixely spadly do
+              // 'terrain' - maska HUD pak vysla nulova.
+              const texts = hudTextsForGame(g);
+              g.hudPlaneKey = texts.left + '\\0' + texts.right;
               g.hudPlane = {
                 bytes: new Uint8Array(HUD_STRIDE * HUD_ROWS),
                 leftWidth: 0, rightWidth: 0, rightX: 0,
@@ -256,7 +315,9 @@ def main():
     failed = False
     for name in names:
         checkpoint = CHECKPOINTS[name]
-        original = original_frame(checkpoint["t"])
+        original = original_frame(checkpoint["t"],
+                                  checkpoint.get("prefix", "orig"),
+                                  checkpoint.get("env"))
         frames = remake_frames(checkpoint)
         masks = region_masks(frames)
         scores = {
@@ -276,8 +337,13 @@ def main():
         floor = checkpoint["floor"]
         ok = floor is None or scores["whole"] >= floor
         status = "OK" if ok else "POD PRAHEM"
-        print(f"{name}: t={checkpoint['t']}, row={checkpoint['row']}, "
-              f"ticks={checkpoint['ticks']}")
+        if checkpoint.get("untilLock"):
+            print(f"{name}: uroven {checkpoint['level']}, original t="
+                  f"{checkpoint['t']} s, zamek scrollu na radku "
+                  f"{checkpoint['row']}")
+        else:
+            print(f"{name}: t={checkpoint['t']}, row={checkpoint['row']}, "
+                  f"ticks={checkpoint['ticks']}")
         print(f"  whole:   {scores['whole']:6.1f} %  "
               f"ratchet >= {floor}  [{status}]")
         print(f"  terrain: {scores['terrain']:6.1f} %  "

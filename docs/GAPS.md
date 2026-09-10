@@ -1052,3 +1052,55 @@ Slot 2 se pripojuje, jeep jezdi. Rozpis vsech sesti davek je v
 - **Skore a zivoty slotu 2** jsou zatim jen `g.jeepScore`/`g.jeepLives`
   bez vlastniho `nextLife` a bez `0x7116`. Davka 6.
 - **Vez `0x89e8`** (JEEPHELI#9..16) se nekresli ani nestrili. Davka 3.
+
+
+## Porovnani s originalem: 4 -> 8 checkpointu, prvni mimo TOWN (2026-09-10)
+
+Do 2026-09-10 mel `tools/compare.py` **ctyri** checkpointy, vsechny v TOWN
+a vsechny v prvnich 23 sekundach. Duvod nebyl principialni: kazdy z nich
+se rucne zarovnaval na radek mapy, takze pridani dalsiho stalo praci.
+
+**`tools/align.py`** to dela strojove. Ma dva rezimy:
+
+1. `align.py 26 28 30` - hleda `ticks` a `row` pro snimek baseline. V
+   jednom prubehu prohlizece dojede na spodni okraj okna kandidatu a pak
+   po jednom tiku renderuje, takze cena je O(tiku + rozsah).
+2. `align.py --snimek X.raw --uroven N` - hleda RADEK. Pouziva se na
+   zony, kam se baseline dostane jen dlouhym behem a kde tedy neplati
+   zadny vzorec cas -> tik. Sken je dvoufazovy (po 16 radcich, pak po
+   jednom) na mrizce kazdeho tretiho pixelu.
+
+**Tri nove TOWN checkpointy** (t26/t28/t30, snimky uz byly v cache a nikdo
+je nezapojil): 94,1 / 96,7 / 94,8 %. Nizsi nez prvni ctyri, protoze RNG
+originalu nezname a `fodder` popisuje jen prvni dve vlny; v `diff_t26.png`
+je videt, ze rozdil ma tvar nepratelskych formaci, ne terenu. Nezavisla
+kontrola zarovnani: u vsech tri sedi `row` na vzorec `3249 - ceil(T/4)`.
+
+**`desert` - prvni checkpoint mimo TOWN.** Baseline se do DESERTu dostane
+jen s `SWIV_BASELINE_UNLIMITED_LIVES=1` a novym `SWIV_BASELINE_HOLD_FIRE=1`
+(bez palby hrac nic nezniici). Snimky t=600 i t=900 ukazuji tutez scenu,
+protoze mapa u tovarny INST1 stoji.
+
+Prepis se tam nedostane casem, ale vlastnim behem: `startGame(1)` bez
+vstupu, dokud `g.scrollHeld`. **Zastavi se na radku 20663 - presne tam,
+kde tentyz radek nasel nezavisle `align.py` hledanim v obraze originalu.**
+To je hlavni vysledek: model zamku scrollu sedi na radek, ne jen radove.
+Shoda celeho snimku 95,5 %; v `diff_desert.png` sedi teren i grafika
+tovarny a cerveny zbytek je STAV (skore po 900 s hry, zive objekty,
+exploze navic), ne vykreslovani.
+
+**Opravena chyba v masce HUD.** `compare.py` skladal klic prazdne HUD
+plane natvrdo jako `hudStatusText(g) + '\0PRESS FIRE'`. Neaktivni pulka se
+ale po 128 VBL prepina mezi promptem a statusem, takze klic sedel jen na
+t17/t19/t23. Jinde se prazdna plane nepouzila, HUD se neodmaskoval a jeho
+pixely spadly do `terrain` - maska HUD vysla **nulova a nikdo HUD
+neporovnal**. Tykalo se to i checkpointu `death`. Po oprave (klic z
+`hudTextsForGame`) je HUD 100 % na vsech sedmi TOWN checkpointech, vcetne
+stridajici se pulky `JEEP 0[ 2* 0000000`, kterou nikdy predtim nikdo
+neoveril.
+
+**Co zustava otevrene:** GRASS az FINAL porad nemaji zadny checkpoint.
+Cesta k nim je stejna jako u DESERTu, ale nejdriv musi baseline projet
+tovarnu - drzeny fire ji za 900 s neznicil (t=600 i t=900 stoji na tomtez
+radku). Bude to chtit bud skriptovany pohyb, nebo zapis do pameti
+emulatoru pres harness ve WASM.

@@ -19,6 +19,9 @@
 # nema, hrac v tomto rezimu normalne umira). SWIV_BASELINE_UNLIMITED_LIVES=1
 # prepne pouze F1. Oba rezimy meni herni podminky (zivoty, sila zbrane po
 # smrti), takze nejsou kanonicky cisty gameplay baseline.
+# SWIV_BASELINE_HOLD_FIRE=1 navic nechá fire drzeny po celou dobu; spolu
+# s UNLIMITED_LIVES je to jediny zpusob, jak se bez rucniho hrani dostat
+# do DESERTu (bez palby mapa zamrzne uz na prvni instalaci).
 set -e
 D=$(cd "$(dirname "$0")/.." && pwd)
 HL="/Users/mik/claude46/Amiga/reference/tools-bin/VAHeadless"
@@ -51,9 +54,15 @@ for t in "$@"; do
       echo "wait 45"
     fi
     echo "joystick2 press 1"
-    echo "wait 1"
-    echo "joystick2 unpress 1"
-    echo "wait $t"
+    if [ "${SWIV_BASELINE_HOLD_FIRE:-0}" = 1 ]; then
+      # Fire zustane drzeny. Pouziva se na dlouhe behy do dalsich zon:
+      # bez palby hrac nic nezniici a mapa se u prvni instalace zastavi.
+      echo "wait $t"
+    else
+      echo "wait 1"
+      echo "joystick2 unpress 1"
+      echo "wait $t"
+    fi
     echo "screenshot save ${PRE}_t$t.png"
   } > "$S"
   "$HL" "$S" >/dev/null 2>&1
