@@ -1390,3 +1390,55 @@ tank jde sestrelit.
 
 Pravidlo startu urovne zustava beze zmeny, takze compare 11/11 a
 spawncheck 980/981 jsou porad zelene.
+
+
+## Invariant "co je videt, jde sestrelit" (2026-09-11)
+
+Po druhem hracskem hlaseni o nesestrelitelnych tancich jsem misto
+hledani konkretniho tanku zavedl obecne pravidlo: **kdyz je objekt
+NAKRESLEN, musi ho videt i sweep strel.**
+
+Kreslici smycka bere `born && alive && !hidden` (u tanku jeste
+`tankSetup`), sweep bere `(hp > 0 || boltPing) && !invulnerable` (u tanku
+tyz `tankSetup`). Rozdil mezi temi dvema podminkami je presne prostor,
+kde muze vzniknout "vidim ho, ale nejde zabit".
+
+**Zmereno napric vsemi sedmi zonami, 9000 tiku kazda: jedine nalezy jsou
+`egg` (836x) a `pyramid` (342x) v DESERTu** - obe chovani s odlozenym HP
+(`armedHp`), ktera cekaji na `0x9ae8` a do te doby maji HP 0 zamerne.
+Zadny tank invariant neporusil.
+
+Kontrakt v `tools/uitest.py` hlida, ze k temto dvema nepribude dalsi.
+
+### Co se u toho zmerilo o tancich
+
+- Vsechny typy umiraji pri primem zasahu: `tank` 13-28 tiku, `flattank`
+  20-36 (pri sile 5), `juntank` 16.
+- **Vsech sest FLATTANKu v RIVERu**, vcetne tech u leveho okraje
+  (`x = 21, 22, 25, 41, 57`), umira i po skoku kamery na jejich misto.
+- FLATTANK je sprite 31x44 - to je ten tank, ktery hrac na snimku
+  oznacil. Jeho HP je `obtiznost + 5`, tedy v RIVERu 7 az 12.
+- JUNTANK je v RIVERu i mezi **dlazdicemi** (snimky 0 a 8, po trech).
+  Dlazdice nejsou objekty a znicit je nelze - je to tak i v originale.
+  Snimek 0 je velka instalace, snimek 8 poklop; ani jeden neni tank
+  s pasy, takze to neni vysvetleni pro tenhle konkretni pripad.
+
+
+## "Tanky jedou nad stromy" - je to tak i v originale (2026-09-11)
+
+Dalsi hracske pozorovani: v RIVERu vypada, jako by tanky jezdily NAD
+stromy a konstrukcemi, misto aby se schovaly za ne.
+
+**Overeno primo proti originalu.** `tools/survey/zoneshot.py` poridil
+snimek na mapove pozici 45410 (FLATTANK na `x = 22`) a proti nemu se
+postavil prepis na tomtez radku. V obou pripadech je tank **cely na
+terenu** - vetve pod nim nejsou videt, jeho obrys teren ostre reze.
+
+Je to dusledek hardwaru, ne volby: teren je predkresleny v bitmape stripu
+(`0x34f2`, `0x3e0c`) a BOBy se na obrazovku blituji az pres nej
+(`0x40e0`). BOB se proto nemuze dostat ZA teren - takova vrstva na OCS
+neexistuje. Hloubka (`z`, `+328`) ridi jen poradi BOBu mezi sebou a
+posun stinu, ne vztah k terenu.
+
+Prevod pozic mezi originalem a prepisem: `pozice = radek + 32825`
+(overeno na dvou nezavislych checkpointech, GRASS i RIVER).

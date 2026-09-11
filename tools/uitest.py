@@ -6691,12 +6691,56 @@ def main():
                    "po nacteni se probouzi jini nepratele nez bez nej: %r"
                    % (dal,))
 
+            # ---- co je videt, musi jit sestrelit --------------------
+            # Hrac nahlasil tanky, ktere "nejdou rozstrelit". Tohle je
+            # obecny invariant za tim: kdyz je objekt NAKRESLEN (kreslici
+            # smycka bere `born && alive && !hidden`, u tanku jeste
+            # `tankSetup`), musi ho videt i sweep strel, ktery bere
+            # `(hp > 0 || boltPing) && !invulnerable`.
+            #
+            # Vyjimka jsou chovani s odlozenym HP (`armedHp`): `egg`
+            # a `pyramid` cekaji na `0x9ae8` a do te doby maji HP 0
+            # zamerne. Jsou v seznamu, aby kontrakt hlidal i to, ze jich
+            # nepribude.
+            ZNAME = {"egg", "pyramid"}
+            videt = page.evaluate("""() => {
+              const problemy = {};
+              for (let lv = 0; lv < 7; lv++) {
+                startGame(lv);
+                const g = state.g;
+                g.lives = 99999;
+                for (let i = 0; i < 4000; i++) {
+                  step(g); g.lives = 99999; g.player.inv = 999;
+                  if (g.jeepLives < 1) g.jeepLives = 4;
+                  if (i % 5) continue;
+                  const top = scrollTop(g);
+                  for (const s of g.spawns) {
+                    if (!s.born || !s.alive || s.hidden) continue;
+                    const sy = s.y - top;
+                    if (sy < 0 || sy > 256) continue;
+                    if (s.beh === "tank" && !s.tankSetup) continue;
+                    if (s.beh === "boss" || s.beh === "unimplemented" ||
+                        s.beh === "missing-dispatch") continue;
+                    if ((s.scoreValue | 0) <= 0) continue;
+                    if ((s.hp > 0 || s.boltPing) && !s.invulnerable) continue;
+                    problemy[s.beh] = (problemy[s.beh] || 0) + 1;
+                  }
+                }
+              }
+              return problemy;
+            }""")
+            nove = sorted(set(videt) - ZNAME)
+            expect(not nove,
+                   "nakresleny, ale nesestrelitelny objekt: %s (cetnosti %r)"
+                   % (", ".join(nove), videt))
+
             screenshot = os.environ.get("SWIV_UI_SCREENSHOT")
             if screenshot:
                 page.screenshot(path=screenshot)
             expect(not errors, "browser ohlasil chyby: " + "; ".join(errors[:6]))
             print("UI OK (%.1fs): %d dispatch zaznamu, %d CAMOGUN, "
-                  "%d novych zvukovych stavu, jeep + vez + skok + lod + skore, bez JS chyb" %
+                  "%d novych zvukovych stavu, jeep + vez + skok + lod + skore, "
+                  "vse videne sestrelitelne, bez JS chyb" %
                   (time.time() - started, summary["dispatch"],
                    summary["camoguns"],
                    zvuky["corn"][0] + zvuky["jet"][0] + zvuky["geyser"][0]))

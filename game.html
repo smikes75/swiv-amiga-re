@@ -109,6 +109,8 @@ a { color:#cfe0ff }
     <b id="pauselabel" style="color:var(--orange)"></b>
     &nbsp;&middot;&nbsp; <button type="button" id="btnweapon"
       title="Vyvojarska zkratka: sebere TOKEN typ 1 az po plnou silu. Neni v originale - tam se zbran zveda sberem bonusu.">&#9889; zbra&#328; +</button>
+    <button type="button" id="btnspread"
+      title="TOKEN typ 1 (0x939c): stejna usti, ale strely se rozletnou do vejire misto rovnobezneho letu">&#10021; rozptyl</button>
     <span id="weaponlabel" style="opacity:.8"></span>
     &nbsp;&middot;&nbsp; <button type="button" id="btnend" title="Preskocit na zaverecnou sekvenci (klavesa C)">konec hry</button>
     <br>
@@ -7873,14 +7875,29 @@ function upgradeWeapon() {
   updateWeaponLabel();
   document.getElementById("game").focus();
 }
+/* `+104` (rezim) prepina `0x939c` na spread skript: usti zustavaji, ale
+   strely dostanou vlastni rychlosti z tabulky `0x8b86` misto spolecneho
+   (0,-9), takze se rozletnou do vejire. Plna sila (`+100` > 5) jde
+   osmismerovym `0x8b52` a rezim na ni nema vliv. */
+function toggleSpread() {
+  const g = state.g;
+  if (!g || !g.player) return;
+  g.player.mode = g.player.mode ? 0 : 1;
+  updateWeaponLabel();
+  document.getElementById("game").focus();
+}
 function updateWeaponLabel() {
   const el = document.getElementById("weaponlabel");
   if (!el) return;
   const p = state.g && state.g.player;
-  el.textContent = p ? ((p.weapon | 0) >= 6 ? "plna sila"
-                        : "sila " + (p.weapon | 0)) : "";
+  if (!p) { el.textContent = ""; return; }
+  const sila = (p.weapon | 0) >= 6 ? "plna sila" : "sila " + (p.weapon | 0);
+  const rozptyl = (p.weapon | 0) >= 6 ? " (vsesmerova)"
+                  : (p.mode ? " + rozptyl" : "");
+  el.textContent = sila + rozptyl;
 }
 document.getElementById("btnweapon").onclick = upgradeWeapon;
+document.getElementById("btnspread").onclick = toggleSpread;
 document.getElementById("btnrestart").onclick = () => {
   if (state.g) { startGame(state.g.lv | 0); updateJumpLabel(); }
   document.getElementById("game").focus();
