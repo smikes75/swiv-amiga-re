@@ -376,3 +376,34 @@ a presto to original dela (viz `docs/GAPS.md`).
 
 Zbyva projit **mechanismus obnovy** (`0x4184`, `0x4068`, `0x405a`) a jeho
 souhru se stavitelem stripu `0x3422`/`0x34c6`.
+
+### Prekryti objektu terenem - ZMERENO, ale nevysvetleno
+
+Aby nezustalo u dojmu ze snimku, je to zmerene. Snimek originalu
+`build/zone/z_p45488.raw` (RIVER, horni radek 12663) obsahuje FLATTANK
+na `x = 22`, `ry 2688`, tedy obrazovkove `x 8..38`, `y 22..65`. Proti
+nemu se postavila **cista terenni vrstva prepisu** na tomtez radku
+(`tools/align.py --snimek`, rezim bez objektu):
+
+    obdelnik tanku 31x44 = 1364 px
+      original ma TEREN (shodny s nasi terenni vrstvou): 1072 px (79 %)
+      original ma neco jineho (tank):                     292 px (21 %)
+
+Tank je tedy pod porostem, ne nad nim. Prekryvaji ho dve velke dlazdice,
+ktere na nej obe doslapnou celou plochou:
+
+    _JUNGLE#3  ry 2687 x 24  vrstva 2  ->  obrazovkove x -7..57, y -20..104
+    _JUNGLE#2  ry 2702 x  8  vrstva 1  ->  obrazovkove x -23..41, y -35..89
+
+**Zadna cesta z prectene blitovaci rady to nevysvetluje.** Objekt se do
+seznamu dlazdic nedostane (jediny vkladajici `0x36ea` je tvorba
+dlazdice), bit 6 maji jen tri mista (`0x8992` dekal, `0x27c8`, `0xc716`)
+a tvorba objektu `0x3780` priznakovy bajt naopak NULUJE (`clrb
+a0@(397)`), takze si bity nastavuje az korutina.
+
+**Dalsi krok, ktery to rozhodne:** precist za behu originalu seznam BOBu
+`fp@(208)` a u zaznamu toho FLATTANKu podivat se na jeho `+8` (klic
+trideni) a `+21` (priznaky). Harness na to je - `tools/survey/tasks_live.py`
+uz cte zive zaznamy uloh z chip RAM, staci ho rozsirit o tenhle seznam.
+Ukaze se bud bit, ktery jsme neprecetli, nebo klic trideni, ktery objekt
+posle pred dlazdice.
