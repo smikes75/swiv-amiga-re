@@ -1337,3 +1337,38 @@ a vypisuje ho jako `obtiznost+N`. Pri oprave se ukazalo, ze regex na
 `g.difficulty` musi respektovat "prvni prirazeni do `s.hp` vyhrava",
 jinak precte HP nasledujiciho chovani (blok je 1400 znaku a pretece) -
 docasne to pridalo falesne `goose7` a `popup`.
+
+
+## Nacteni pozice nechavalo objekty bez korutiny (2026-09-11)
+
+Hlaseni od hrace se snimkem: po nacteni ulozene pozice **konkretni tank
+neslo sestrelit**. Prvni kolo hledani (viz sekce o MEDTANKu vyse) ukazalo,
+ze tanky sestrelitelne jsou - ale hlaseni bylo o nactene pozici, a to je
+jina cesta kodem.
+
+**Zmereno:** po `loadFromSlot` mel KAZDY objekt na obrazovce
+`born: false, armed: false` a zustal tak i po dalsich 60 ticich. Byl
+videt, ale nemel korutinu: nehybal se, nestrilel, a sweep ho preskakoval
+(`if (!s.born) continue`), takze do nej strely proletly.
+
+**Pricina byla v `jumpMap`**, kterou `loadFromSlot` pouziva. Ozbrojovala
+objekty pravidlem startu urovne (`armedAtStart`, `0x3728`): "zaznam pod
+hornim okrajem se tise zahodi". To pravidlo je spravne pro ZACATEK mapy,
+kde ctec jeste nikde nebyl - ale po skoku nebo nacteni je to naopak: do
+takoveho mista se v originale nelze dostat jinak nez tim, ze tudy ctec
+projel, takze kazdy objekt, ktery uz minul prah -256 a jeste nebyl
+cullnuty, svou korutinu dostal.
+
+Bylo to **vedome rozhodnuti, ktere se ukazalo jako spatne**. Komentar u
+nej rikal, ze nic dalsiho nastavovat nesmime, protoze objekt s `born` bez
+rozpracovaneho stavu shodi `step()` (boss bez `parts`). To plati pro
+primy zapis `born = true` - ne pro `armed = true`, kdy si objekt
+inicializaci udela sam normalni cestou pres `startMapObjectTask`.
+
+Opraveno na `esy >= -256 && esy <= 276`. Overeno skokem pres vsech sedm
+zon po pulzonach (98 skoku, 40 tiku po kazdem): **zadny pad, zadna JS
+chyba**. Kontrakt v `tools/uitest.py` hlida, ze po nacteni neni na
+obrazovce zadny objekt bez korutiny a ze tank jde sestrelit.
+
+Pravidlo startu urovne zustava beze zmeny, takze compare 11/11 a
+spawncheck 980/981 jsou porad zelene.

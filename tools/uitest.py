@@ -6591,6 +6591,51 @@ def main():
                                       "skore": 0},
                    "znovupripojeni slotu 2: %r" % (skore["znovu"],))
 
+            # ---- nacteni pozice ozivi objekty na obrazovce ----------
+            # Regrese: `jumpMap` drive pouzival pravidlo startGame
+            # (0x3728), takze po nacteni zustaly vsechny objekty na
+            # obrazovce bez korutiny - byly videt, ale neslo je sestrelit.
+            nacteni = page.evaluate("""() => {
+              startGame(3);
+              const g = state.g;
+              g.lives = 99999;
+              for (let i = 0; i < 3000; i++) {
+                step(g); g.lives = 99999; g.player.inv = 999;
+              }
+              saveToSlot(9); loadFromSlot(9);
+              const h = state.g;
+              h.lives = 99999;
+              for (let i = 0; i < 5; i++) {
+                step(h); h.lives = 99999; h.player.inv = 999;
+              }
+              const videt = h.spawns.filter(s => {
+                const sy = s.y - scrollTop(h);
+                return s.alive && sy > -20 && sy < 276;
+              });
+              const cil = videt.find(s => s.beh === "tank" && s.born);
+              let sestreleno = null;
+              if (cil) {
+                for (let k = 0; k < 30 && cil.alive; k++) {
+                  const n = cil.nodeSnap ||
+                            { x: cil.x, y: cil.y - scrollTop(h) };
+                  h.bullets.push({ x: n.x, y: n.y, vx: 0, vy: 0, frame: 14,
+                                   poolSlot: 25 + (k % 5), owner: 1 });
+                  step(h); h.lives = 99999; h.player.inv = 999;
+                }
+                sestreleno = !cil.alive;
+              }
+              return { videt: videt.length,
+                       bezKorutiny: videt.filter(s => !s.born).length,
+                       sestreleno };
+            }""")
+            expect(nacteni["videt"] > 0,
+                   "po nacteni neni na obrazovce zadny objekt")
+            expect(nacteni["bezKorutiny"] == 0,
+                   "%d z %d objektu na obrazovce zustalo po nacteni bez "
+                   "korutiny" % (nacteni["bezKorutiny"], nacteni["videt"]))
+            expect(nacteni["sestreleno"] is True,
+                   "tank po nacteni pozice nejde sestrelit: %r" % (nacteni,))
+
             screenshot = os.environ.get("SWIV_UI_SCREENSHOT")
             if screenshot:
                 page.screenshot(path=screenshot)

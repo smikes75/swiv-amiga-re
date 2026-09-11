@@ -7948,11 +7948,22 @@ function jumpMap(g, fraction) {
     if (s.clean) { const c = s.clean; for (const k of Object.keys(s))
       if (k !== "clean") delete s[k];
       Object.assign(s, c); s.clean = c; }
-    // Presne pravidlo startGame (0x3728): co uz je na obrazovce nebo za ni,
-    // se neozbroji a korutinu nikdy nedostane. Nic dalsiho nastavovat
-    // nesmime - objekt s `born` bez rozpracovaneho stavu by shodil step()
-    // (napriklad boss bez `parts`).
-    s.armed = armedAtStart(g, s);
+    // POZOR: tady NEPLATI pravidlo startGame (`armedAtStart`, `0x3728`).
+    // To rika, ze zaznam pod hornim okrajem se pri startu urovne tise
+    // zahodi - a je spravne, protoze na zacatku mapy ctec jeste nikde
+    // nebyl. Po skoku nebo nacteni pozice je to ale naopak: do takoveho
+    // mista se v originale nelze dostat jinak nez tim, ze tudy ctec
+    // projel, takze KAZDY objekt, ktery uz minul prah -256 a jeste nebyl
+    // cullnuty, svou korutinu dostal.
+    //
+    // Drive se tu pouzivalo pravidlo startGame a vsechny objekty na
+    // obrazovce zustaly natrvalo bez korutiny: byly videt, ale nehybaly
+    // se, nestrilely a NESLO JE SESTRELIT (sweep preskakuje `!s.born`).
+    // Ozbrojuje se, nikoli rovnou rodi - vlastni inicializaci si objekt
+    // udela sam v `step()` normalni cestou, takze nevznikne polostav
+    // (`born` bez `parts` a podobne).
+    const esy = s.y - scrollTop(g);
+    s.armed = esy >= -256 && esy <= 276;
   }
   g.air.length = 0; g.hazards.length = 0; g.shots.length = 0;
   g.bullets.length = 0; g.booms.length = 0; g.tokens.length = 0;
