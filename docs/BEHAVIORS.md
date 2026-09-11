@@ -797,6 +797,21 @@ vsech TOWN objektu a hranice „odvozeno" jsou v [TOWN-AUDIT](TOWN-AUDIT.md).
 Dotek vzdy spusti damage handler objektu (`−1 HP`, hit flash), nezavisle
 na ochrane hrace.
 
+**Trida podle TYPU.** U jedineho chovani z 73 nezavisi trida na chovani,
+ale na typu objektu: `0x9ece` da MEDTANKu `d1 = 36`, ale `0x9ed4` testuje
+**bit 3 v `+276`** a pri jeho nastaveni preda `a2c6` tridu **32**. Takovy
+tank je porad sestrelitelny (bit 5), ale kontaktem nezabije ani jeden
+stroj. V RIVERu jsou to typy 9 a 10 (tri z devatenacti tanku v mape).
+Overeno skenem vsech 73 rutin na vicenasobne plneni `d1` pred `a2c6`;
+ostatni nalezy patri formacnimu `0xa2a2`, ne `a2c6`.
+
+**HP zavisle na obtiznosti.** Tri chovani nemaji HP konstantni, ale
+`fp@(182) + N`, kde `fp@(182)` je obtiznost z `0x1cd4` (klap na 10):
+`tank` `+1` (`0x9ee2`), `flattank` `+5` (`0x9e1a`), `yellow` `+1`
+(`0x86d0`). V RIVERu po nekolika minutach hry vychazi obtiznost 6-7,
+takze flattank ma 11-12 HP - pri sile zbrane 1 jsou to dve sekundy
+nepretrzite palby a pusobi to, jako by sel sestrelit tezko.
+
 **Hit flash**: `0xa35a` nastavi bit 1 v `+367`, drawer `0x63a4` z nej
 udela bit 4 kresliciho zaznamu a housekeeping `0x6452` ho kazdy tik maze
 — objekt je jeden snimek po zasahu kresleny jinym mintermem.

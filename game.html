@@ -118,9 +118,9 @@ a { color:#cfe0ff }
   </div>
   <div id="fxbar" hidden style="margin-top:4px;font:12px monospace;color:#9ab">
     <span style="opacity:.7">efekty nad r&#225;mec hardwaru:</span>
-    <label title="Kamera zaostrena na rovinu objektu: teren pod nimi je mirne mekci. Amiga obraz skladala z pevnych bitplanu, zadny filtr mezi nimi a monitorem nebyl."><input type="checkbox" id="dofchk"> hloubka ostrosti</label>
-    &nbsp;&middot;&nbsp; <label title="Stin objektu se s vyskou rozostri a zesvetli; blitter zna jen plnou masku, alfu neumi"><input type="checkbox" id="softshchk2"> m&#283;kk&#233; st&#237;ny</label>
-    &nbsp;&middot;&nbsp; <label title="Pomahá plynulosti pri malem zvetseni: svisle prolnuti mezi dvema polohami. Neni to vizualni efekt, pri 4x a vice je zbytecne."><input type="checkbox" id="blendchk"> prolnut&#237; pohybu</label>
+    <label title="Kamera zaostrena na rovinu objektu: teren pod nimi je mirne mekci. Amiga obraz skladala z pevnych bitplanu, zadny filtr mezi nimi a monitorem nebyl."><input type="checkbox" id="dofchk" checked> hloubka ostrosti</label>
+    &nbsp;&middot;&nbsp; <label title="Stin objektu se s vyskou rozostri a zesvetli; blitter zna jen plnou masku, alfu neumi"><input type="checkbox" id="softshchk2" checked> m&#283;kk&#233; st&#237;ny</label>
+    &nbsp;&middot;&nbsp; <label title="Pomahá plynulosti pri malem zvetseni: svisle prolnuti mezi dvema polohami. Neni to vizualni efekt, pri 4x a vice je zbytecne."><input type="checkbox" id="blendchk" checked> prolnut&#237; pohybu</label>
     <input type="checkbox" id="softshchk" hidden>
   </div>
   <div id="zoomrow" role="group" aria-label="Velikost hern&#237;ho pole">
@@ -7815,7 +7815,7 @@ document.getElementById("smoothchk").onchange = e => {
 // Prolnuti ma smysl jen v plynulem rezimu; vypnute je vychozi, protoze
 // michani dvou radku je odchylka od pixeloveho originalu.
 document.getElementById("blendchk").onchange = e => {
-  state.blendBg = e.target.checked; updateZoomLabel();
+  state.blendBg = state.smooth && e.target.checked; updateZoomLabel();
 };
 /* Rezim: originál = presne to, co delal hardware; vylepseno = plynuly
    pohyb plus volitelne efekty, ktere Amiga neumela. Pod prepinacem se
@@ -7823,16 +7823,23 @@ document.getElementById("blendchk").onchange = e => {
 function setMode(fx) {
   state.smooth = fx;
   document.getElementById("fxbar").hidden = !fx;
+  // Vylepseny rezim zapne vsechny sve podvolby, ktere ma hrac zaskrtnute;
+  // v originalnim rezimu je drzi vypnute, at je "original" opravdu
+  // original bez ohledu na to, co je v panelu odskrtnute.
+  for (const [id, klic] of [["dofchk", "depthOfField"],
+                            ["softshchk2", "softShadows"],
+                            ["blendchk", "blendBg"]])
+    state[klic] = fx && document.getElementById(id).checked;
   if (state.g) { state.g.bobCur = state.g.bobPrev = null; }
   updateZoomLabel();
 }
 document.getElementById("modeorig").onchange = () => setMode(false);
 document.getElementById("modefx").onchange = () => setMode(true);
 document.getElementById("dofchk").onchange = e => {
-  state.depthOfField = e.target.checked;
+  state.depthOfField = state.smooth && e.target.checked;
 };
 document.getElementById("softshchk2").onchange = e => {
-  state.softShadows = e.target.checked;
+  state.softShadows = state.smooth && e.target.checked;
 };
 document.getElementById("btnrestart").onclick = () => {
   if (state.g) { startGame(state.g.lv | 0); updateJumpLabel(); }
@@ -8209,8 +8216,18 @@ const A2C6_CLASS = {
   vtol: 36, wave: 34, xevdrift: 34, xevplane: 36, xevswarm: 34,
   yellow: 34
 };
-function classKillsJeep(beh) { return ((A2C6_CLASS[beh] | 0) & 4) !== 0; }
-function classIsAirborne(beh) { return ((A2C6_CLASS[beh] | 0) & 2) !== 0; }
+/* Trida je skoro vzdy dana chovanim, ale MEDTANK ji vybira podle TYPU:
+   `0x9ed4` testuje bit 3 v `+276` a pri jeho nastaveni preda `a2c6`
+   tridu 32 misto 36. Takovy tank je porad sestrelitelny (bit 5), ale
+   kontaktem nezabije ani vrtulnik, ani jeep. V RIVERu jsou takove tri
+   (MEDTANK typ 9 a 10). */
+function a2c6Class(o) {
+  const beh = typeof o === "string" ? o : o.beh;
+  if (typeof o !== "string" && beh === "tank" && ((o.typ | 0) & 8)) return 32;
+  return A2C6_CLASS[beh] | 0;
+}
+function classKillsJeep(o) { return (a2c6Class(o) & 4) !== 0; }
+function classIsAirborne(o) { return (a2c6Class(o) & 2) !== 0; }
 
 const JEEP_FRAME = 23;          // 0x9096: gfx 0x2e00 = JEEPHELI#23
 const JEEP_SPEED = 640;         // 0x9118: +356 (vrtulnik ma 768)
@@ -10898,7 +10915,7 @@ function step(g) {
     const zabiji = jp.airborne ? classIsAirborne : classKillsJeep;
     let hit = null;
     for (const s of g.spawns) {
-      if (!s.born || !s.alive || !zabiji(s.beh)) continue;
+      if (!s.born || !s.alive || !zabiji(s)) continue;
       if (s.beh === "tank" && !s.tankSetup) continue;
       const sn = nodePos(g, s, s.x, s.y - scrollTop(g));
       if (nodesTouch(PLAYER_NODE, jn.x, jn.y, nodeExtent(s), sn.x, sn.y)) {

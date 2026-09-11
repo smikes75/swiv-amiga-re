@@ -1303,3 +1303,37 @@ jedne strane byl zachycen do jedne periody porovnani.
   je mel ovladat jen hostitel, nebo by mely byt vypnute.
 - **Rozjezd se neresi, jen hlasi.** Obnova stavu (host posle svuj stav
   hostovi) neni implementovana.
+
+
+## MEDTANK: trida podle TYPU, ne podle chovani (2026-09-11)
+
+Hlaseni od hrace: "v RIVERu jsou tanky, ktere nejdou rozstrelit."
+
+**Sestrelitelne jsou** - zmereno tak, ze se hrac postavil pod kazdy druh
+a stridal palbu, dokud objekt nezemrel: `tank` 28 tiku, `flattank` 115,
+`juntank` 16 pri primem zasahu. Dojem nesestrelitelnosti dela HP: u
+`tank` a `flattank` **neni konstantni, ale roste s obtiznosti**
+(`0x9ee2`/`0x9e1a`: `d3 = fp@(182) + 1`, resp. `+ 5`), a `fp@(182)` je
+obtiznost z `0x1cd4` s klapem na 10. V RIVERu po nekolika minutach hry
+vychazi 6-7, takze flattank ma 11-12 HP a pri sile zbrane 1 to jsou dve
+sekundy nepretrzite palby. To vsechno prepis ma spravne.
+
+**Skutecna odchylka byla jinde.** `0x9ece` nastavi `d1 = 36`, ale
+`0x9ed4` testuje **bit 3 v typu** (`+276`) a pri jeho nastaveni preda
+`a2c6` tridu **32**. Takovy tank je porad sestrelitelny (bit 5), ale
+kontaktem nezabije ani vrtulnik, ani jeep. V RIVERu jsou takove tri
+(MEDTANK typ 9 a 10 z devatenacti tanku v mape).
+
+Prepis mel `A2C6_CLASS` jen podle chovani, takze tyhle tri zabijely jeep.
+Opraveno pres `a2c6Class(o)`, ktera zna vyjimku. **MEDTANK je jedine
+chovani, kde trida zavisi na typu** - overeno skenem vsech 73 rutin na
+vicenasobne plneni `d1` pred `a2c6`; ostatni nalezy (`bunny`, `skyeye`,
+`goose7`, ...) jsou prvni `d1` pro formacni `0xa2a2`, ne pro `a2c6`.
+
+**`tools/a2c6check.py` u toho lhal.** HP zavisle na obtiznosti cetl jako
+chybejici (`None`) a hlasil `tank`/`flattank`/`yellow` jako neshodu,
+prestoze je prepis ma spravne. Ted umi `fp@(182) + N` na obou stranach
+a vypisuje ho jako `obtiznost+N`. Pri oprave se ukazalo, ze regex na
+`g.difficulty` musi respektovat "prvni prirazeni do `s.hp` vyhrava",
+jinak precte HP nasledujiciho chovani (blok je 1400 znaku a pretece) -
+docasne to pridalo falesne `goose7` a `popup`.

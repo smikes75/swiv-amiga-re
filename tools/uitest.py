@@ -6355,6 +6355,23 @@ def main():
             expect(trida["train"] and not trida["bird"] and
                    trida["factory"] and not trida["egg"],
                    "bit 2 rozlisuje spatne: %r" % (trida,))
+            # 0x9ed4: MEDTANK s bitem 3 v typu dostane tridu 32 misto 36,
+            # tedy zustane sestrelitelny, ale kontaktem nezabiji.
+            tanky = page.evaluate("""() => ({
+              typ3: a2c6Class({ beh: "tank", typ: 3 }),
+              typ9: a2c6Class({ beh: "tank", typ: 9 }),
+              typ10: a2c6Class({ beh: "tank", typ: 10 }),
+              zabijiTyp3: classKillsJeep({ beh: "tank", typ: 3 }),
+              zabijiTyp9: classKillsJeep({ beh: "tank", typ: 9 }),
+              jinyObjekt: a2c6Class({ beh: "juntank", typ: 9 }),
+            })""")
+            expect(tanky["typ3"] == 36 and tanky["typ9"] == 32 and
+                   tanky["typ10"] == 32,
+                   "trida MEDTANKu podle typu: %r" % (tanky,))
+            expect(tanky["zabijiTyp3"] and not tanky["zabijiTyp9"],
+                   "typ s bitem 3 nema kontaktem zabijet: %r" % (tanky,))
+            expect(tanky["jinyObjekt"] == 36,
+                   "vyjimka se tyka jen MEDTANKu: %r" % (tanky,))
             expect(not trida.get("nenasel"),
                    "za 3000 tiku se nenarodil zadny pozemni objekt")
             expect(trida["kontakt"]["zije"] is False and

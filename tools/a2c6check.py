@@ -84,6 +84,16 @@ def regs_before(lines, order, start, limit=60):
         m = re.match(r"move[qwl] #(-?\d+),%(d[1345])$", text)
         if m and m.group(2) not in found:
             found[m.group(2)] = int(m.group(1))
+            continue
+        # HP nekterych chovani neni konstanta, ale `fp@(182) + N`, kde
+        # `fp@(182)` je obtiznost (`0x1cd4`, klap na 10). Bez tohoto
+        # rozliseni skript hlasil neshodu u `tank`, `flattank` a
+        # `yellow`, prestoze je prepis ma spravne jako `N + difficulty`.
+        m = re.match(r"movew %fp@\(182\),%(d[1345])$", text)
+        if m and m.group(1) not in found:
+            nxt = lines[order[k + 1]] if k + 1 < len(order) else ""
+            mm = re.match(r"addqw #(\d+),%" + m.group(1) + "$", nxt)
+            found[m.group(1)] = ("obtiznost", int(mm.group(1)) if mm else 0)
     return found
 
 
@@ -95,10 +105,23 @@ def remake_values(path):
         impl[m.group(2)] = int(m.group(1), 16)
     def scan(chunk):
         got = {}
+        # Rozhoduje PRVNI prirazeni do `s.hp` v bloku - jinak by se
+        # vzalo HP nasledujiciho chovani (blok je 1400 znaku a pretece).
+        # HP zavisle na obtiznosti se pise dvema zpusoby:
+        # `s.hp = 5 + (g.difficulty | 0)` i `s.hp = (g.difficulty || 0) + 1`.
+        hm = re.search(r"s\.hp = ([^;]+);", chunk)
+        if hm:
+            expr = hm.group(1)
+            dm = re.match(r"(?:(\d+) \+ )?\(g\.difficulty[^)]*\)"
+                          r"(?: \+ (\d+))?$", expr.strip())
+            if dm:
+                got["hp"] = ("obtiznost", int(dm.group(1) or dm.group(2) or 0))
         for key, field in (("cost", r"s\.cost = (-?\d+)"),
                            ("hp", r"s\.hp = (-?\d+)"),
                            ("armedHp", r"s\.armedHp = (-?\d+)"),
                            ("skore", r"s\.scoreValue = (-?\d+)")):
+            if key in got:
+                continue
             mm = re.search(field, chunk)
             if mm:
                 got[key] = int(mm.group(1))
@@ -145,7 +168,11 @@ def main():
         # je to zamerny model a clovek to musi posoudit, ne skript.
         mism = [i for i in range(3)
                 if want[i] is not None and got[i] is not None and want[i] != got[i]]
-        line = "%-14s %-22s %-22s" % (beh, str(want), str(got))
+        popis = lambda v: ("obtiznost+%d" % v[1]) if isinstance(v, tuple) \
+            else str(v)
+        line = "%-14s %-22s %-22s" % (
+            beh, "(" + ", ".join(popis(v) for v in want) + ")",
+            "(" + ", ".join(popis(v) for v in got) + ")")
         if mism:
             bad.append((beh, want, got))
             line += "  <<< NESEDI"
@@ -160,8 +187,12 @@ def main():
     print("piston, inst4*) je zamerny - a2c6 hodnotu dostane, ale prepis ji")
     print("objektu prida az pri probuzeni. Stejne tak `bird`/`wave`/`yellow`,")
     print("kde inicializace neni v bloku `s.beh === ...`, ale ve formaci.")
+    popis = lambda v: ("obtiznost+%d" % v[1]) if isinstance(v, tuple) \
+        else str(v)
     for beh, want, got in bad:
-        print("   %-14s AMPROG %s, prepis %s" % (beh, want, got))
+        print("   %-14s AMPROG (%s), prepis (%s)" %
+              (beh, ", ".join(popis(v) for v in want),
+               ", ".join(popis(v) for v in got)))
 
 
 if __name__ == "__main__":
