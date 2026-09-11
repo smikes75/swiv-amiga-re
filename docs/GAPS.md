@@ -1424,7 +1424,7 @@ Kontrakt v `tools/uitest.py` hlida, ze k temto dvema nepribude dalsi.
   s pasy, takze to neni vysvetleni pro tenhle konkretni pripad.
 
 
-## "Tanky jedou nad stromy" - je to tak i v originale (2026-09-11)
+## "Tanky jedou nad stromy" - PRVNI ZAVER BYL SPATNY (2026-09-11)
 
 Dalsi hracske pozorovani: v RIVERu vypada, jako by tanky jezdily NAD
 stromy a konstrukcemi, misto aby se schovaly za ne.
@@ -1434,11 +1434,49 @@ snimek na mapove pozici 45410 (FLATTANK na `x = 22`) a proti nemu se
 postavil prepis na tomtez radku. V obou pripadech je tank **cely na
 terenu** - vetve pod nim nejsou videt, jeho obrys teren ostre reze.
 
-Je to dusledek hardwaru, ne volby: teren je predkresleny v bitmape stripu
-(`0x34f2`, `0x3e0c`) a BOBy se na obrazovku blituji az pres nej
-(`0x40e0`). BOB se proto nemuze dostat ZA teren - takova vrstva na OCS
-neexistuje. Hloubka (`z`, `+328`) ridi jen poradi BOBu mezi sebou a
-posun stinu, ne vztah k terenu.
+**Tenhle zaver byl spatny.** Snimek byl vybrany na miste, kde tank stoji
+na volne plose. Na jinem snimku (`build/zone/z_p45488.raw`, levy horni
+roh) je videt FLATTANK, pres jehoz korbu, pasy i vez **jdou vetve a listy
+porostu**. Objekty tedy ZA terenem byt umi a hrac to videl spravne.
+
+### Co se o tom mechanismu zjistilo
+
+- **`+397` bit 0** nastavuje 28 mist v AMPROG.OBJ a jsou to vyhradne
+  pozemni veci: `tank`, `flattank`, `juntank`, `mine`, `train`, `plat`,
+  `junhatch`, `popup`, `proxmine`, `flame`, `camogun`, `swappad0/1`,
+  `trilo`, `airplane` - a take **jeep a lod**. Vzdusne objekty ho nemaji.
+- **`0x63c8`**: bit se do priznakoveho bajtu BOB zaznamu (`+421`, tedy
+  `+21` v zaznamu) propise jen pri `fp@(155)`. Tu zapina `0x1d44`,
+  **vypina geyzir `0xaf9c`** a zase zapina **ORB `0xb098`**.
+- **`0x3e70`..`0x3eec`** sklada z `+21` ctverici rutin do `fp@(236..248)`:
+  bit 0 -> `0x3fe2`, bit 1 -> `0x4068`, bit 2 -> `0x40a8`, bit 3 ->
+  `0x405a`, **bit 6 -> `0x4100` s cilem `fp@(264)` (strip) misto
+  `fp@(256)` (obrazovka)**, bit 7 -> `0x416a` (kolizni varianta `0x3dd4`).
+- **Fronta**: `0x481a` vklada do seznamu BOBu `fp@(208)`, `0x4814` do
+  seznamu dlazdic `fp@(3564)`; oba tridi vlozenim podle klice `+8`.
+  Dlazdice maji `+8 = (vrstva << 8) + poradi` a `+21 = 64` (bit 6 =
+  do stripu). `0x4874` prochazi seznam BOBu a kazdy da `0x3e0c`.
+
+### Co zustava otevrene
+
+Prvni vyklad znel tak, ze bit 0 kresli objekt maskovany terenem. **Neni
+to tak**: po docteni ukazatelu je `0x3fe2` blit
+`BLTAPT = maska spritu`, `BLTCPT = obrazovka`, `BLTDPT = fp@(252)`
+(scratch 2002 B) s mintermem `0xA0` (A AND C), tedy `D = maska AND
+obrazovka` - **ulozeni pozadi pod BOBem pro pozdejsi obnovu**, ne
+prekryti.
+
+Zkousel jsem to take implementovat maskou z control plane (`terrainOpen`)
+a **rozdil v obraze byl temer zadny** - ta maska popisuje prekazky pro
+jeep, ne vizualni popredi. Experiment je vracen.
+
+Mechanismus prekryti tedy **zatim neni vysvetlen**. Je to prvni konkretni
+duvod docist blitovaci radu `0x3e0c`..`0x4218` do konce - viz posledni
+otevrena polozka "blitter radek po radku".
+
+Puvodni (chybna) uvaha pro zaznam: teren je predkresleny v bitmape stripu
+(`0x34f2`, `0x3e0c`) a BOBy se blituji pres nej, takze by se BOB za teren
+dostat nemel. To ale neplati - viz snimek vyse.
 
 Prevod pozic mezi originalem a prepisem: `pozice = radek + 32825`
 (overeno na dvou nezavislych checkpointech, GRASS i RIVER).
