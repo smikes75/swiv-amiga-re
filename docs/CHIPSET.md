@@ -309,3 +309,70 @@ funguje na velkych plochach, ale sprity v SWIV maji 16 az 48 pixelu na
 vysku a jsou kreslene s tvrdou paletou. Gradient pres tak malou plochu
 vypada jako spina, ne jako svetlo. Skutecne nasvíceni by potrebovalo znat
 normalu povrchu, kterou z indexoveho spritu neziskame.
+
+## Blitovaci rada `0x3e0c`..`0x4218` - prectena (2026-09-11)
+
+Posledni neprectena cast enginu. Podnetem bylo hracske pozorovani, ze
+v originale jezdi tanky **pod** porostem.
+
+### Rozvrh
+
+`0x3e0c` dostane BOB zaznam v `a0`, jeho grafiku vyhleda `0x48c0` do `a1`
+a podle **priznakoveho bajtu `+21`** slozi do `fp@(236..248)` ukazatele
+na ctyri rutiny. Pak `0x3ef0`..`0x3fca` spocita geometrii (orez na
+`-32..320`, svisly orez proti `+16`/`+18`, shift `x & 15`, modulo 44 B na
+radek, adresu v bitmape) a na `0x3fcc` se provedou **tri pruchody**:
+
+    3fcc:  a1 = fp@(256)        ; baze obrazovky
+    3fd0:  jsr fp@(248)         ; 1. pruchod
+    3fd6:  jsr fp@(244)         ; 2. pruchod
+    3fdc:  jmp fp@(240)         ; 3. pruchod = vlastni kresba
+
+### Bity `+21`
+
+| bit | rutina | vyznam |
+|---:|---|---|
+| 0 | `0x3fe2` | `BLTAPT` maska, `BLTCPT` obrazovka, `BLTDPT` `fp@(252)` (scratch 2002 B), minterm `0xA0` = A AND C → **ulozeni pozadi pod BOBem** |
+| 1 | `0x4068` | tyz tvar s mintermem `0x0A` = NOT A AND C |
+| 2 | `0x40a8` | **kolizni test**: minterm `0x50`, rovina podle `fp@(161)`; po `0x41a4` cte bit 13 stavu a nastavi `fp@(162)` |
+| 3 | `0x405a` | jako 1, ale s posunem o rovinu (`+14080`) |
+| 4 | `0x417c` | **zablesk**: roviny `0xFA, 0x0A, 0x0A, 0xFA` = plne barva **9** |
+| 5 | `0x4174` | **stin**: vsechny ctyri roviny `0x0A` = vymaz na barvu 0 |
+| 6 | `0x4100` | cil `fp@(264)` = **strip** misto `fp@(256)` = obrazovka |
+| 7 | `0x416a` | `rts` - **nekresli vubec** (pouziva se s bitem 2 na ciste mereni kolize) |
+
+### Vlastni kresba `0x4112`
+
+Ctyrikrat (`dbf %d6` od 3) - jednou na kazdou bitplane - vezme slovo
+BLTCON0 z tabulky vybrane `fp@(236)` a posune se o `+14080` na dalsi
+rovinu. Tabulky:
+
+    0x416c  0fca 0fca 0fca 0fca   USEA|USEB|USEC|USED, minterm 0xCA
+    0x4174  0b0a 0b0a 0b0a 0b0a   USEA|USEC|USED,      minterm 0x0A
+    0x417c  0bfa 0b0a 0b0a 0bfa   roviny 0 a 3 nastavit, 1 a 2 vymazat
+
+`0xCA` je `(A AND B) OR (NOT A AND C)`, tedy cookie-cut. **Tim je
+potvrzen model, na kterem stoji prepis**: bezny BOB = cookie-cut, stin =
+vymaz na 0, zasahovy zablesk = plna barva 9 (v prepisu `BOB_FILL_INDEX9`).
+
+### Fronty
+
+`0x481a` vklada do seznamu **BOBu** `fp@(208)`, `0x4814` do seznamu
+**dlazdic** `fp@(3564)`. Oba tridi vlozenim podle klice `+8`. Dlazdice
+maji `+8 = (vrstva << 8) + poradi` a `+21 = 64` (bit 6 = do stripu);
+`0x3480` seznam prochazi a blituje je do stripu, jak se mapa staveji.
+`0x4874` prochazi seznam BOBu a kazdy da `0x3e0c`.
+
+`0x4184` zapisuje do fronty obnovy: `(velikost, modulo, adresa)` s
+citacem v `a1@(16)` a ukazatelem v `a1@(18)`.
+
+### Co tim JESTE neni vysvetleno
+
+**Prekryti objektu terenem.** Do seznamu dlazdic vklada jedine misto
+(`0x36ea`, tvorba dlazdice), takze objekt se do nej nikdy nedostane, a
+bit 6 (kresba do stripu) maji jen tri mista - `0x8992` (dekal `0x898c`),
+`0x27c8` a `0xc716`. Zadnou cestou z teto rady tedy BOB za teren nejde,
+a presto to original dela (viz `docs/GAPS.md`).
+
+Zbyva projit **mechanismus obnovy** (`0x4184`, `0x4068`, `0x405a`) a jeho
+souhru se stavitelem stripu `0x3422`/`0x34c6`.
