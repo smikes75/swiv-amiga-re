@@ -107,6 +107,9 @@ a { color:#cfe0ff }
     <button type="button" id="btnfwd" title="O pul zony vpred">&#9658;&#9658;</button>
     <span id="jumplabel" style="opacity:.8"></span>
     <b id="pauselabel" style="color:var(--orange)"></b>
+    &nbsp;&middot;&nbsp; <button type="button" id="btnweapon"
+      title="Vyvojarska zkratka: sebere TOKEN typ 1 az po plnou silu. Neni v originale - tam se zbran zveda sberem bonusu.">&#9889; zbra&#328; +</button>
+    <span id="weaponlabel" style="opacity:.8"></span>
     &nbsp;&middot;&nbsp; <button type="button" id="btnend" title="Preskocit na zaverecnou sekvenci (klavesa C)">konec hry</button>
     <br>
     <span title="Ulozene pozice zustavaji v tomto prohlizeci">pozice</span>
@@ -7841,6 +7844,43 @@ document.getElementById("dofchk").onchange = e => {
 document.getElementById("softshchk2").onchange = e => {
   state.softShadows = state.smooth && e.target.checked;
 };
+/* Vyvojarska zkratka (neni v originale): postupne "sebere" TOKENy, ktere
+   zvedaji silu zbrane. Sila `+100` je omezena tabulkou `0x70c0` podle
+   poctu sebranych bonusu `+102`, takze nestaci prepsat silu - musi se
+   zvednout i citac, jinak ji `0x70c8` pri dalsim respawnu zase srazi.
+   Posledni krok je plna sila (TOKEN typ 4, `0x984e`), ktera `0x70c8`
+   nepodleha. */
+function upgradeWeapon() {
+  const g = state.g;
+  if (!g || !g.player) return;
+  const p = g.player;
+  const strop = t => [2, 3, 4, 5][Math.min(3, Math.max(0, t))];
+  const tier = () => Math.min(3, ((p.tokenCount || 0) / 5) | 0);
+  if ((p.weapon | 0) >= 6) {                   // uz plna sila -> zpet na start
+    p.tokenCount = 0; p.weapon = 1; p.mode = 0;
+    applyWeaponTable(p);
+  } else if ((p.weapon | 0) < strop(tier())) {
+    p.weapon = strop(tier());                  // dorovnat strop stupne
+    applyWeaponTable(p);
+    p.weapon = strop(tier());                  // applyWeaponTable jen clampuje
+  } else if ((p.tokenCount | 0) >= 15) {
+    p.weapon = 6; p.reload = 8;                // 0x984e: plna sila
+  } else {
+    p.tokenCount = Math.min(19, (p.tokenCount | 0) + 5);
+    applyWeaponTable(p);
+    p.weapon = strop(tier());
+  }
+  updateWeaponLabel();
+  document.getElementById("game").focus();
+}
+function updateWeaponLabel() {
+  const el = document.getElementById("weaponlabel");
+  if (!el) return;
+  const p = state.g && state.g.player;
+  el.textContent = p ? ((p.weapon | 0) >= 6 ? "plna sila"
+                        : "sila " + (p.weapon | 0)) : "";
+}
+document.getElementById("btnweapon").onclick = upgradeWeapon;
 document.getElementById("btnrestart").onclick = () => {
   if (state.g) { startGame(state.g.lv | 0); updateJumpLabel(); }
   document.getElementById("game").focus();
@@ -7962,8 +8002,13 @@ function jumpMap(g, fraction) {
     // Ozbrojuje se, nikoli rovnou rodi - vlastni inicializaci si objekt
     // udela sam v `step()` normalni cestou, takze nevznikne polostav
     // (`born` bez `parts` a podobne).
+    // `armed` neni "ted se narodi", ale "je zpusobily se narodit, az na
+    // nej dojde rada" - `startGame` ho nastavuje jednou pro celou mapu
+    // dopredu. Rozsah proto musi byt shora otevreny; omezit ho zdola
+    // znamena odzbrojit vsechny objekty, ktere jsou dal v mape, a zbytek
+    // urovne zustane prazdny.
     const esy = s.y - scrollTop(g);
-    s.armed = esy >= -256 && esy <= 276;
+    s.armed = esy <= 276;
   }
   g.air.length = 0; g.hazards.length = 0; g.shots.length = 0;
   g.bullets.length = 0; g.booms.length = 0; g.tokens.length = 0;
@@ -8078,7 +8123,7 @@ function loadFromSlot(i) {
   if (d.reload) p.reload = d.reload;
   p.mode = d.mode | 0;
   p.weaponX = p.x; p.weaponY = p.y;
-  updateJumpLabel();
+  updateJumpLabel(); updateWeaponLabel();
   if (info) info.textContent = "nacteno (" + d.kdy + ")";
   document.getElementById("game").focus();
 }

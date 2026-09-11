@@ -6636,6 +6636,61 @@ def main():
             expect(nacteni["sestreleno"] is True,
                    "tank po nacteni pozice nejde sestrelit: %r" % (nacteni,))
 
+            # Druha regrese teze opravy: prvni verze omezila `armed` i
+            # zdola a tim odzbrojila vsechny objekty DAL v mape, takze
+            # zbytek urovne zustal prazdny. Porovnavame mnoziny objektu,
+            # ktere se probudi v useku 500..3000 tiku za bodem ulozeni,
+            # proti nepreruseneho behu. `born` je sticky, takze se pocita
+            # prechod !born -> born, ne stav priznaku.
+            dal = page.evaluate("""() => {
+              const sber = (g, od, do_) => {
+                const idx = new Map(g.spawns.map((s, i) => [s, i]));
+                const bylo = new Set();
+                for (const s of g.spawns) if (s.born) bylo.add(idx.get(s));
+                const nove = new Set();
+                for (let i = 0; i < do_; i++) {
+                  step(g); g.lives = 99999; g.player.inv = 999;
+                  for (const s of g.spawns) {
+                    const k = idx.get(s);
+                    if (s.born && !bylo.has(k)) {
+                      bylo.add(k); if (i >= od) nove.add(k);
+                    }
+                  }
+                }
+                return nove;
+              };
+              startGame(3);
+              let g = state.g; g.lives = 99999;
+              for (let i = 0; i < 3000; i++) {
+                step(g); g.lives = 99999; g.player.inv = 999;
+              }
+              const ref = sber(g, 500, 3000);
+              startGame(3);
+              g = state.g; g.lives = 99999;
+              for (let i = 0; i < 3000; i++) {
+                step(g); g.lives = 99999; g.player.inv = 999;
+              }
+              saveToSlot(8); loadFromSlot(8);
+              const pripraveno = state.g.spawns.filter(s =>
+                s.y - scrollTop(state.g) < -256).length;
+              const ozbrojeno = state.g.spawns.filter(s =>
+                s.y - scrollTop(state.g) < -256 && s.armed).length;
+              const po = sber(state.g, 500, 3000);
+              return { ref: ref.size, po: po.size,
+                       chybi: [...ref].filter(x => !po.has(x)).length,
+                       navic: [...po].filter(x => !ref.has(x)).length,
+                       pripraveno, ozbrojeno };
+            }""")
+            expect(dal["pripraveno"] > 100 and
+                   dal["ozbrojeno"] == dal["pripraveno"],
+                   "po nacteni zustalo %d z %d objektu dal v mape "
+                   "neozbrojenych" %
+                   (dal["pripraveno"] - dal["ozbrojeno"], dal["pripraveno"]))
+            expect(dal["ref"] > 20 and dal["chybi"] == 0 and
+                   dal["navic"] == 0,
+                   "po nacteni se probouzi jini nepratele nez bez nej: %r"
+                   % (dal,))
+
             screenshot = os.environ.get("SWIV_UI_SCREENSHOT")
             if screenshot:
                 page.screenshot(path=screenshot)

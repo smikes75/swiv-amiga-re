@@ -1365,10 +1365,28 @@ rozpracovaneho stavu shodi `step()` (boss bez `parts`). To plati pro
 primy zapis `born = true` - ne pro `armed = true`, kdy si objekt
 inicializaci udela sam normalni cestou pres `startMapObjectTask`.
 
-Opraveno na `esy >= -256 && esy <= 276`. Overeno skokem pres vsech sedm
-zon po pulzonach (98 skoku, 40 tiku po kazdem): **zadny pad, zadna JS
-chyba**. Kontrakt v `tools/uitest.py` hlida, ze po nacteni neni na
-obrazovce zadny objekt bez korutiny a ze tank jde sestrelit.
+Prvni oprava byla `esy >= -256 && esy <= 276` a **byla spatne** - hrac
+hned nahlasil, ze po nacteni jsou nepratele jen na zacatku a pak uz
+zadni. Duvod: `armed` neznamena "ted se narodi", ale "je zpusobily se
+narodit, az na nej dojde rada"; `startGame` ho nastavuje jednou pro celou
+mapu dopredu. Omezenim zdola se odzbrojilo vsech **864 objektu, ktere
+jsou dal v mape** (zmereno), takze zbytek urovne zustal prazdny.
+
+Spravne je `esy <= 276`: shora otevrene, jen bez objektu, ktere uz jsou
+za hracem. Overeno srovnanim MNOZIN objektu, ktere se probudi v useku
+500..3000 tiku za bodem ulozeni, proti nepreruseneho behu: **35 = 35,
+nula rozdilu v obou smerech**.
+
+Pozor pri mereni: `born` je sticky priznak, ktery se po smrti objektu
+nenuluje. Prvni pokus o srovnani proto hlasil 46 chybejicich objektu,
+prestoze slo o objekty davno za hracem (esy 541 az 762) - meril se stav
+priznaku, ne skutecne probuzeni. Spravne se pocita prechod
+`!born -> born`.
+
+Overeno take skokem pres vsech sedm zon po pulzonach (98 skoku, 40 tiku
+po kazdem): zadny pad, zadna JS chyba. Kontrakt v `tools/uitest.py`
+hlida, ze po nacteni neni na obrazovce zadny objekt bez korutiny a ze
+tank jde sestrelit.
 
 Pravidlo startu urovne zustava beze zmeny, takze compare 11/11 a
 spawncheck 980/981 jsou porad zelene.
