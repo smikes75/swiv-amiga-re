@@ -1222,3 +1222,38 @@ objektu by nebylo co porovnavat.
 Hloubka taky sama o sobe snizuje strop: v tuhle chvili uz original hraje
 desitky minut se super zbranemi, takze je na obrazovce vic vybuchu nez
 terenu. Cim mensi hloubka, tim cistsi snimek.
+
+
+## Lockstep: simulace je prenositelna mezi JS enginy (zmereno 2026-09-11)
+
+Pred jakoukoli sitovou hrou je potreba vedet, jestli dva prohlizece
+spocitaji z tychz vstupu tentyz stav. `tools/lockstep.py` to meri primo:
+tyz skriptovany beh v **Chromiu (V8)** a **WebKitu (JavaScriptCore)**,
+otisk celeho stavu po kazdem tiku.
+
+**Vysledek: 5600 tiku ve ctyrech scenarich bit po bitu shodnych**, vcetne
+dvou hracu, palby, skoku jeepu a prechodu pres SWAP plosiny v RIVERu.
+
+Proc to vychazi: IEEE 754 zarucuje, ze `+ - * /` na doublech daji na
+kazde platforme tentyz vysledek. Nezarucene jsou jen transcendentni
+funkce, a ty v hernim kroku nejsou. PRNG `0x883c` je celociselny.
+
+**Oprava drivejsiho tvrzeni.** 2026-09-10 jsem napsal, ze `SIN256`
+(pocitana pres `Math.sin`) je riziko rozjezdu a chce predpocitat na
+konstanty. **Neni.** Zmereno: hodnota nejblizsi hranici zaokrouhleni je
+index 229 (−157,499287), tedy **1,25e10 ulp** od preklopeni; rozdily
+`Math.sin` mezi enginy jsou radu jednotek ulp. Navic je tabulka v
+AMPROG.OBJ na `0x6a82` a porovnanim vyslo **0 neshod ve vsech 256
+polozkach** s `round(256*sin)`, takze prepis uz ted pocita presne ta
+cisla, ktera ma hra v datech.
+
+Kontrakt ma **vlastni kontrolu citlivosti**: posune hraci `x` o jediny
+ulp a overi, ze se otisk zmeni. Bez toho by prosel i otisk, ktery nic
+nemeri.
+
+**Co z toho plyne pro sit:** lockstep je proveditelny bez jedine zmeny
+simulace. Zbyva mimo ni: signalling server (jedina vec, ktera nejde
+udelat v jednom HTML souboru), 2-4 snimky vstupniho zpozdeni, kontrolni
+soucet ADF v handshake (SWIVFIX a ciste SWIV se lisi startovni zbrani) a
+periodicke porovnani otisku jako detektor rozjezdu - k tomu uz staci
+`window.__hash` z tohoto kontraktu.

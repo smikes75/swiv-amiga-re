@@ -116,6 +116,14 @@ Disassembly needs `m68k-elf-binutils` (`brew install m68k-elf-binutils`).
 | verification | ✅ 43-check data contract, five runtime contracts, and **eleven pixel checkpoints against the original emulated A500** — seven in TOWN, one at the DESERT scroll lock, and terrain-only ones in GRASS, RIVER, ICE and SCIFI, which the game only reaches once `fp@(166)` bit 3 is cleared frame by frame in the WebAssembly harness |
 | `AMPROG.OBJ` (55,668 B game code) | 🟨 partially mapped (73-route dispatch + 155/155 TOWN objects, map interpreter, sound, animations, bob drawer) |
 
+The simulation is also **bit-for-bit portable between JavaScript engines**:
+`tools/lockstep.py` replays the same scripted game in Chromium (V8) and
+WebKit (JavaScriptCore) and compares a state fingerprint after every tick —
+5,600 ticks across four scenarios, including two players and a level
+transition, come out identical. IEEE 754 guarantees that for `+ - * /`, and
+the game step uses no transcendental functions; the PRNG is integer. That is
+the precondition for lockstep networking, where only inputs travel.
+
 Detailed write-ups live in [`docs/`](docs/):
 [FORMAT](docs/FORMAT.md) · [LOADER](docs/LOADER.md) ·
 [CATALOG](docs/CATALOG.md) · [GRAPHICS](docs/GRAPHICS.md) ·
