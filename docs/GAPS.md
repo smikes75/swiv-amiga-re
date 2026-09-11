@@ -1257,3 +1257,49 @@ udelat v jednom HTML souboru), 2-4 snimky vstupniho zpozdeni, kontrolni
 soucet ADF v handshake (SWIVFIX a ciste SWIV se lisi startovni zbrani) a
 periodicke porovnani otisku jako detektor rozjezdu - k tomu uz staci
 `window.__hash` z tohoto kontraktu.
+
+
+## Hra ve dvou po siti (2026-09-11)
+
+Lockstep: po siti jdou **jen vstupy**, obe strany pocitaji tutez
+simulaci. Herni kod se kvuli tomu nezmenil ani o radek - nova vrstva jen
+rozhoduje, KDY smi `step()` bezet a cim jsou naplnene `g.keys`/`g.keys2`.
+
+- **Vstupni zpozdeni 3 tiky** (60 ms). Vlastni vstup pro tik `t+3` vznika
+  a odesila se v tiku `t`; prvni tri tiky se predvyplni prazdnym vstupem
+  na obou stranach.
+- **Signalling je rucni** - kazda strana ukaze kod a vlozi ten druhy.
+  Diky tomu zustava projekt jeden staticky soubor bez serveru. SDP se
+  zabali `CompressionStream('deflate-raw')`, takze kod ma ~700-800 znaku
+  misto nekolika kilobajtu.
+- **Kontrolni soucet .adf** je v kodu obsazeny: SWIVFIX a ciste SWIV se
+  lisi uz startovni zbrani, takze bez teto kontroly by se hry rozesly
+  hned a nebylo by poznat proc.
+- **Detektor rozjezdu** porovnava otisk stavu kazdych 50 tiku. Nehleda,
+  KDE se hry rozesly, jen ZE se rozesly; ladeni je na `tools/lockstep.py`.
+- U kazdeho stroje sedi jeden hrac, takze **obe sady klaves ovladaji jeho
+  vlastni stroj** (sipky i WASD). Hostitel ridi vrtulnik, host jeep.
+
+**Zmereno** (`tools/nettest.py`, sedmy kontrakt): hostitel v Chromiu (V8)
+a host ve WebKitu (JavaScriptCore), spojeni pres skutecny WebRTC datovy
+kanal, bez stubnute smycky - **400 spolecnych tiku, 0 neshod**, obe
+strany vidi dva hrace. Zkouska detektoru: umely posun hrace o 3 px na
+jedne strane byl zachycen do jedne periody porovnani.
+
+### Meze a co zbyva
+
+- **Symetricky NAT.** Prime spojeni potrebuje pruchod NATem; STUN
+  (`stun.l.google.com`, jen zjisteni vlastni adresy, zadna data hry) staci
+  na vetsinu pripojeni, ale ne na symetricky NAT. Tam by byl nutny TURN
+  relay a ten uz serverem je. Prepis to pozna (`iceConnectionState`
+  `failed`) a rekne to; na spolecne siti funguje vzdy.
+- **Datovy kanal je `ordered: true`, tedy spolehlivy.** Pri ztrate paketu
+  to znamena kratkodobe zadrhnuti misto rozjezdu - pro lockstep spravna
+  volba, ale nepokryva to spatnou linku tak elegantne jako posilani
+  poslednich N vstupu v nespolehlivem rezimu.
+- **Zpozdeni je pevne 3 tiky**, neprizpusobuje se latenci. Pres ocean to
+  bude malo.
+- **Pauza (`P`) a vyvojarske zkratky nejsou synchronizovane** - po siti by
+  je mel ovladat jen hostitel, nebo by mely byt vypnute.
+- **Rozjezd se neresi, jen hlasi.** Obnova stavu (host posle svuj stav
+  hostovi) neni implementovana.

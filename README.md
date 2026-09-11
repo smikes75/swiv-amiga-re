@@ -116,6 +116,19 @@ Disassembly needs `m68k-elf-binutils` (`brew install m68k-elf-binutils`).
 | verification | ✅ 43-check data contract, five runtime contracts, and **eleven pixel checkpoints against the original emulated A500** — seven in TOWN, one at the DESERT scroll lock, and terrain-only ones in GRASS, RIVER, ICE and SCIFI, which the game only reaches once `fp@(166)` bit 3 is cleared frame by frame in the WebAssembly harness |
 | `AMPROG.OBJ` (55,668 B game code) | 🟨 partially mapped (73-route dispatch + 155/155 TOWN objects, map interpreter, sound, animations, bob drawer) |
 
+**Two players over the network.** Because only inputs travel and both
+sides run the same simulation, the page can host a direct browser-to-browser
+game with **no server at all**: each side shows a code, you send it to the
+other player however you like, and paste theirs back. The host flies the
+helicopter, the guest drives the jeep. Both need the same `.adf` — the code
+carries a checksum, because SWIVFIX and a clean SWIV already differ in the
+starting weapon. `tools/nettest.py` plays a real game between Chromium and
+WebKit over an actual WebRTC data channel: 400 ticks, zero divergence, and
+the desync detector catches a deliberately corrupted state. A direct
+connection needs to get through NAT; that works on a shared network always
+and over the internet for most setups, but symmetric NAT would need a relay,
+which is a server — the page says so instead of hanging.
+
 The simulation is also **bit-for-bit portable between JavaScript engines**:
 `tools/lockstep.py` replays the same scripted game in Chromium (V8) and
 WebKit (JavaScriptCore) and compares a state fingerprint after every tick —

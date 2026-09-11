@@ -47,12 +47,36 @@ a { color:#cfe0ff }
   <a href="https://github.com/smikes75/swiv-amiga-re">repo</a>.</p>
   <p>Insert your own S.W.I.V. disk image (.adf). Nothing is uploaded.</p>
   <a class="btn" id="insert">&#128190; Insert disk</a>
-  <p><small>P1 heli: arrows + space &middot; P2 jeep: WASD + shift, Q jumps (joins for a credit) &middot; sound on first click</small></p>
+  <p><small>P1 heli: arrows + space &middot; P2 jeep: WASD + shift, Q jumps (joins for a credit) &middot; or play against someone over the network, no server &middot; sound on first click</small></p>
 </div>
 
 <div id="titlewrap" style="display:none">
   <canvas id="title" style="image-rendering:pixelated;border:3px solid var(--black);cursor:pointer"></canvas>
   <p id="titlehint" style="display:none"><b>PRESS FIRE</b> <small>(space / click)</small></p>
+</div>
+
+<div id="netpanel" style="display:none;max-width:640px;margin:12px auto;
+     text-align:left;border:2px solid var(--black);padding:10px">
+  <p style="margin:0 0 6px"><b>Hra ve dvou po s&#237;ti</b> &mdash; spojen&#237; je
+  p&#345;&#237;m&#233;, mezi dv&#283;ma prohl&#237;&#382;e&#269;i. &#381;&#225;dn&#253; server, disk se nikam
+  neposíl&#225; &mdash; ka&#382;d&#253; hr&#225;&#269; vkl&#225;d&#225; sv&#367;j vlastn&#237;.</p>
+  <p style="margin:0 0 8px"><small>Hostitel &#345;&#237;d&#237; vrtuln&#237;k, host jeep.
+  Oba mus&#237; m&#237;t <b>tent&#253;&#382; .adf</b>, jinak se hry rozejdou.</small></p>
+  <div id="netstart">
+    <a class="btn" id="nethost">Vytvo&#345;it hru</a>
+    <a class="btn" id="netjoin">P&#345;ipojit se</a>
+  </div>
+  <div id="netstep" style="display:none;margin-top:8px">
+    <p id="netlabel" style="margin:0 0 4px"><b></b></p>
+    <textarea id="netout" readonly style="width:100%;height:52px;
+      font:11px monospace" placeholder="k&#243;d se objev&#237; tady"></textarea>
+    <a class="btn" id="netcopy">Kop&#237;rovat k&#243;d</a>
+    <p id="netaskin" style="margin:8px 0 4px"><b>Vlo&#382; k&#243;d od protihr&#225;&#269;e:</b></p>
+    <textarea id="netin" style="width:100%;height:52px;font:11px monospace"
+      placeholder="sem vlo&#382; k&#243;d"></textarea>
+    <a class="btn" id="netgo">Nav&#225;zat spojen&#237;</a>
+  </div>
+  <p id="netstatus" style="margin:8px 0 0"><small></small></p>
 </div>
 
 <div id="levelpick" style="display:none">
@@ -1594,6 +1618,8 @@ function showTitle() {
   stopAttract();
   // vyber zony je videt uz pod titulni obrazovkou (hrac nemusi od TOWN)
   $("#levelpick").style.display = "";
+  // Sitovy panel se ukaze jen kdyz ho prohlizec umi obslouzit.
+  if (window.RTCPeerConnection) $("#netpanel").style.display = "";
   $("#gamewrap").style.display = "none";
   $("#titlewrap").style.display = "";
   const cv = $("#title"); cv.width = 320; cv.height = 256;
@@ -7251,6 +7277,262 @@ function firePlayerWeapon(g, p, ang, ox, oy) {
   }
 }
 
+/* ==== Hra ve dvou po siti (neni v originale) =========================
+
+   Lockstep: po siti jdou JEN VSTUPY, obe strany pocitaji tutez simulaci.
+   Ze to jde, je zmerene - `tools/lockstep.py` porovnava otisk stavu po
+   kazdem tiku mezi V8 a JavaScriptCore a 5600 tiku vyslo bit po bitu
+   shodnych. Herni kod se proto kvuli siti NEMENI ani o radek; tahle
+   vrstva jen rozhoduje, KDY smi `step()` bezet a cim jsou naplnene
+   `g.keys` / `g.keys2`.
+
+   Signalling je rucni: kazda strana ukaze kod a vlozi ten druhy. Diky
+   tomu projekt zustava jeden staticky soubor bez serveru. Prakticke meze
+   jsou popsane u `netIce`. */
+
+const NET_DELAY = 3;              // tiku vstupniho zpozdeni (60 ms pri 50 Hz)
+const NET_HASH_EVERY = 50;        // jak casto porovnat otisk stavu
+const NET_BITS = { u: 1, d: 2, l: 4, r: 8, f: 16, j: 32 };
+
+/* Google provozuje verejny STUN zdarma. Slouzi JEN k tomu, aby prohlizec
+   zjistil svou verejnou adresu - zadna data hry pres nej netecou. Na
+   stejne siti neni potreba vubec; pri symetrickem NATu naopak nestaci a
+   spojeni se nenavaze (poznat to jde podle stavu `failed`). */
+const NET_ICE = [{ urls: "stun:stun.l.google.com:19302" }];
+
+const NET = {
+  pc: null, dc: null, role: null, active: false,
+  local: new Map(),               // tik -> byte (vlastni, uz odeslane)
+  remote: new Map(),              // tik -> byte (od protejska)
+  hashes: new Map(),              // tik -> otisk protejska
+  waiting: 0, level: 0, adfSum: 0, desync: null, lastSent: -1,
+};
+
+function netKeysToByte(keys) {
+  let b = 0;
+  for (const k in NET_BITS) if (keys[k]) b |= NET_BITS[k];
+  return b;
+}
+function netByteToKeys(b) {
+  const keys = {};
+  for (const k in NET_BITS) if (b & NET_BITS[k]) keys[k] = true;
+  return keys;
+}
+
+/* Otisk stavu pro detekci rozjezdu. Zamerne levny - jde jen o to
+   ZJISTIT, ze se hry rozesly, ne najit kde. Plnou diagnostiku dela
+   `tools/lockstep.py`. */
+function netStateHash(g) {
+  let h = 0x811C9DC5;
+  const mix = v => { h = Math.imul((h ^ (v | 0)) >>> 0, 0x01000193) >>> 0; };
+  mix(g.tick); mix(Math.round(g.scroll * 16)); mix(g.score); mix(g.lives);
+  mix(g.rngState); mix(g.activeCost); mix(g.jeepScore | 0);
+  const p = g.player, j = g.player2;
+  mix(Math.round(p.x * 16)); mix(Math.round(p.y * 16)); mix(p.alive ? 1 : 0);
+  mix(j ? Math.round(j.x * 16) : -1); mix(j ? Math.round(j.y * 16) : -1);
+  mix(g.bullets.length); mix(g.air.length); mix(g.shots.length);
+  let n = 0;
+  for (const s of g.spawns) if (s.born && s.alive) { n++; mix(s.hp | 0); }
+  mix(n);
+  return h >>> 0;
+}
+
+function netSend(obj) {
+  if (NET.dc && NET.dc.readyState === "open")
+    NET.dc.send(JSON.stringify(obj));
+}
+
+function netStatus(text, bad) {
+  const el = document.querySelector("#netstatus small");
+  if (el) { el.textContent = text; el.style.color = bad ? "#a00" : ""; }
+}
+
+/* Kontrolni soucet vlozeneho .adf. SWIVFIX a ciste SWIV se lisi uz
+   startovni zbrani, takze bez teto kontroly by se hry rozesly hned a
+   nebylo by poznat proc. */
+function netAdfSum(bytes) {
+  let h = 0x811C9DC5;
+  // Cely obraz je 880 KB; staci kazdy 512. bajt, rozdil mezi verzemi
+  // lezi v kodu, ne v jednom bajtu.
+  for (let i = 0; i < bytes.length; i += 512)
+    h = Math.imul((h ^ bytes[i]) >>> 0, 0x01000193) >>> 0;
+  return (h ^ bytes.length) >>> 0;
+}
+
+function netReset() {
+  if (NET.dc) { try { NET.dc.close(); } catch (e) {} }
+  if (NET.pc) { try { NET.pc.close(); } catch (e) {} }
+  Object.assign(NET, { pc: null, dc: null, role: null, active: false,
+    waiting: 0, desync: null, lastSent: -1 });
+  NET.local.clear();
+  NET.remote.clear(); NET.hashes.clear();
+}
+
+/* Kod pro protejska. SDP je textove a dlouhe, takze se jeste zabali
+   deflatem, kdyz ho prohlizec umi (vsechny dnesni ano); bez nej se posle
+   jen base64 a kod je delsi. */
+async function netPack(desc) {
+  const raw = JSON.stringify({ t: desc.type, s: desc.sdp,
+                               v: NET.adfSum, l: NET.level });
+  const bytes = new TextEncoder().encode(raw);
+  let out = bytes;
+  if (typeof CompressionStream === "function") {
+    const cs = new CompressionStream("deflate-raw");
+    const w = cs.writable.getWriter(); w.write(bytes); w.close();
+    out = new Uint8Array(await new Response(cs.readable).arrayBuffer());
+  }
+  let bin = "";
+  for (const b of out) bin += String.fromCharCode(b);
+  return (out === bytes ? "R" : "D") + btoa(bin);
+}
+async function netUnpack(code) {
+  const mode = code[0];
+  const bin = atob(code.slice(1).replace(/\s+/g, ""));
+  let bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  if (mode === "D") {
+    const ds = new DecompressionStream("deflate-raw");
+    const w = ds.writable.getWriter(); w.write(bytes); w.close();
+    bytes = new Uint8Array(await new Response(ds.readable).arrayBuffer());
+  }
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+
+/* ICE kandidati chodi postupne; kod smi vzniknout az jsou vsichni, jinak
+   by protejsek dostal nepouzitelnou adresu. */
+function netIce(pc) {
+  return new Promise(resolve => {
+    if (pc.iceGatheringState === "complete") return resolve();
+    const check = () => {
+      if (pc.iceGatheringState === "complete") {
+        pc.removeEventListener("icegatheringstatechange", check); resolve();
+      }
+    };
+    pc.addEventListener("icegatheringstatechange", check);
+    setTimeout(resolve, 4000);     // pomala sit nesmi zablokovat panel
+  });
+}
+
+function netAttachChannel(dc) {
+  NET.dc = dc;
+  dc.onopen = () => {
+    netStatus("Spojeno. Hra začíná…");
+    NET.active = true;
+    // Prvnich NET_DELAY tiku nema kdo poslat vstup (vlastni se posila pro
+    // tik t+DELAY), takze se predvyplni prazdnym na OBOU stranach.
+    for (let t = 0; t < NET_DELAY; t++) {
+      NET.local.set(t, 0); NET.remote.set(t, 0);
+    }
+    startGame(NET.level | 0);
+    $("#netpanel").style.display = "none";
+  };
+  dc.onclose = () => {
+    if (NET.active) netStatus("Protihráč se odpojil.", true);
+    NET.active = false;
+  };
+  dc.onmessage = ev => {
+    let m;
+    try { m = JSON.parse(ev.data); } catch (e) { return; }
+    if (m.i !== undefined) NET.remote.set(m.t, m.i);
+    else if (m.h !== undefined) NET.hashes.set(m.t, m.h >>> 0);
+  };
+}
+
+function netNewConnection() {
+  const pc = new RTCPeerConnection({ iceServers: NET_ICE });
+  pc.oniceconnectionstatechange = () => {
+    if (pc.iceConnectionState === "failed")
+      netStatus("Spojení se nepodařilo navázat. Přímé "
+                + "spojení nepustí vaše síť (symetrický NAT); "
+                + "na společné síti to funguje vždy.", true);
+  };
+  NET.pc = pc;
+  return pc;
+}
+
+async function netHost() {
+  netReset();
+  NET.role = "host";
+  NET.adfSum = netAdfSum(state.adf);
+  const pc = netNewConnection();
+  netAttachChannel(pc.createDataChannel("swiv", { ordered: true }));
+  await pc.setLocalDescription(await pc.createOffer());
+  await netIce(pc);
+  return netPack(pc.localDescription);
+}
+
+async function netGuest(code) {
+  netReset();
+  NET.role = "guest";
+  NET.adfSum = netAdfSum(state.adf);
+  const offer = await netUnpack(code);
+  if ((offer.v >>> 0) !== NET.adfSum)
+    throw new Error("Hostitel má jiný .adf než vy. "
+                    + "Oba potřebujete tentýž obraz disku.");
+  NET.level = offer.l | 0;
+  const pc = netNewConnection();
+  pc.ondatachannel = ev => netAttachChannel(ev.channel);
+  await pc.setRemoteDescription({ type: offer.t, sdp: offer.s });
+  await pc.setLocalDescription(await pc.createAnswer());
+  await netIce(pc);
+  return netPack(pc.localDescription);
+}
+
+async function netHostAccept(code) {
+  const answer = await netUnpack(code);
+  if ((answer.v >>> 0) !== NET.adfSum)
+    throw new Error("Protihráč má jiný .adf než vy.");
+  await NET.pc.setRemoteDescription({ type: answer.t, sdp: answer.s });
+}
+
+/* Vola se z `frame()` pred kazdym `step()`. Vrati false, kdyz jeste
+   nemame vstup protejska pro tento tik - pak se ceka. */
+function netReadyForTick(g) {
+  const t = g.tick | 0;
+  // Vlastni vstup pro tik t+DELAY vznika a odesila se prave ted.
+  const send = t + NET_DELAY;
+  if (send > NET.lastSent) {
+    NET.lastSent = send;
+    const mine = netKeysToByte(g.netLocal || {});
+    NET.local.set(send, mine);
+    netSend({ t: send, i: mine });
+  }
+  const mine = NET.local.get(t);
+  const theirs = NET.remote.get(t);
+  if (mine === undefined || theirs === undefined) {
+    NET.waiting++;
+    return false;
+  }
+  NET.waiting = 0;
+  const host = NET.role === "host" ? mine : theirs;
+  const guest = NET.role === "host" ? theirs : mine;
+  g.keys = netByteToKeys(host);
+  g.keys2 = netByteToKeys(guest);
+  // Dokud slot 2 nehraje, WASD ovladaji slot 1 (stejne jako lokalne);
+  // po siti to ale delat NESMIME - host by jinak ridil hosta.
+  NET.local.delete(t - 120); NET.remote.delete(t - 120);
+  return true;
+}
+
+/* Porovnani otisku. Nehleda, kde se hry rozesly - jen to, ZE se rozesly,
+   a rekne to obema. Ladeni je pak na `tools/lockstep.py`. */
+function netCheckHash(g) {
+  const t = g.tick | 0;
+  if (t % NET_HASH_EVERY) return;
+  const mine = netStateHash(g);
+  netSend({ t, h: mine });
+  const theirs = NET.hashes.get(t);
+  if (theirs === undefined) return;
+  NET.hashes.delete(t);
+  if (theirs !== mine && !NET.desync) {
+    NET.desync = t;
+    netStatus(`Hry se rozesly v tiku ${t}. Simulace uz nesouhlasí, `
+              + `spojení ukončeno.`, true);
+    NET.active = false;
+    if (NET.dc) try { NET.dc.close(); } catch (e) {}
+  }
+}
+
 /* ---- start urovne: ozbrojeni mapovych objektu ----------------------
    `0x3596` cte zaznamy PAM a pro kazdy objektovy zaznam vola `0x3652`.
    Tam je v objektove vetvi na `0x3722` tento test:
@@ -7398,6 +7680,7 @@ function startGame(lv) {
            +(document.getElementById("livesbox").value) || 4,
     scrollMul: (+document.getElementById("scrollpct").value || 100) / 100,
     keys: {}, keys2: {},
+    netLocal: {},               // co macka hrac u TOHOTO stroje (jen sit)
     // 0x6f46 slot 2; vznika az pripojenim (tryJoinJeep).
     player2: null,
     // fp@(3558): 0x1d6a ji nastavuje na -1 = zadny strop.
@@ -7428,6 +7711,7 @@ function startGame(lv) {
     if (el) el.textContent = ""; }
   stopModuleMusic();
   $("#levelpick").style.display = "none";
+  if (!NET.active) $("#netpanel").style.display = "none";
   $("#gamewrap").style.display = "";
   if (!state.loopRunning) { state.loopRunning = true; requestAnimationFrame(frame); }
 }
@@ -7602,8 +7886,19 @@ const KEYMAP = { ArrowLeft: "l", ArrowRight: "r", ArrowUp: "u", ArrowDown: "d",
 const KEYMAP2 = { a: "l", d: "r", w: "u", s: "d", Shift: "f", q: "j" };
 function applyKey(g, e, down) {
   const k1 = KEYMAP[e.key];
+  const kx = KEYMAP2[e.key] || KEYMAP2[e.key.toLowerCase()];
+  // Po siti sedi u kazdeho stroje JEDEN hrac, takze obe sady klaves
+  // ovladaji jeho vlastni stroj - at uz mu pripadl vrtulnik, nebo jeep.
+  // Vstup se neaplikuje hned: `netReadyForTick` ho posle protejsku a
+  // obe strany jej pouziji az ve stejnem tiku.
+  if (NET.active) {
+    const k = k1 || kx;
+    if (!k) return false;
+    (g.netLocal = g.netLocal || {})[k] = down;
+    return true;
+  }
   if (k1) { g.keys[k1] = down; return true; }
-  const k2 = KEYMAP2[e.key] || KEYMAP2[e.key.toLowerCase()];
+  const k2 = kx;
   if (!k2) return false;
   g.keys2[k2] = down;
   if (k2 === "j") return true;                 // skok ma jen jeep
@@ -7616,7 +7911,7 @@ function applyKey(g, e, down) {
 // Prepnuti okna s drzenou klavesou nechalo klavesu "zmacknutou" a stroj
 // odjel sam; pri ztrate fokusu se proto stav klaves vycisti.
 window.addEventListener("blur", () => {
-  if (state.g) { state.g.keys = {}; state.g.keys2 = {}; }
+  if (state.g) { state.g.keys = {}; state.g.keys2 = {}; state.g.netLocal = {}; }
 });
 /* ---- Vyvojarske ovladani (neni soucast originalu) -------------------
    Skok po mape meni jen scroll a znovu nastavi `armed` podle nove polohy,
@@ -7773,6 +8068,55 @@ function loadFromSlot(i) {
 // az tady, protoze `const SAVE_SLOTS` vyse je do sve definice v docasne
 // mrtve zone a drivejsi volani spadne na "Cannot access before initialization"
 refreshSlots();
+
+/* ---- ovladani sitoveho panelu -------------------------------------- */
+function netShowStep(label, out, chce) {
+  $("#netstart").style.display = "none";
+  $("#netstep").style.display = "";
+  $("#netlabel").firstChild.textContent = label;
+  $("#netout").value = out || "";
+  $("#netcopy").style.display = out ? "" : "none";
+  $("#netaskin").style.display = chce ? "" : "none";
+  $("#netin").style.display = chce ? "" : "none";
+  $("#netgo").style.display = chce ? "" : "none";
+}
+function netFail(e) {
+  netStatus(String(e && e.message || e), true);
+}
+if (window.RTCPeerConnection) {
+  $("#nethost").onclick = async () => {
+    netStatus("Vytv\u00e1\u0159\u00edm k\u00f3d\u2026");
+    try {
+      const code = await netHost();
+      netShowStep("1. Po\u0161li tenhle k\u00f3d protihr\u00e1\u010di:", code, true);
+      netStatus("A\u017e ti po\u0161le sv\u016fj k\u00f3d zp\u00e1tky, vlo\u017e ho n\u00ed\u017ee.");
+    } catch (e) { netFail(e); }
+  };
+  $("#netjoin").onclick = () => {
+    netShowStep("", "", true);
+    $("#netaskin").firstChild.textContent = "Vlo\u017e k\u00f3d od hostitele:";
+    netStatus("");
+  };
+  $("#netgo").onclick = async () => {
+    const code = $("#netin").value.trim();
+    if (!code) return netStatus("Nejd\u0159\u00edv vlo\u017e k\u00f3d.", true);
+    try {
+      if (NET.role === "host") {
+        await netHostAccept(code);
+        netStatus("K\u00f3d p\u0159ijat, nav\u00e1z\u00e1v\u00e1m spojen\u00ed\u2026");
+      } else {
+        const answer = await netGuest(code);
+        netShowStep("2. Po\u0161li tenhle k\u00f3d zp\u00e1tky hostiteli:", answer, false);
+        netStatus("A\u017e ho vlo\u017e\u00ed, hra za\u010dne oboum naraz.");
+      }
+    } catch (e) { netFail(e); }
+  };
+  $("#netcopy").onclick = () => {
+    $("#netout").select();
+    navigator.clipboard.writeText($("#netout").value)
+      .then(() => netStatus("K\u00f3d zkop\u00edrov\u00e1n."), () => {});
+  };
+}
 
 window.addEventListener("keydown", e => {
   // P = pauza. Zmereno v harnessu: prvni stisk zastavi mapu (25 px za
@@ -10793,7 +11137,14 @@ function frame(now) {
   if (g.paused) g.frac = 0;                    // pauza mrazi jen logiku
   while (g.frac >= TICK) {
     g.frac -= TICK;
-    if (!g.over) { step(g); stepped++; }
+    // Lockstep: bez vstupu protejska se tenhle tik nesmi spocitat, jinak
+    // by se simulace rozesly. Zbytek nastradaneho casu se zahodi, aby se
+    // po cekani dohanelo desitkami tiku naraz.
+    if (NET.active && !g.over && !netReadyForTick(g)) { g.frac = 0; break; }
+    if (!g.over) {
+      step(g); stepped++;
+      if (NET.active) netCheckHash(g);
+    }
     else if (g.won && (!g.congrat || !g.congrat.done)) {
       // 0xd90 vola 0xf42 jeste pred statistikou 0xda2
       if (!g.congrat) beginCongrat(g);
