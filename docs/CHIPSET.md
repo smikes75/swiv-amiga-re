@@ -508,10 +508,27 @@ nezavisle dohledana hledanim nejlepsi shody spritu):
     bez masky                              904 / 1330 =  68 %
     podle vrstvy objektu z mapy (byla 2)  1129 / 1330 =  85 %
     jen vrstva 1 prekryva                 1330 / 1330 = 100 %
+    OSTRA nerovnost proti vrstve objektu  1330 / 1330 = 100 %
     prah 3 nebo 4                          648 / 1330 =  49 %
 
-**Popredi je tedy JEN vrstva 1**, bez ohledu na vrstvu objektu. Vrstva 0
-popredi neni - razeni dlazdic ji dava prioritu 5, tedy uplne dozadu.
+Prvni vyklad toho stoprocentniho vysledku byl **"popredi je jen vrstva
+1"** - a byl SPATNE. V TOWN je ve vrstve 1 jen sest stromu ze ctyriceti
+dvou, takze to maskovani prakticky vyplo a hrac hned nahlasil, ze tanky
+zase jezdi pres stromy.
+
+Spravne vysvetleni teze namerene stovky: tank ma vrstvu **2** a dlazdice
+`_JUNGLE#3` **teze vrstvy 2** ho neprekryva, zatimco `_JUNGLE#2` ve
+vrstve **1** ano. Nerovnost je tedy **OSTRA**:
+
+    dlazdice prekryva objekt  <=>  vrstva dlazdice < vrstva objektu
+
+To dava obe veci naraz: na referencnim tanku 100 % a v TOWN zustava
+maskovani zive - z 291 vzorku objektu ve vrstve je 97 zakrytych vic nez
+z desetiny, nejvic zakryty je z 59 %. S variantou "jen vrstva 1" by to
+bylo 25 z 291.
+
+Popredi jsou vrstvy 1 az 3. Vrstva 0 ne - razeni dlazdic ji dava
+prioritu 5, tedy uplne dozadu; vrstva 4 je zem pod vsim.
 
 **Kdo se maskuje, rika `+397` bit 0** - originalni priznak, ktery
 nastavuje 28 mist v AMPROG.OBJ. Je **per uloha**, takze si ho nastavuji
@@ -521,18 +538,45 @@ i deti: `train` ma dve mista (lokomotiva `0x9b90`, vagon `0x9c4a`),
 `0x898c`, vez jeepu `0x89ee`, lod `0x8e88`, jeep `0x90f0` a cakance
 `0x937a`. Slozeny objekt je tim maskovany cely.
 
-Tenhle model navic nepotrebuje u objektu cist nic z mapy, coz je dobre:
-vrstvove bity u OBJEKTOVEHO zaznamu original pri dekodovani zahazuje
-(`0x371e` maskuje x na devet bitu). Drivejsi pravidlo tedy stalo na
-poli, ktere original ignoruje.
+Vsech 28 mist je prirazeno ke korutine, ve ktere lezi, a tim i k nasemu
+kodu - cela tabulka je v `docs/GAPS.md`. Casti slozenych objektu jsou u
+nas hazardy bez mapoveho zaznamu, takze vrstvu dedi po rodici
+(`inheritedLayer`). Strely a stopy, ktere bit 0 taky maji, zamerne
+nemaskujeme: odletuji pryc od strelce a vrstva rodice je jen zastupna
+hodnota.
 
-**Zmereno** na tom konkretnim FLATTANKu (RIVER, pozice 45488, x 22,
-obrazovkove y 71), shoda obrysu spritu s originalem:
+### Poctive priznani: vrstvu objektu original zahazuje
 
-    bez vrstev   904 / 1330 = 68 %
-    s vrstvami  1071 / 1330 = 81 %
+Ostra nerovnost potrebuje vrstvu OBJEKTU, a tu original z mapy **necte**.
+V dekoderu je to videt cerne na bilem - objektova vetev `0x36fe`:
 
-Vsech jedenact checkpointu `compare.py` zustalo beze zmeny - v TOWN na
+    371e:  0240 01ff   andiw #511,%d0      ; x na devet bitu, vrstva pryc
+    3774:  3140 0140   movew %d0,%a0@(320) ; ulozi se jen x
+    3780:  4228 018d   clrb  %a0@(397)     ; priznak masky se pri vzniku nuluje
+
+Dlazdicova vetev `0x36c2` naproti tomu vrstvu z tehoz pole vytahne
+(`while x >= 416: x -= 512; vrstva--`) a da ji do tridiciho klice `+8`.
+
+Ta data ale v mape jsou a nesou signal - objektu s vrstvou 4 (tedy bez
+zadneho 512-bloku) je napric vsemi sedmi urovnemi jen dvanact z 1497:
+
+    uroven   objektu   vrstva 4 / 3 / 2 / 1
+    TOWN        155       0 /  45 /  59 /  51
+    DESERT      274       2 /  56 /  49 / 167
+    GRASS       132       0 /  61 /   7 /  64
+    RIVER       212       6 /  51 /  37 / 118
+    ICE         367       3 /  79 /  35 / 250
+    SCIFI       356       1 /  22 /  41 / 292
+    BOSS          1       0 /   1 /   0 /   0
+
+Editor tedy vrstvu u objektu vyplnoval, i kdyz ji hra pri dekodovani
+zahodila. **Nase pravidlo je proto zastupne, ne mechanismus originalu**:
+reprodukuje obraz (100 % na referencnim tanku), protoze designer objekty
+umistoval konzistentne s okolnim porostem, ale cesta, kterou se hloubka
+dostane do kresleni v originalu, zustava nenalezena. Kdyby se nasla,
+tohle pravidlo se ma nahradit - ne doplnit.
+
+Vsech dvanact checkpointu `compare.py` zustalo beze zmeny - v TOWN na
 nich zadny objekt pod popredovou dlazdici neni, takze to tam nic
 nezhorsilo ani nezlepsilo.
 

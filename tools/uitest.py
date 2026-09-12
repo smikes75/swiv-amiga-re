@@ -6766,25 +6766,26 @@ def main():
                    "pauzovy napis neni vystredeny: x=%d, sirka=%d" %
                    (pauza["stred"], pauza["sirka"]))
 
-            # ---- vrstvy: popredi (vrstva 1) prekryva pozemni objekty -
-            # Model zmereny proti originalu (FLATTANK v RIVERu, pozice
-            # 45488): popredi je JEN vrstva 1 a maskuji se objekty, jejichz
-            # rutina nastavuje `+397` bit 0. S variantou "vsechny vrstvy
-            # pod vrstvou objektu" vyslo 85 % shody obrysu, s touto 100 %.
+            # ---- vrstvy: OSTRA nerovnost proti vrstve objektu --------
+            # Dlazdice prekryva objekt prave kdyz ma NIZSI cislo vrstvy.
+            # Zmereno proti originalu (FLATTANK v RIVERu, pozice 45488):
+            # s neostrou nerovnosti 85 % shody obrysu, s ostrou 100 %.
+            # Varianta "popredi je jen vrstva 1" davala na tomhle miste
+            # taky 100 %, ale v TOWN maskovani prakticky vyplo (ve vrstve
+            # 1 je jen sest stromu ze ctyriceti dvou) - proto se tady meri
+            # OBE kriteria zaroven.
             vrstvy = page.evaluate("""() => {
               startGame(3);
               const g = state.g;
               const t = g.spawns.filter(s => s.beh === "flattank")
                                 .find(s => Math.round(s.x) === 22);
               if (!t) return { chybi: true };
-              // foreLayer smi obsahovat JEN vrstvu 1 (ulozena jako 2)
-              const hodnoty = new Set();
-              for (let i = 0; i < g.foreLayer.length; i += 997)
-                hodnoty.add(g.foreLayer[i]);
-              let jine = 0;
+              // foreLayer smi obsahovat vrstvy 1..3 (ulozene jako 2..4),
+              // ne vrstvu 0 (ta je razenim uplne vzadu) ani 4 (zem).
+              let mimo = 0;
               for (let i = 0; i < g.foreLayer.length; i++) {
                 const v = g.foreLayer[i];
-                if (v && v !== 2) { jine++; if (jine > 3) break; }
+                if (v && (v < 2 || v > 4)) { mimo++; if (mimo > 3) break; }
               }
               // kolik bodu obrysu je zakrytych
               const s = indexedFrameFor(state, 'FLATTANK.LIN', 1);
@@ -6796,15 +6797,19 @@ def main():
                   const y = Math.round(t.y) + s.oy + sy;
                   if (x < 0 || x >= g.mapW) continue;
                   cel++;
-                  if (g.foreLayer[y * g.mapW + x] === 2) skryto++;
+                  const v = g.foreLayer[y * g.mapW + x];
+                  if (v && v <= (t.layer | 0)) skryto++;   // ostra nerovnost
                 }
-              return { jine, cel, skryto, maFore: !!g.foreLayer };
+              return { mimo, cel, skryto, vrstva: t.layer | 0,
+                       maFore: !!g.foreLayer };
             }""")
             expect(not vrstvy.get("chybi"), "FLATTANK v RIVERu se nenasel")
             expect(vrstvy["maFore"], "renderMap nevraci foreLayer")
-            expect(vrstvy["jine"] == 0,
-                   "foreLayer obsahuje i jine vrstvy nez 1 (%d bodu)" %
-                   (vrstvy["jine"],))
+            expect(vrstvy["mimo"] == 0,
+                   "foreLayer obsahuje vrstvu mimo rozsah 1..3 (%d bodu)" %
+                   (vrstvy["mimo"],))
+            expect(vrstvy["vrstva"] == 2,
+                   "FLATTANK ma mit vrstvu 2, ma %r" % (vrstvy["vrstva"],))
             podil = vrstvy["skryto"] / vrstvy["cel"]
             expect(0.02 <= podil <= 0.95,
                    "prekryto %d z %d bodu obrysu (%.0f %%)" %
@@ -6835,6 +6840,54 @@ def main():
             if vez["korb"]:
                 expect(vez["korbSMaskou"] == vez["korb"],
                        "korba tanku nedostala masku: %r" % (vez,))
+
+            # Druhe kriterium, ktere rozlisilo preuceny model: maskovani
+            # musi byt zive i v TOWN, ne jen na referencnim miste.
+            # Zmereno na stejnem behu (291 vzorku objektu ve vrstve > 0):
+            #     ostra nerovnost   97 vzorku pres 10 % zakryti (33 %)
+            #     "jen vrstva 1"    25 vzorku pres 10 % zakryti (9 %)
+            # Prah 20 % obe varianty bezpecne oddeli.
+            town = page.evaluate("""() => {
+              startGame(0);
+              const g = state.g;
+              g.lives = 99999;
+              let nej = 0, nalezu = 0, vzorku = 0;
+              for (let i = 0; i < 2500; i++) {
+                step(g); g.lives = 99999; g.player.inv = 999;
+                if (i % 7) continue;
+                const top = scrollTop(g);
+                for (const s of g.spawns) {
+                  if (!s.born || !s.alive || !(s.layer | 0)) continue;
+                  const sy = s.y - top;
+                  if (sy < 20 || sy > 220) continue;
+                  const sp = indexedFrameFor(state, s.file,
+                                             s.fr >= 0 ? s.fr : 0);
+                  if (!sp) continue;
+                  let cel = 0, skr = 0;
+                  for (let yy = 0; yy < sp.h; yy++)
+                    for (let xx = 0; xx < sp.w; xx++) {
+                      if (sp.pix[yy * sp.w + xx] === 0xFF) continue;
+                      const px = Math.round(s.x) + sp.ox + xx;
+                      const py = Math.round(s.y) + sp.oy + yy;
+                      if (px < 0 || px >= g.mapW) continue;
+                      cel++;
+                      const v = g.foreLayer[py * g.mapW + px];
+                      if (v && v <= (s.layer | 0)) skr++;
+                    }
+                  if (!cel) continue;
+                  vzorku++;
+                  if (skr / cel > 0.1) nalezu++;
+                  nej = Math.max(nej, skr / cel);
+                }
+              }
+              return { nej: +nej.toFixed(3), nalezu, vzorku };
+            }""")
+            expect(town["vzorku"] > 100, "v TOWN se nenaslo dost vzorku "
+                   "objektu ve vrstve: %r" % (town,))
+            expect(town["nalezu"] * 5 > town["vzorku"] and town["nej"] > 0.4,
+                   "v TOWN se maskuje prilis malo (%d z %d vzorku pres "
+                   "10 %%, nejvic %.0f %%) - model je nejspis preuceny" %
+                   (town["nalezu"], town["vzorku"], 100 * town["nej"]))
 
             # ---- joysticky (Gamepad API) -----------------------------
             pad = page.evaluate("""() => {

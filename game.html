@@ -804,11 +804,10 @@ function renderMap(state, lv, withObjects, count = CHAIN_MAPS) {
     for (const t of tiles) {
       paintTerrainControl(t.x, t.y, t.gfx);
       blit(t.x, t.y, t.gfx); ntiles++;
-      // Popredi je JEN vrstva 1. Zmereno na FLATTANKu v RIVERu proti
-      // originalu: s "vsechny vrstvy pod vrstvou objektu" vyslo 85 %
-      // shody obrysu, s "jen vrstva 1" **100 %**. Vrstva 0 popredi neni -
-      // razeni dlazdic ji dava prioritu 5, tedy uplne dozadu.
-      if (t.layer === 1) markForeground(t.x, t.y, t.gfx, t.layer);
+      // Popredi jsou vrstvy 1 az 3. Vrstva 0 ne - razeni dlazdic ji dava
+      // prioritu 5, tedy uplne dozadu; vrstva 4 je zem pod vsim.
+      if (t.layer >= 1 && t.layer <= 3)
+        markForeground(t.x, t.y, t.gfx, t.layer);
     }
   if (withObjects !== false)
     for (const t of objs) blit(t.x, t.y, t.gfx);
@@ -1868,9 +1867,14 @@ function standardBobRecords(spec, serialStart) {
 /* Obe operace pouzivaji masku nepruhlednych pixelu logickeho .LIN snimku.
    0x0FCA je cookie-copy; shadow/bezna secondary cesta 0x0B0A vynuluje
    vsechny ctyri cilove bitplany, tedy zapisuje paletovy index 0. */
-/* `fore` je nepovinne popredi: `{ layer, W, top, own }`. Pixel objektu se
-   nekresli tam, kde `layer[(top+dy)*W+dx]` je nenulova a MENSI nebo rovna
-   `own` - tedy kde pres nej lezi dlazdice blize k divakovi. */
+/* `fore` je nepovinne popredi: `{ layer, W, top, own }`, kde `own` je
+   vrstva objektu. Pole drzi `vrstva + 1`, takze podminka `v <= own`
+   znamena `vrstva dlazdice < vrstva objektu` - **ostra** nerovnost.
+
+   Ze je ostra, plyne z mereni: FLATTANK v RIVERu ma vrstvu 2 a dlazdice
+   `_JUNGLE#3` teze vrstvy 2 ho NEPREKRYVA, zatimco `_JUNGLE#2` ve
+   vrstve 1 ano. S neostrou nerovnosti vysla shoda obrysu 85 %, s ostrou
+   100 %. */
 function blitIndexedOperation(dst, dstW, dstH, spr, anchorX, anchorY, op,
                               fore) {
   if (op !== BOB_COOKIE_COPY && op !== BOB_CLEAR_INDEX0)
@@ -1975,15 +1979,20 @@ function composeTownBobs(g, top) {
      ho nastavuji i deti: vlak ma dve mista (lokomotiva `0x9b90`, vagon
      `0x9c4a`), tank dve (korba `0x9f00`, vez `0x9fc8`), `plat` tri,
      `junhatch` a `flame` po dvou. Diky tomu je slozeny objekt maskovany
-     cely; drivejsi pravidlo podle vrstvy z mapy maskovalo jen mapovy
-     zaznam a deti nechavalo nad porostem (hlaseny "divny prekryv"
-     u vlaku a zavor).
+     cely - deti si vrstvu nesou od rodice (`foreForHazard` nize), aby
+     nezustaly nad porostem (hlaseny "divny prekryv" u vlaku a zavor).
 
      Mimo dispatch tabulku bit nastavuji jeste dekal `0x898c`, vez jeepu
-     `0x89ee`, lod `0x8e88`, jeep `0x90f0` a cakance `0x937a`. */
+     `0x89ee`, lod `0x8e88`, jeep `0x90f0` a cakance `0x937a`.
+
+     JAK MOC se schovava, rika vrstva objektu - a tu original z mapy
+     NECTE (`0x371e` maskuje x na devet bitu a `0x3780` priznak nuluje).
+     Je to tedy zastupne pravidlo, ne mechanismus originalu: obraz sedi
+     (100 % obrysu na referencnim tanku), protoze designer objekty
+     umistoval konzistentne s okolim. Rozbor v docs/CHIPSET.md. */
   const foreFor = s => (state.objectLayers !== false && g.foreLayer &&
-                        GROUND_MASKED.has(typeof s === "string" ? s : s.beh))
-    ? { layer: g.foreLayer, W: g.mapW || 320, top, own: 2 }
+                        (s.layer | 0) > 0 && GROUND_MASKED.has(s.beh))
+    ? { layer: g.foreLayer, W: g.mapW || 320, top, own: s.layer | 0 }
     : null;
 
   const GROUND_MASKED = new Set([
@@ -1991,6 +2000,39 @@ function composeTownBobs(g, top) {
     "plat", "junhatch", "popup", "proxmine", "flame", "camogun",
     "swappad0", "swappad",
   ]);
+
+  /* Casti slozenych objektu jsou u nas hazardy, nikoli mapove zaznamy,
+     takze nemaji vlastni vrstvu - dedi ji po rodici. Vybrane jsou podle
+     tehoz `+397` bit 0: kazde misto lezi v detske rutine, ktera se da
+     dohledat (vagon `0x9c4a` v `0x9c16`, vez `plat` `0xa4ea`/`0xa5a4`
+     v `0xa4d6`, vozidlo `0xa47e` v `0xa462`, dron `junhatch`
+     `0xa626`/`0xa6d0` v `0xa60e`, vez `juntank` `0xa144` v `0xa12e`,
+     horak `0xab8a` v `0xab78` a oblacek `0xac24`..`0xad1a` v `0xabd2`).
+
+     Bit 0 maji v originale i strely (`eggshot` `0xaa04`, `tapshot`
+     `0x9b2e`, `truckdrop` `0x9e2e`, `proxfrag` `0xab2a`) a stopy
+     (`0xad98`, `0xadb0`); ty tu ale zamerne nejsou - leti pryc od
+     strelce a nase vrstva je jen zastupna hodnota z mapoveho zaznamu
+     rodice, takze by slo o dohad nad dohadem. Vedeno v GAPS. */
+  const HAZARD_MASKED = new Set([
+    "traincar", "platveh", "platturret", "junhatchdrone",
+    "juntankturret", "flameEmitter", "flamePuff",
+  ]);
+
+  /* Retez muze byt dlouhy: vagony visi jeden na druhem a jejich pocet
+     je TYP mapoveho zaznamu, tedy az 15. Pojistka je nad tim. */
+  const inheritedLayer = h => {
+    for (let p = h, guard = 0; p && guard < 32; p = p.parent, guard++)
+      if ((p.layer | 0) > 0) return p.layer | 0;
+    return 0;
+  };
+
+  const foreForHazard = h => {
+    if (state.objectLayers === false || !g.foreLayer ||
+        !HAZARD_MASKED.has(h.kind)) return null;
+    const own = inheritedLayer(h);
+    return own ? { layer: g.foreLayer, W: g.mapW || 320, top, own } : null;
+  };
 
   function bob(id, file, idx, x, y, z, opts) {
     opts = opts || {};
@@ -2117,7 +2159,7 @@ function composeTownBobs(g, top) {
         s.beh === "inst4boss" || s.beh === "inst4core" ||
         s.beh === "inst4turret") {
       bob(s.beh, s.file, s.fr, s.x, sy, Math.floor(s.z) | 0, {
-        ordinal: s.bobOrdinal,
+        ordinal: s.bobOrdinal, fore: foreFor(s),
         objectFlags: s.noShadow ? 1 : 0,        // +367 bit 0
         primaryOp: s.hitFlash ? BOB_FILL_INDEX9 : null,
       });
@@ -2176,7 +2218,7 @@ function composeTownBobs(g, top) {
     const rotorVisible = h.rotor && ((h.rotorTick | 0) & 1) === 0;
     bob("hazard-" + h.kind, h.file, idx, h.x, h.y - top, z,
         { castShadow: h.castShadow === true ? undefined : false,
-          ordinal: h.bobOrdinal,
+          ordinal: h.bobOrdinal, fore: foreForHazard(h),
           priority: h.bobPriority,
           objectFlags: h.kind === "minecore" || h.kind === "proxfrag" ||
                        h.kind === "laser" ? 1 : 0,
@@ -5975,7 +6017,7 @@ function spawnFlamePuff(g, emitter) {          // 0xabd2
   // 0xabd2 nuluje D0 pred 0x50d0: kazdy puff preferuje levou dvojici,
   // nikoli dynamicky x parentu.
   sfxNoise(g, 0, 40, "flame-puff");
-  const h = { kind: "flamePuff", file: "FLAME.LIN",
+  const h = { kind: "flamePuff", file: "FLAME.LIN", parent: emitter,
               x: emitter.x, y: emitter.y, vx: 2.5, vy: 0,
               alive: true, dead: false, cost: 10, budgeted: false,
               hp: 0, scoreValue: 0,

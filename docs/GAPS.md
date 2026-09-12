@@ -1587,24 +1587,92 @@ dohledana hledanim nejlepsi shody spritu):
 |---|---:|
 | bez masky | 68 % |
 | podle vrstvy objektu z mapy | 85 % |
-| **jen vrstva 1 prekryva, vyber podle `+397` bit 0** | **100 %** |
+| jen vrstva 1 prekryva, vyber podle `+397` bit 0 | 100 % |
 | prah 3 nebo 4 | 49 % |
 
-Zavedeno. Vsech dvanact checkpointu `compare.py` beze zmeny.
+Zavedeno - a jeste tyz den zase opraveno, protoze tenhle vyklad
+stoprocentniho radku byl spatny. Viz nize.
 
-Vedlejsi prinos: novy model nepotrebuje u objektu cist z mapy nic, coz
-je v souladu s tim, ze original vrstvove bity u OBJEKTOVEHO zaznamu pri
-dekodovani **zahazuje** (`0x371e` maskuje x na devet bitu). Drivejsi
-pravidlo stalo na poli, ktere original ignoruje - fungovalo jen proto,
-ze designeri objekty umistovali konzistentne s okolim.
+Vedlejsi prinos teto verze byl, ze nepotrebovala u objektu cist z mapy
+nic. To uz pro treti verzi neplati - viz nize.
 
 ### Co zustava otevrene
 
-- **Hazardy a strely** (plamen za behu, strepy) se nemaskuji - kresli se
-  jinou cestou nez mapove objekty. V originale `flame` bit 0 ma
-  (`0xab2a`, `0xab8a`), takze by se maskovat mel.
 - **Tank u mustku pres koryto** hrac zminil jako treti divny pripad;
   nove pravidlo ho meni, ale nemame na nej referencni snimek originalu,
   takze to zatim neni overene.
 - Kde presne se priznak dostane do poradi kresleni, porad nevime - pro
   obraz uz to ale neni potreba.
+
+
+## Vrstvy: oprava preuceneho modelu (2026-09-12, treti pokus)
+
+Model "popredi je jen vrstva 1" byl **preuceny na jediny datovy bod**.
+Hrac ho otestoval a hned nahlasil, ze tanky zase jezdi pres stromy - a
+mel pravdu: v TOWN je ve vrstve 1 jen **sest stromu ze ctyriceti dvou**,
+takze to maskovani prakticky vyplo.
+
+Spravne vysvetleni teze namerene stovky procent je jine. Referencni tank
+ma vrstvu 2 a dlazdice `_JUNGLE#3` **teze vrstvy** ho neprekryva,
+zatimco `_JUNGLE#2` ve vrstve 1 ano. Nerovnost je tedy **ostra**:
+
+    dlazdice prekryva objekt  <=>  vrstva dlazdice < vrstva objektu
+
+Puvodni model mel nerovnost neostrou (`<=`), coz davalo 85 %. Ostra
+splnuje obe podminky naraz. Zmereno na 291 vzorcich objektu ve vrstve > 0 (TOWN, kazdy sedmy tik
+z 2500) a na referencnim tanku:
+
+| mereni | ostra nerovnost | "jen vrstva 1" |
+|---|---:|---:|
+| referencni tank v RIVERu, shoda obrysu | **100 %** | **100 %** |
+| TOWN, vzorku zakrytych vic nez z 10 % | **97 z 291** | 25 z 291 |
+| TOWN, nejvic zakryty objekt | 59 % plochy | 53 % plochy |
+
+**Pouceni: jeden datovy bod na sto procent neni dukaz modelu.** Obe
+varianty na nem davaly stejnou stovku a rozlisil je az druhy pohled -
+kolik objektu vubec maskuji jinde. `uitest.py` proto ted meri obe
+kriteria zaroven a prah 20 % vzorku je od sebe bezpecne oddeli.
+
+
+## Vrstvy: casti slozenych objektu a strely (2026-09-12)
+
+Vsech 28 mist, ktera nastavuji `+397` bit 0, je ted prirazeno ke
+korutine, ve ktere lezi (`build/coroutines.json` + `bisect`), a tim
+i k nasemu kodu:
+
+| misto | rutina | u nas | maskujeme |
+|---|---|---|---|
+| `0x9b90` | `0x9b62` | lokomotiva (mapovy zaznam) | ano |
+| `0x9c4a` | `0x9c16` | `traincar` | **ano, nove** |
+| `0x9f00` | `0x9eca` | korba tanku | ano |
+| `0x9fc8`, `0xa0e4` | `0x9faa` | vez tanku | ano |
+| `0xa144` | `0xa12e` | `juntankturret` | **ano, nove** |
+| `0xa47e` | `0xa462` | `platveh` (zavora) | **ano, nove** |
+| `0xa4ea`, `0xa5a4` | `0xa4d6` | `platturret` | **ano, nove** |
+| `0xa626`, `0xa6d0` | `0xa60e` | `junhatchdrone` | **ano, nove** |
+| `0xab8a` | `0xab78` | `flameEmitter` | **ano, nove** |
+| `0xac24`..`0xad1a` | `0xabd2` | `flamePuff` | **ano, nove** |
+| `0xaa04` | `0xa9a0` | `eggshot` | ne |
+| `0x9b2e` | `0x9a7e` | `tapshot` | ne |
+| `0x9e2e` | `0x9dc0` | `truckdrop` | ne |
+| `0xab2a` | `0xaa9c` | `proxfrag` | ne |
+| `0xad98`, `0xadb0` | `0xad98` | stopy (dekal) | ne |
+| `0x898c` | `0x898c` | dekal | ne |
+| `0x89ee`, `0x8e88`, `0x90f0` | `0x89e8` | vez jeepu, lod, jeep | ne |
+| `0x937a` | `0x9358` | cakance | ne |
+| `0x7994`, `0x827c`, `0xa3d8` | ruzne | letci / vzdusny priznak | ne |
+
+Casti slozenych objektu dedi vrstvu po rodici (`inheritedLayer`, chuze
+po `.parent`), protoze vlastni mapovy zaznam nemaji. To je presne ten
+pripad, ktery hrac hlasil u vyjizdejiciho vlaku a u zavor.
+
+**Strely a stopy vedome nemaskujeme**, i kdyz bit 0 v originale maji:
+odletuji pryc od strelce a nase vrstva je jen zastupna hodnota z jeho
+mapoveho zaznamu, takze by slo o dohad nad dohadem. Az se najde
+skutecna cesta, kterou se hloubka v originalu dostane do kresleni,
+maji se pridat - a zastupne pravidlo zrusit.
+
+Pri teto revizi se naslo jeste jedno opomenuti: genericka vetev
+kresleni spawnu (`airplane`, `trilo`, `plat`, `juntank`, `junhatch`,
+`swappad0`) masku vubec nedostavala, prestoze v `GROUND_MASKED` jsou.
+Opraveno.
