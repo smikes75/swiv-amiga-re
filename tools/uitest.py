@@ -6804,13 +6804,54 @@ def main():
                    "prekryto %d z %d bodu obrysu (%.0f %%)" %
                    (vrstvy["skryto"], vrstvy["cel"], 100 * podil))
 
+            # ---- joysticky (Gamepad API) -----------------------------
+            pad = page.evaluate("""() => {
+              startGame(0);
+              const g = state.g;
+              const mk = (tlac, osy) => ({ axes: osy || [0, 0, 0, 0],
+                buttons: Array.from({ length: 16 },
+                  (_, i) => ({ pressed: tlac.includes(i) })) });
+              const puvodni = navigator.getGamepads;
+              // prvni ovladac -> slot 1, druhy -> slot 2
+              navigator.getGamepads = () => [mk([14, 0]), mk([15, 1])];
+              pollGamepads(g);
+              const stisk = { p1: { ...g.keys }, p2: { ...g.keys2 } };
+              navigator.getGamepads = () => [mk([]), mk([])];
+              pollGamepads(g);
+              const uvolneni = { p1: { ...g.keys }, p2: { ...g.keys2 } };
+              // analogova paka nahoru pres mrtvou zonu
+              navigator.getGamepads = () => [mk([], [0, -0.9, 0, 0])];
+              pollGamepads(g);
+              const paka = { ...g.keys };
+              // pod mrtvou zonou se nesmi nic stat
+              navigator.getGamepads = () => [mk([], [0, -0.2, 0, 0])];
+              pollGamepads(g);
+              const mrtvaZona = { ...g.keys };
+              navigator.getGamepads = puvodni;
+              return { stisk, uvolneni, paka, mrtvaZona };
+            }""")
+            expect(pad["stisk"]["p1"].get("l") and
+                   pad["stisk"]["p1"].get("f"),
+                   "prvni ovladac neovlada slot 1: %r" % (pad["stisk"],))
+            expect(pad["stisk"]["p2"].get("r") and
+                   pad["stisk"]["p2"].get("j"),
+                   "druhy ovladac neovlada slot 2: %r" % (pad["stisk"],))
+            expect(not any(pad["uvolneni"]["p1"].values()) and
+                   not any(pad["uvolneni"]["p2"].values()),
+                   "uvolneni ovladace se nepropsalo: %r" % (pad["uvolneni"],))
+            expect(pad["paka"].get("u"),
+                   "analogova paka nahoru nefunguje: %r" % (pad["paka"],))
+            expect(not pad["mrtvaZona"].get("u"),
+                   "vychylka pod mrtvou zonou uz pusobi: %r" %
+                   (pad["mrtvaZona"],))
+
             screenshot = os.environ.get("SWIV_UI_SCREENSHOT")
             if screenshot:
                 page.screenshot(path=screenshot)
             expect(not errors, "browser ohlasil chyby: " + "; ".join(errors[:6]))
             print("UI OK (%.1fs): %d dispatch zaznamu, %d CAMOGUN, "
                   "%d novych zvukovych stavu, jeep + vez + skok + lod + skore, "
-                  "vse videne sestrelitelne, bez JS chyb" %
+                  "vse videne sestrelitelne, joystick, bez JS chyb" %
                   (time.time() - started, summary["dispatch"],
                    summary["camoguns"],
                    zvuky["corn"][0] + zvuky["jet"][0] + zvuky["geyser"][0]))

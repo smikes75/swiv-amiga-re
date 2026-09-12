@@ -44,6 +44,11 @@ play it at
 — the page is static and the disk never leaves the browser. The
 native attract loop starts automatically; Space, Enter, Z or a click starts
 TOWN directly, while `L` opens the development level picker.
+**Gamepads work**, one per player — the first pad drives slot one, the
+second slot two, so two controllers give the same two-player game the
+original had with two joysticks. D-pad or analogue stick, A/X to fire,
+B/Y to jump. The keyboard stays live alongside them.
+
 Player 1 flies the helicopter with the arrows and Space; player 2 joins for
 a credit with WASD and Shift and drives the jeep (`0x9090`): movement,
 its own clamp, terrain collision, the rotating turret (`0x89e8`) with

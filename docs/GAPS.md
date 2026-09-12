@@ -1505,3 +1505,25 @@ v RIVERu: shoda obrysu spritu s originalem **68 % -> 81 %**.
 
 Otevrene zustava, KDE v kodu se vrstva dostane do klice trideni `+8` -
 ale pro obraz uz to neni potreba.
+
+
+## Joysticky a zvetseni 5x/6x (2026-09-12)
+
+**Joysticky** (Gamepad API) prepis do ted nemel vubec. Ted je ma:
+prvni ovladac ridi slot 1, druhy slot 2, takze dva gamepady daji
+dvouhracskou hru na jednom stroji presne jako dva joysticky v originale.
+Po siti ovlada prvni ovladac mistniho hrace.
+
+Ctou se D-pad (tlacitka 12..15) i analogova paka s mrtvou zonou 0,4;
+palba je A/X nebo prave rameno, skok jeepu B/Y nebo leve rameno. Stav se
+do `g.keys`/`g.keys2` **pridava** a odebira se jen to, co ovladac drzel
+minule - klavesnice tim zustava pouzitelna soucasne a jedno druhemu
+nepretlacuje uvolneni klavesy. Pri ztrate fokusu se stav ovladacu cisti
+stejne jako klavesnice.
+
+Kontrakt v `tools/uitest.py` podstrci `navigator.getGamepads` a overi
+oba ovladace, uvolneni, analogovou paku i to, ze vychylka pod mrtvou
+zonou jeste nepusobi.
+
+**Zvetseni 5x a 6x**: logika vetsi nasobky umela uz drive (`state.zoom`
+se uklada az do 12), chybela jen tlacitka. Doplnena.

@@ -47,7 +47,7 @@ a { color:#cfe0ff }
   <a href="https://github.com/smikes75/swiv-amiga-re">repo</a>.</p>
   <p>Insert your own S.W.I.V. disk image (.adf). Nothing is uploaded.</p>
   <a class="btn" id="insert">&#128190; Insert disk</a>
-  <p><small>P1 heli: arrows + space &middot; P2 jeep: WASD + shift, Q jumps (joins for a credit) &middot; or play against someone over the network, no server &middot; sound on first click</small></p>
+  <p><small>P1 heli: arrows + space &middot; P2 jeep: WASD + shift, Q jumps (joins for a credit) &middot; <b>gamepads work too</b> &mdash; one per player, like the original's two joysticks &middot; or play against someone over the network, no server &middot; sound on first click</small></p>
 </div>
 
 <div id="titlewrap" style="display:none">
@@ -134,6 +134,8 @@ a { color:#cfe0ff }
     <button type="button" data-zoom="2" aria-pressed="false">2&#215;</button>
     <button type="button" data-zoom="3" aria-pressed="false">3&#215;</button>
     <button type="button" data-zoom="4" aria-pressed="false">4&#215;</button>
+    <button type="button" data-zoom="5" aria-pressed="false">5&#215;</button>
+    <button type="button" data-zoom="6" aria-pressed="false">6&#215;</button>
     <input id="zoombox" type="range" min="0" max="12" step="1" value="0"
       style="width:110px" aria-label="Zv&#283;t&#353;en&#237; hern&#237;ho pole">
     <output id="zoomval" for="zoombox">auto</output>
@@ -8061,6 +8063,7 @@ function applyKey(g, e, down) {
 // odjel sam; pri ztrate fokusu se proto stav klaves vycisti.
 window.addEventListener("blur", () => {
   if (state.g) { state.g.keys = {}; state.g.keys2 = {}; state.g.netLocal = {}; }
+  PAD_PREV[0] = {}; PAD_PREV[1] = {};
 });
 /* ---- Vyvojarske ovladani (neni soucast originalu) -------------------
    Skok po mape meni jen scroll a znovu nastavi `armed` podle nove polohy,
@@ -8313,6 +8316,51 @@ window.addEventListener("keydown", e => {
 window.addEventListener("keyup", e => {
   if (state.g) applyKey(state.g, e, false);
 });
+
+/* ---- joysticky (Gamepad API; neni v originale, ale hra je pro ne
+   delana) ------------------------------------------------------------
+   Prvni ovladac ridi slot 1, druhy slot 2 - takze dva gamepady daji
+   dvouhracskou hru na jednom stroji presne jako dva joysticky
+   v originale. Po siti ovlada prvni ovladac mistniho hrace.
+
+   Stav se do `g.keys`/`g.keys2` PRIDAVA a odebira jen to, co ovladac
+   drzel minule; klavesnice tim zustava pouzitelna soucasne a jedno
+   druhemu nepretlacuje uvolneni klavesy. */
+const PAD_PREV = [{}, {}];
+const PAD_DEAD = 0.4;                    // mrtva zona analogove paky
+function readPad(p) {
+  const out = {};
+  if (!p) return out;
+  const ax = p.axes || [], bt = p.buttons || [];
+  const on = n => !!(bt[n] && bt[n].pressed);
+  if (on(12) || ax[1] < -PAD_DEAD) out.u = true;
+  if (on(13) || ax[1] > PAD_DEAD) out.d = true;
+  if (on(14) || ax[0] < -PAD_DEAD) out.l = true;
+  if (on(15) || ax[0] > PAD_DEAD) out.r = true;
+  if (on(0) || on(2) || on(7)) out.f = true;      // A / X / prave rameno
+  if (on(1) || on(3) || on(6)) out.j = true;      // B / Y / leve rameno
+  return out;
+}
+function pollGamepads(g) {
+  if (!navigator.getGamepads) return;
+  let pads;
+  try { pads = navigator.getGamepads(); } catch (e) { return; }
+  const pocet = NET.active ? 1 : 2;
+  for (let i = 0; i < pocet; i++) {
+    const ted = readPad(pads[i]);
+    const cil = NET.active ? (g.netLocal = g.netLocal || {})
+                           : (i === 0 ? g.keys : g.keys2);
+    for (const k in PAD_PREV[i]) if (!ted[k]) cil[k] = false;
+    for (const k in ted) cil[k] = true;
+    PAD_PREV[i] = ted;
+  }
+}
+function padCount() {
+  if (!navigator.getGamepads) return 0;
+  try {
+    return Array.from(navigator.getGamepads()).filter(Boolean).length;
+  } catch (e) { return 0; }
+}
 
 /* ---- logika (50 Hz) ---- */
 /* 0x6430: uzel +496/+498 se plni z +320/+324 pri RESUME tasku, tedy
@@ -11306,6 +11354,7 @@ function renderSmoothField(ctx, g, S, composed, hudCv) {
 function frame(now) {
   const g = state.g;
   if (!g) { state.loopRunning = false; return; }
+  pollGamepads(g);
   if (!g.last) g.last = now;
   let dt = Math.min(0.1, (now - g.last) / 1000); g.last = now;
   g.frac += dt;
