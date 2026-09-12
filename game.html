@@ -685,6 +685,12 @@ function renderMap(state, lv, withObjects, count = CHAIN_MAPS) {
   const terrainOpen = new Uint8Array(W * H);
   terrainOpen.fill(1);
   mapIndex.fill(10);
+  /* Vrstva dlazdice, ktera na danem bodu lezi NEJVIC VEPREDU (nejnizsi
+     cislo), nebo 0 kde zadna neni. Mapa ma vrstvy 0..4 a dlazdice se
+     kresli od nejvyssiho cisla, takze nizsi cislo je bliz divakovi.
+     Objekty maji v mape vrstvu take (v TOWN 1, 2 nebo 3) a podle
+     hracskeho pozorovani se za popredove dlazdice schovavaji. */
+  const foreLayer = new Uint8Array(W * H);
 
   const rgb = v => [((v >> 8) & 15) * 17, ((v >> 4) & 15) * 17, (v & 15) * 17];
   function palAtRy(ry) {
@@ -727,6 +733,40 @@ function renderMap(state, lv, withObjects, count = CHAIN_MAPS) {
       }
     }
   }
+  /* Zapise do `foreLayer` vrstvu dlazdice vsude, kde je neprusvitna.
+     Nizsi cislo vyhrava, protoze je bliz divakovi. */
+  function markForeground(rx, ry, gfx, layer) {
+    const fname = order[gfx & 0x1FF];
+    if (!fname) return;
+    const lf = framesFor(state, fname)[gfx >> 9];
+    if (!lf) return;
+    const v = layer + 1;                       // 0 znamena "zadna dlazdice"
+    for (const part of lf.parts) {
+      if (!part.w || !part.h) continue;
+      const wd = (part.w + 15) >> 4;
+      if (part.data.length < wd * 8 * part.h) continue;
+      const x0 = rx + XOFF - part.cx;
+      const y0 = height + MARGIN - ry - part.cy;
+      for (let y = 0; y < part.h; y++) {
+        const ty = y0 + y;
+        if (ty < 0 || ty >= H) continue;
+        for (let x = 0; x < part.w; x++) {
+          const tx = x0 + x;
+          if (tx < 0 || tx >= W) continue;
+          const word = x >> 4, bit = 0x8000 >> (x & 15);
+          let color = 0;
+          for (let plane = 0; plane < 4; plane++) {
+            const o = (y * 4 + plane) * wd * 2 + word * 2;
+            if (((part.data[o] << 8) | part.data[o + 1]) & bit)
+              color |= 1 << plane;
+          }
+          if (color === part.trans) continue;
+          const pos = ty * W + tx;
+          if (foreLayer[pos] === 0 || v < foreLayer[pos]) foreLayer[pos] = v;
+        }
+      }
+    }
+  }
   function paintTerrainControl(rx, ry, gfx) {
     const fname = order[gfx & 0x1FF];
     if (!fname) return;
@@ -762,11 +802,12 @@ function renderMap(state, lv, withObjects, count = CHAIN_MAPS) {
     for (const t of tiles) {
       paintTerrainControl(t.x, t.y, t.gfx);
       blit(t.x, t.y, t.gfx); ntiles++;
+      if (t.layer < 4) markForeground(t.x, t.y, t.gfx, t.layer);
     }
   if (withObjects !== false)
     for (const t of objs) blit(t.x, t.y, t.gfx);
-  return { px, mapIndex, terrainOpen, w: W, h: H, name: pamName, parsed,
-           tiles: ntiles, objs: objs.length };
+  return { px, mapIndex, terrainOpen, foreLayer, w: W, h: H, name: pamName,
+           parsed, tiles: ntiles, objs: objs.length };
 }
 
 /* ---- ProTracker prehravac (podmnozina efektu, ktere SWIV moduly
@@ -1821,29 +1862,41 @@ function standardBobRecords(spec, serialStart) {
 /* Obe operace pouzivaji masku nepruhlednych pixelu logickeho .LIN snimku.
    0x0FCA je cookie-copy; shadow/bezna secondary cesta 0x0B0A vynuluje
    vsechny ctyri cilove bitplany, tedy zapisuje paletovy index 0. */
-function blitIndexedOperation(dst, dstW, dstH, spr, anchorX, anchorY, op) {
+/* `fore` je nepovinne popredi: `{ layer, W, top, own }`. Pixel objektu se
+   nekresli tam, kde `layer[(top+dy)*W+dx]` je nenulova a MENSI nebo rovna
+   `own` - tedy kde pres nej lezi dlazdice blize k divakovi. */
+function blitIndexedOperation(dst, dstW, dstH, spr, anchorX, anchorY, op,
+                              fore) {
   if (op !== BOB_COOKIE_COPY && op !== BOB_CLEAR_INDEX0)
     throw new RangeError("unknown indexed BOB operation");
   const clear = op === BOB_CLEAR_INDEX0;
   // 68k 16.16 souradnice se pri cteni high-word orezavaji dolu.
   const left = Math.floor(anchorX + spr.ox);
   const top = Math.floor(anchorY + spr.oy);
+  const fl = fore && fore.layer, fW = fore ? fore.W : 0;
+  const fTop = fore ? fore.top : 0, own = fore ? fore.own : 0;
+  const fH = fl ? Math.floor(fl.length / fW) : 0;
   for (let sy = 0; sy < spr.h; sy++) {
     const dy = top + sy;
     if (dy < 0 || dy >= dstH) continue;
+    const fy = fTop + dy;
     for (let sx = 0; sx < spr.w; sx++) {
       const dx = left + sx;
       if (dx < 0 || dx >= dstW) continue;
       const color = spr.pix[sy * spr.w + sx];
-      if (color !== 0xFF)
-        dst[dy * dstW + dx] = clear ? 0 : color;
+      if (color === 0xFF) continue;
+      if (fl && fy >= 0 && fy < fH && dx < fW) {
+        const v = fl[fy * fW + dx];
+        if (v && v <= own) continue;           // dlazdice lezi vepredu
+      }
+      dst[dy * dstW + dx] = clear ? 0 : color;
     }
   }
   return dst;
 }
-function blitIndexedCookie(dst, dstW, dstH, spr, anchorX, anchorY) {
+function blitIndexedCookie(dst, dstW, dstH, spr, anchorX, anchorY, fore) {
   return blitIndexedOperation(
-    dst, dstW, dstH, spr, anchorX, anchorY, BOB_COOKIE_COPY);
+    dst, dstW, dstH, spr, anchorX, anchorY, BOB_COOKIE_COPY, fore);
 }
 function clearIndexedMask(dst, dstW, dstH, spr, anchorX, anchorY) {
   return blitIndexedOperation(
@@ -1906,7 +1959,18 @@ function composeTownBobs(g, top) {
     if (spec.primaryOp)
       for (const r of batch.records)
         if (r.kind === "main") r.op = spec.primaryOp;
+    // Popredi plati jen na telo, ne na stin - ten uz je soucasti zeme.
+    if (spec.fore)
+      for (const r of batch.records)
+        if (r.kind === "main") r.fore = spec.fore;
   }
+  /* Vrstva objektu z mapy (`+276` se nepouziva, je to `parsed.objs`
+     `layer`). Dlazdice s NIZSIM cislem vrstvy lezi pred nim. */
+  const foreFor = s => (state.objectLayers !== false && g.foreLayer &&
+                        (s.layer | 0) > 0)
+    ? { layer: g.foreLayer, W: g.mapW || 320, top, own: (s.layer | 0) + 1 }
+    : null;
+
   function bob(id, file, idx, x, y, z, opts) {
     opts = opts || {};
     const primary = frame(file, idx);
@@ -1917,6 +1981,7 @@ function composeTownBobs(g, top) {
       x, y, z, objectFlags: opts.objectFlags || 0,
       castShadow: opts.castShadow,
       primaryOp: opts.primaryOp,
+      fore: opts.fore,
       // creation ordinal objektu: klic pro parovani poloh mezi tiky
       // (smooth). Drive zustaval jen v pending a zaznamy dostaly serial,
       // ktery se posouva s kazdym prichozim/odchozim objektem.
@@ -1961,7 +2026,7 @@ function composeTownBobs(g, top) {
                            ordinal: s.turretBobOrdinal,
                            primaryOp: s.hitFlash ? BOB_FILL_INDEX9 : null });
       bob("tank-hull", s.file, s.hullF, s.x, sy, 0,
-          { castShadow: false,
+          { castShadow: false, fore: foreFor(s),
             ordinal: s.bobOrdinal,
             primaryOp: s.hitFlash ? BOB_FILL_INDEX9 : null });
       continue;
@@ -2044,7 +2109,7 @@ function composeTownBobs(g, top) {
                            ordinal: s.turretBobOrdinal,
                            primaryOp: s.hitFlash ? BOB_FILL_INDEX9 : null });
       bob("flattank", "FLATTANK.LIN", s.fr, s.x, sy, 0,
-          { castShadow: false, ordinal: s.bobOrdinal,
+          { castShadow: false, ordinal: s.bobOrdinal, fore: foreFor(s),
             primaryOp: s.hitFlash ? BOB_FILL_INDEX9 : null });
       continue;
     }
@@ -2072,7 +2137,7 @@ function composeTownBobs(g, top) {
       });
     } else {
       bob("spawn", file, idx, s.x, sy, 0, {
-        ordinal: s.bobOrdinal,
+        ordinal: s.bobOrdinal, fore: foreFor(s),
         castShadow: false,
         primaryOp: s.hitFlash ? BOB_FILL_INDEX9 : null,
       });
@@ -2193,7 +2258,7 @@ function composeTownBobs(g, top) {
     else if (r.op === BOB_FILL_INDEX9)
       blitIndexedSolid(dst, W, H, r.spr, r.x, r.y, 9);
     else
-      blitIndexedCookie(dst, W, H, r.spr, r.x, r.y);
+      blitIndexedCookie(dst, W, H, r.spr, r.x, r.y, r.fore);
   }
   g.lastBobRecords = ordered;
   return { index: dst, records, ordered };
@@ -3226,10 +3291,18 @@ function drawHudText(prog, plane, text, x) {
   }
   return pen;
 }
-function buildHudPlane(prog, leftText, rightText = "PRESS FIRE") {
+function buildHudPlane(prog, leftText, rightText = "PRESS FIRE",
+                      centered = false) {
   const bytes = new Uint8Array(HUD_STRIDE * HUD_ROWS);
   const leftWidth = hudTextWidth(prog, leftText);
   const rightWidth = hudTextWidth(prog, rightText);
+  // Pauzovy napis drzi cely radek, takze se vystredi misto zarovnani
+  // k obema krajum.
+  if (centered) {
+    const x = Math.max(0, (320 - leftWidth) >> 1);
+    drawHudText(prog, bytes, leftText, x);
+    return { bytes, leftWidth, rightWidth: 0, rightX: x };
+  }
   const rightX = 312 - rightWidth;
   drawHudText(prog, bytes, leftText, 8);
   drawHudText(prog, bytes, rightText, rightX);
@@ -3295,10 +3368,11 @@ function compositeHudPlane(fieldIndex, width, rgba, plane, tick,
 }
 function hudPlaneForGame(g) {
   const texts = hudTextsForGame(g);
-  const key = texts.left + "\0" + texts.right;
+  const key = texts.left + "\0" + texts.right + (texts.paused ? "\0P" : "");
   if (g.hudPlaneKey !== key) {
     g.hudPlaneKey = key;
-    g.hudPlane = buildHudPlane(state.prog, texts.left, texts.right);
+    g.hudPlane = buildHudPlane(state.prog, texts.left, texts.right,
+                               !!texts.paused);
   }
   return g.hudPlane;
 }
@@ -4897,7 +4971,17 @@ function hudInactiveText(g, prefix, lives, score, tokenCount = 0) {
   if ((g.continues | 0) <= 0) return "NO CREDITS";
   return "PRESS FIRE";
 }
+/* `0x274a`: "GAME PAUSED - PRESS P TO CONTINUE_n". Retezec je primo
+   v AMPROG.OBJ a kresli ho tataz rutina (`0x25fa` -> `0x2624`) jako
+   "PLEASE INSERT THE SWIV GAME DISK" (`0x2727`) a vyvojarsky vtip
+   "REGARDEZ LES PUNTETTAY !" (`0x276e`). Pauza je tedy soucast hry, ne
+   pridavek crackera - `docs/GAPS.md` to drive nechavalo otevrene,
+   protoze cteni klavesy lezi v prilinkovane casti zavadece.
+
+   V originale nahradi CELY radek HUD, tedy oba sloty. */
+const HUD_PAUSED = "GAME PAUSED - PRESS P TO CONTINUE";
 function hudTextsForGame(g) {
+  if (g.paused) return { left: HUD_PAUSED, right: "", paused: true };
   const inactive = g.playerPhase === "continue" ||
                    g.playerPhase === "closing" ||
                    g.playerPhase === "stats";
@@ -7602,7 +7686,7 @@ function startGame(lv) {
       const an = (beh === "unimplemented" || beh === "missing-dispatch")
         ? animFor(fn, fi) : null;
       return {
-        file: fn, idx: fi, gfx: o.gfx,
+        file: fn, idx: fi, gfx: o.gfx, layer: o.layer | 0,
         coroutine: route ? route.coroutine : null,
         x: o.x + XOFF, y: (parsed.height + MARGIN - o.y),
         typ: o.typ, alive: true, born: false, beh, st: 0, t: 0, hp: 2,
@@ -7617,6 +7701,7 @@ function startGame(lv) {
 
   const g = state.g = {
     lv, big, mapIndex: m.mapIndex, terrainOpen: m.terrainOpen,
+    foreLayer: m.foreLayer,
     mapW: m.w, spawns, mapH: m.h,
     // radky prvni mapy = img radek - rowOffset (checkpointy, testy)
     rowOffset: parsed.rowOffset,
@@ -8207,8 +8292,9 @@ window.addEventListener("keydown", e => {
   // nebo pridavek crackeru; viz docs/GAPS.md.
   if (e.key.toLowerCase() === "p" && state.g && !state.g.over) {
     state.g.paused = !state.g.paused;
+    // Napis uz kresli HUD nativne (0x274a), HTML stitek by byl duplicita.
     const el = document.getElementById("pauselabel");
-    if (el) el.textContent = state.g.paused ? "PAUZA" : "";
+    if (el) el.textContent = "";
     e.preventDefault();
     return;
   }

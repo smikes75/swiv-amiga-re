@@ -6734,6 +6734,76 @@ def main():
                    "nakresleny, ale nesestrelitelny objekt: %s (cetnosti %r)"
                    % (", ".join(nove), videt))
 
+            # ---- 0x274a: pauza nahradi HUD nativnim napisem -----------
+            pauza = page.evaluate("""() => {
+              startGame(0);
+              const g = state.g;
+              for (let i = 0; i < 120; i++) step(g);
+              const bezPauzy = hudTextsForGame(g);
+              g.paused = true;
+              const sPauzou = hudTextsForGame(g);
+              const plane = hudPlaneForGame(g);
+              let ink = 0;
+              for (const b of plane.bytes) {
+                let v = b;
+                while (v) { ink += v & 1; v >>= 1; }
+              }
+              g.paused = false;
+              return { bezPauzy, sPauzou, ink,
+                       stred: plane.rightX,
+                       sirka: plane.leftWidth };
+            }""")
+            expect(pauza["sPauzou"]["left"] ==
+                   "GAME PAUSED - PRESS P TO CONTINUE" and
+                   pauza["sPauzou"]["right"] == "",
+                   "HUD pri pauze: %r" % (pauza["sPauzou"],))
+            expect(pauza["bezPauzy"]["left"].startswith("HELI"),
+                   "HUD bez pauzy se zmenil: %r" % (pauza["bezPauzy"],))
+            # 33 znaku ma byt vystredenych a opravdu nakreslenych
+            expect(pauza["ink"] > 500,
+                   "pauzovy napis nakreslil jen %d bodu" % (pauza["ink"],))
+            expect(abs(pauza["stred"] - (320 - pauza["sirka"]) // 2) <= 1,
+                   "pauzovy napis neni vystredeny: x=%d, sirka=%d" %
+                   (pauza["stred"], pauza["sirka"]))
+
+            # ---- vrstvy: dlazdice vepredu prekryvaji objekt ----------
+            vrstvy = page.evaluate("""() => {
+              startGame(3);
+              const g = state.g;
+              // FLATTANK v RIVERu ma v mape vrstvu 2 a lezi pod
+              // _JUNGLE#2 (vrstva 1) a _JUNGLE#3 (vrstva 2).
+              const t = g.spawns.filter(s => s.beh === "flattank")
+                                .find(s => Math.round(s.x) === 22);
+              if (!t) return { chybi: true };
+              // kolik bodu jeho obrysu je prekryto popredovou dlazdici
+              const s = indexedFrameFor(state, 'FLATTANK.LIN', 1);
+              const top = Math.round(t.y) - 71;
+              let cel = 0, skryto = 0;
+              for (let sy = 0; sy < s.h; sy++)
+                for (let sx = 0; sx < s.w; sx++) {
+                  if (s.pix[sy * s.w + sx] === 0xFF) continue;
+                  const x = 22 + s.ox + sx, y = top + 71 + s.oy + sy;
+                  if (x < 0 || x >= g.mapW) continue;
+                  cel++;
+                  const v = g.foreLayer[y * g.mapW + x];
+                  if (v && v <= (t.layer | 0) + 1) skryto++;
+                }
+              return { vrstvaObjektu: t.layer | 0, cel, skryto,
+                       maFore: !!g.foreLayer };
+            }""")
+            expect(not vrstvy.get("chybi"), "FLATTANK v RIVERu se nenasel")
+            expect(vrstvy["maFore"], "renderMap nevraci foreLayer")
+            expect(vrstvy["vrstvaObjektu"] == 2,
+                   "FLATTANK ma mit v mape vrstvu 2, ma %r" %
+                   (vrstvy["vrstvaObjektu"],))
+            # Kolik presne je zarostle, zavisi na tom, kam tank za beh
+            # dojede (`+356 = 32`, tedy 30 px za hodinu hry). Kontrakt
+            # proto jen hlida, ze maska neco dela a neschova vsechno.
+            podil = vrstvy["skryto"] / vrstvy["cel"]
+            expect(0.05 <= podil <= 0.95,
+                   "prekryto %d z %d bodu obrysu (%.0f %%)" %
+                   (vrstvy["skryto"], vrstvy["cel"], 100 * podil))
+
             screenshot = os.environ.get("SWIV_UI_SCREENSHOT")
             if screenshot:
                 page.screenshot(path=screenshot)

@@ -1424,7 +1424,7 @@ Kontrakt v `tools/uitest.py` hlida, ze k temto dvema nepribude dalsi.
   s pasy, takze to neni vysvetleni pro tenhle konkretni pripad.
 
 
-## "Tanky jedou nad stromy" - PRVNI ZAVER BYL SPATNY (2026-09-11)
+## "Tanky jedou nad stromy" - VYRESENO 2026-09-12 (viz konec sekce)
 
 Dalsi hracske pozorovani: v RIVERu vypada, jako by tanky jezdily NAD
 stromy a konstrukcemi, misto aby se schovaly za ne.
@@ -1480,3 +1480,28 @@ dostat nemel. To ale neplati - viz snimek vyse.
 
 Prevod pozic mezi originalem a prepisem: `pozice = radek + 32825`
 (overeno na dvou nezavislych checkpointech, GRASS i RIVER).
+
+
+## Pauza na P JE puvodni (2026-09-12)
+
+Drive tu stalo, ze nelze rozhodnout, jestli je pauza na `P` puvodni
+funkce hry, nebo pridavek crackera - cteni klavesy lezi v prilinkovane
+casti zavadece. **Rozhodnuto: je puvodni.** Retezec
+`"GAME PAUSED - PRESS P TO CONTINUE_n"` je primo v AMPROG.OBJ na
+`0x274a` a kresli ho tataz rutina (`0x25fa` -> `0x2624`) jako
+`"PLEASE INSERT THE SWIV GAME DISK"` (`0x2727`) a vyvojarsky vtip
+`"REGARDEZ LES PUNTETTAY !"` (`0x276e`).
+
+V originale nahradi pauzovy napis CELY radek HUD (oba sloty) a je
+vystredeny. Prepis to ted dela taky; drivejsi HTML stitek "PAUZA" je
+zruseny, aby nebyl dvakrat.
+
+## Vrstvy objektu - VYRESENO (2026-09-12)
+
+Mapa nese vrstvu i u objektu a prepis ji zahazoval. Podrobne v
+`docs/CHIPSET.md`; zkraceno: dlazdice s nizsim cislem vrstvy lezi bliz
+divakovi a prekryvaji objekty s vyssim cislem. Zmereno na FLATTANKu
+v RIVERu: shoda obrysu spritu s originalem **68 % -> 81 %**.
+
+Otevrene zustava, KDE v kodu se vrstva dostane do klice trideni `+8` -
+ale pro obraz uz to neni potreba.

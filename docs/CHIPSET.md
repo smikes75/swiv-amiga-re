@@ -478,3 +478,44 @@ Mechanismus zustava nevysvetleny. Vyloucene je:
 - zamena snimku (vsechny ctyri snimky FLATTANKu jsou skoro totozne),
 - chybejici vez (kreslime ji),
 - blikani pri rotaci bufferu (osm snimku po sobe je identickych).
+
+
+## VYRESENO: objekty maji vrstvu a schovavaji se za dlazdice (2026-09-12)
+
+Hrac ukazal, ze uz **v TOWN** jsou stromy kresleny pres budovy i pres
+objekty. To dalo chybejici kousek.
+
+**Mapa nese vrstvu i u objektu.** Parser ji cetl uz drive (`x >= 416`
+snizuje vrstvu), ale prepis ji u objektu zahazoval. V TOWN maji objekty
+vrstvy 1 (51x), 2 (59x) a 3 (45x); dlazdice `_DEADTRE` jsou promichane
+ve vrstvach 1 az 4 s domy `_HOUSES` ve vrstvach 0 az 4. Dlazdice s NIZSIM
+cislem lezi bliz divakovi, takze strom ve vrstve 1 prekryva dum ve
+vrstve 3 - **a stejne tak objekt ve vrstve 2 nebo 3**.
+
+V RIVERu to sedi na pozorovany pripad: FLATTANK ma vrstvu 2 a lezi pod
+`_JUNGLE#2` (vrstva 1) a `_JUNGLE#3` (vrstva 2).
+
+### Prepis
+
+`renderMap` ted vedle barev a control plane plni jeste `foreLayer`: pro
+kazdy bod vrstvu dlazdice, ktera je tam nejvic vepredu (nizsi cislo
+vyhrava, 0 = zadna). Blit objektu pak pixel preskoci tam, kde
+`foreLayer <= vrstva objektu`.
+
+**Zmereno** na tom konkretnim FLATTANKu (RIVER, pozice 45488, x 22,
+obrazovkove y 71), shoda obrysu spritu s originalem:
+
+    bez vrstev   904 / 1330 = 68 %
+    s vrstvami  1071 / 1330 = 81 %
+
+Vsech jedenact checkpointu `compare.py` zustalo beze zmeny - v TOWN na
+nich zadny objekt pod popredovou dlazdici neni, takze to tam nic
+nezhorsilo ani nezlepsilo.
+
+### Co z toho plyne pro blitovaci radu
+
+Statickym ctenim rady `0x3e0c`..`0x4218` se mechanismus najit nedal a
+ted je jasne proc: **neni v ni**. Poradi urcuje klic `+8` a vrstva se do
+nej musi dostat driv, uz pri zakladani BOB zaznamu. Kde presne, zustava
+otevrene - ale pro obraz uz to neni potreba, protoze vysledek je zmereny
+a odpovida.
