@@ -377,7 +377,7 @@ a presto to original dela (viz `docs/GAPS.md`).
 Zbyva projit **mechanismus obnovy** (`0x4184`, `0x4068`, `0x405a`) a jeho
 souhru se stavitelem stripu `0x3422`/`0x34c6`.
 
-### Prekryti objektu terenem - ZMERENO, ale nevysvetleno
+### Prekryti objektu terenem - ZMERENO ZIVE, stale nevysvetleno
 
 Aby nezustalo u dojmu ze snimku, je to zmerene. Snimek originalu
 `build/zone/z_p45488.raw` (RIVER, horni radek 12663) obsahuje FLATTANK
@@ -407,3 +407,74 @@ trideni) a `+21` (priznaky). Harness na to je - `tools/survey/tasks_live.py`
 uz cte zive zaznamy uloh z chip RAM, staci ho rozsirit o tenhle seznam.
 Ukaze se bud bit, ktery jsme neprecetli, nebo klic trideni, ktery objekt
 posle pred dlazdice.
+
+
+## Zivy odecet seznamu BOBu (2026-09-11)
+
+`tools/survey/boblist.py` dojede v originalu na zadanou mapovou pozici a
+precte z chip RAM obousmerne vazany seznam `fp@(208)` (BOBy), seznam
+`fp@(3564)` (dlazdice) a okolni globaly. Vysledky na pozici 45488 (RIVER,
+misto s prekrytymi tanky):
+
+### Tri bitmapy, ne jedna
+
+    fp@(256) obrazovka  popis 0018e8  bitmapa 01c938  radek 45489
+    fp@(260) druhy      popis 001d26  bitmapa 02a538  radek 45489
+    fp@(264) strip      popis 002164  bitmapa 038138  radek 45440
+
+Rozestupy jsou presne `0xDC00` = 56320 B = ctyri roviny po 14080 B.
+Prvni dve maji **tentyz radek** a nenulove citace obnovy (109 a 108),
+treti je o 49 radku napred a citac ma nulovy. Je to tedy **dvojite
+bufferovana obrazovka plus treti, prave staveny strip**.
+
+### Zaznamy
+
+23 BOBu, trideno sestupne podle klice `+8`:
+
+| klic | gfx | co to je | `+21` |
+|---:|---|---|---|
+| 65535 | `0x1009` x5 | stiny letky | `0x21` = bit 0 + bit 5 (stin) |
+| 32767 | `0x0027`/`0x0227`/`0x0427` | **tela FLATTANKu** | `0x01` |
+| 32766 | `0x1003`/`0x0803`/`0x1a03` | jejich veze (MEDTANK.LIN) | `0x01` |
+| 32735 | `0x1009` x5 | tela letky | `0x00` |
+| 10010 | `0x1c01` | strela hrace | `0x00` |
+
+84 dlazdic s klici 3556..3621 a `+21 = 0x40` (bit 6 = do stripu), presne
+jak rika staticke cteni.
+
+**Tank ma priznaky `0x01`, tedy jen bit 0 (ulozeni pozadi).** Zadny bit,
+ktery by znamenal "kresli me pod teren", a jeho klic `32767` je radove
+jinde nez klice dlazdic - seznamy jsou stejne oddelene.
+
+### Zmereno poradne (a oprava drivejsich cisel)
+
+Predchozi mereni (79 %, pak 75 %) byla **znehodnocena**:
+
+1. **FLATTANK se pohybuje.** `+356 = 32` je 32/65536 px za tik; zaznam
+   bezel 61631 snimku, coz je **30,1 px driftu**. Tank byl tedy o 30
+   radku jinde, nez rikala mapa, a meril jsem vedle. Zivy odecet dal jeho
+   skutecnou polohu (`x = 22`, radek 45560, tj. obrazovkove `y = 72`) a
+   nezavisle hledani nejlepsi shody spritu ji potvrdilo (`y = 71`).
+2. **Fade po skoku.** Nas srovnavaci render mel po `jumpMap` jeste
+   nedobehly fade-in, takze byl tmavy a barvy nesedely.
+
+Po oprave obojiho, nas render proti originalu na TEMZE miste a s
+dobehlym fadem:
+
+    neprusvitne pixely spritu FLATTANK#1 = 1330 px
+      oba ukazuji tank:            904 px (68 %)
+      u nas tank, u originalu ne:  426 px (32 %)
+
+**Prekryti je tedy realne a ma asi tretinu spritu** - v obraze je to
+zarostly levy pas a leva cast korby. Veze se to netyka: tu prepis kresli
+spravne (`MEDTANK.LIN` snimky 4..19), coz zivy odecet take potvrdil.
+
+### Stav
+
+Mechanismus zustava nevysvetleny. Vyloucene je:
+
+- klic trideni (seznamy BOBu a dlazdic jsou oddelene, klice radove jine),
+- priznakove bity BOB zaznamu (tank ma jen `0x01`),
+- zamena snimku (vsechny ctyri snimky FLATTANKu jsou skoro totozne),
+- chybejici vez (kreslime ji),
+- blikani pri rotaci bufferu (osm snimku po sobe je identickych).
