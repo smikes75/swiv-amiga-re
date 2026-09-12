@@ -6804,6 +6804,41 @@ def main():
                    "prekryto %d z %d bodu obrysu (%.0f %%)" %
                    (vrstvy["skryto"], vrstvy["cel"], 100 * podil))
 
+            # Regrese po hracskem testu: masku musi dostat i VEZ tanku
+            # a musi platit i v plynulem rezimu (jina kreslici cesta).
+            vez = page.evaluate("""() => {
+              startGame(3);
+              const g = state.g;
+              g.lives = 99999;
+              for (let i = 0; i < 300; i++) {
+                step(g); g.lives = 99999; g.player.inv = 999;
+              }
+              const zaznamy = kind => {
+                const c = standardBobRecords ? null : null;
+                return null;
+              };
+              // projdeme pripravene BOB spec pres jeden render
+              const t = g.spawns.find(s => (s.beh === "tank" ||
+                        s.beh === "flattank") && s.born && s.alive);
+              if (!t) return { chybi: true };
+              const now = performance.now();
+              g.hudCopperPrimed = true; g.last = now; frame(now);
+              const r = (g.lastBobRecords || []).filter(x =>
+                x.kind === "main");
+              const veze = r.filter(x => x.id === "tank-turret");
+              const korby = r.filter(x => x.id === "tank-hull" ||
+                                          x.id === "flattank");
+              return { vezi: veze.length, korb: korby.length,
+                       veziSMaskou: veze.filter(x => !!x.fore).length,
+                       korbSMaskou: korby.filter(x => !!x.fore).length };
+            }""")
+            if not vez.get("chybi") and vez["vezi"]:
+                expect(vez["veziSMaskou"] == vez["vezi"],
+                       "vez tanku nedostala masku vrstev: %r" % (vez,))
+            if not vez.get("chybi") and vez["korb"]:
+                expect(vez["korbSMaskou"] == vez["korb"],
+                       "korba tanku nedostala masku vrstev: %r" % (vez,))
+
             # ---- joysticky (Gamepad API) -----------------------------
             pad = page.evaluate("""() => {
               startGame(0);

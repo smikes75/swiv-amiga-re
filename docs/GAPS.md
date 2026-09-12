@@ -1527,3 +1527,36 @@ zonou jeste nepusobi.
 
 **Zvetseni 5x a 6x**: logika vetsi nasobky umela uz drive (`state.zoom`
 se uklada az do 12), chybela jen tlacitka. Doplnena.
+
+
+## Vrstvy: opravy po hracskem testu (2026-09-12)
+
+Tri veci, ktere prvni verze nemela:
+
+1. **Veze tanku** (`tank-turret` u `tank` i `flattank`) masku nedostavaly,
+   takze korba byla zarostla a vez nad stromy. Opraveno.
+2. **Plynuly rezim** kresli sprity canvasovou cestou
+   (`smoothSpriteCanvas`), ne indexovym blitem, takze se ho maska vubec
+   netykala a tanky tam byly cele nad stromy. Ted ji ma taky.
+3. **Zvetseni 5x a 6x nedelalo nic.** `viewScale` orezavalo vyslovnou
+   volbu na to, co se vejde do okna (`Math.min(state.zoom, fit)`), a na
+   notebooku vychazi svisly `fit` = 2. Vyslovna volba se uz neoreziva -
+   platno smi prerust okno a stranka se posouva. Automaticky rezim (0)
+   se chova jako drive.
+
+### Vykon maskovanych spritu
+
+Maskovany sprite nejde cachovat podle grafiky a palety jako ostatni,
+protoze zavisi jeste na poloze v mape. Bez cache se pro nej stavelo nove
+platno v kazdem snimku a `putImageData` na akcelerovanem platne je drahe.
+
+Reseni: do klice cache jde i poloha V MAPE, ktera je u vetsiny
+maskovanych objektu (tanky, instalace, miny, plosiny) stala. Zmereno po
+zahrati: **2,5 az 3 nova platna na snimek** v TOWN i RIVERu, tedy
+zanedbatelne. Cache se pri prekroceni 96 polozek vyprazdni, aby
+pohyblive objekty nerostly bez mezi.
+
+**Pozor na mereni v headless Chromiu**: canvas se tam kresli softwarove a
+i beh BEZ maskovani dal 67 ms na snimek. Absolutni cisla odtud nic
+nerikaji; pouzitelna je jen metrika nezavisla na hardwaru, tedy pocet
+prepocitanych masek.

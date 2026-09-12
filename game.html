@@ -2024,7 +2024,7 @@ function composeTownBobs(g, top) {
       if (!s.tankSetup) continue;
       if (s.turretTask && s.turretTask.alive)
         bob("tank-turret", s.file, Math.min(19, 4 + dir16(s.tang)),
-            s.x, sy, 1, { castShadow: false,
+            s.x, sy, 1, { castShadow: false, fore: foreFor(s),
                            ordinal: s.turretBobOrdinal,
                            primaryOp: s.hitFlash ? BOB_FILL_INDEX9 : null });
       bob("tank-hull", s.file, s.hullF, s.x, sy, 0,
@@ -2107,7 +2107,7 @@ function composeTownBobs(g, top) {
     if (s.beh === "flattank") {
       if (s.turretTask && s.turretTask.alive)
         bob("tank-turret", "MEDTANK.LIN", Math.min(19, 4 + dir16(s.tang)),
-            s.x, sy + 4, 1, { castShadow: false,
+            s.x, sy + 4, 1, { castShadow: false, fore: foreFor(s),
                            ordinal: s.turretBobOrdinal,
                            primaryOp: s.hitFlash ? BOB_FILL_INDEX9 : null });
       bob("flattank", "FLATTANK.LIN", s.fr, s.x, sy, 0,
@@ -7855,7 +7855,10 @@ function viewScale(smooth) {
     (window.innerHeight - chromeHeight()) * dpr / 256)));
   // state.zoom je PRANI uzivatele; male okno ho jen docasne omezi, ulozena
   // hodnota zustava, aby se po zvetseni okna vratila (prevzato z Codexu).
-  let dev = (state.zoom | 0) > 0 ? Math.min(state.zoom | 0, fit) : fit;
+  // Vyslovna volba hrace se uz NEOREZAVA na to, co se vejde: 5x a 6x by
+  // jinak na notebooku nedelalo nic (svisly `fit` tam vychazi 4).
+  // Platno smi prerust okno, stranka se pak posouva.
+  let dev = (state.zoom | 0) > 0 ? (state.zoom | 0) : fit;
   // Auto bere nejvetsi nasobek, ktery se vejde: od 4x uz pozadi nestoji
   // ani pri nasobku nedelitelnem ctyrmi, takze neni duvod ustupovat.
   return { dev, fit, S: smooth ? bestS(dev) : 1,
@@ -11174,24 +11177,51 @@ function smoothBobKey(r) {
   // sprite (zmereno: skoky 70 px na jeden snimek).
   return Number.isInteger(r.ordinal) ? r.id + "#" + r.ordinal : null;
 }
-function smoothSpriteCanvas(spr, palWords, op, c07) {
+/* `fore` je tataz maska jako v klasicke ceste (`blitIndexedOperation`);
+   navic potrebuje polohu, protoze se cte z mapy. Maskovane sprity se
+   necachuji - maska se s kazdym posunem meni. */
+function smoothSpriteCanvas(spr, palWords, op, c07, fore, left, top) {
   const cache = spr.smoothCache || (spr.smoothCache = new Map());
   let key = op + ":" + (c07 === undefined ? "" : c07) + ":";
   for (let i = 0; i < 16; i++) key += palWords[i].toString(16) + ",";
+  // Maskovany sprite zavisi jeste na poloze V MAPE. Ta je u vetsiny
+  // maskovanych objektu (tanky, instalace, miny, plosiny) STALA, takze
+  // se cachuje stejne jako nemaskovany - jen s polohou v klici. Bez toho
+  // stalo dvanact objektu na scene 100 ms na snimek misto 1,2 ms:
+  // `putImageData` na akcelerovanem platne je drahe a delo se 12x za
+  // snimek. Cache je omezena, aby pohyblive objekty nerostly bez mezi.
+  if (fore) key += "|" + left + "," + top + "," + fore.own;
   let cv = cache.get(key);
   if (cv) return cv;
+  if (cache.size > 96) cache.clear();
+  /* Maskovany sprite se lisi snimek od snimku, takze se necachuje - ale
+     nesmi se pro nej pokazde zakladat nove platno. Zmereno: s novym
+     platnem na kazdy maskovany sprite stalo dvanact objektu na scene
+     90,9 ms na snimek misto 1,3 ms. Slouzi proto jedno sdilene, ktere se
+     hned po naplneni vykresli. */
   cv = document.createElement("canvas");
   cv.width = Math.max(1, spr.w); cv.height = Math.max(1, spr.h);
   const img = cv.getContext("2d").createImageData(cv.width, cv.height);
   const d = img.data;
+  const fl = fore && fore.layer, fW = fore ? fore.W : 0;
+  const fH = fl ? Math.floor(fl.length / fW) : 0;
+  const rowPx = spr.w;
   for (let i = 0; i < spr.w * spr.h; i++) {
     const c = spr.pix[i];
     if (c === 0xFF) continue;
+    const sx = i % spr.w, sy = (i / spr.w) | 0;
+    if (fl) {
+      const x = left + sx, y = top + sy;
+      if (x >= 0 && x < fW && y >= 0 && y < fH) {
+        const v = fl[y * fW + x];
+        if (v && v <= fore.own) continue;     // dlazdice lezi vepredu
+      }
+    }
     let word;
     if (op === BOB_CLEAR_INDEX0) word = palWords[0];
     else if (op === BOB_FILL_INDEX9) word = palWords[9];
     else word = (c === 7 && c07 !== undefined) ? c07 : palWords[c];
-    const o = i * 4;
+    const o = (sy * rowPx + sx) * 4;
     d[o] = ((word >> 8) & 15) * 17; d[o + 1] = ((word >> 4) & 15) * 17;
     d[o + 2] = (word & 15) * 17; d[o + 3] = 255;
   }
@@ -11321,8 +11351,12 @@ function renderSmoothField(ctx, g, S, composed, hudCv) {
     const dx = rq(lerpOK && p ? cxP + (cxC - cxP) * alpha : cxC);
     const dy = rq(lerpOK && p ? cyP + (cyC - cyP) * alpha : cyC) - scrollF;
     const row = Math.max(0, Math.min(rows - 1, Math.floor(dy - r.spr.oy)));
+    // Maska se cte z mapy, takze potrebuje levy horni roh spritu v jejich
+    // souradnicich: vodorovne rovnou dx, svisle dy + prave nakresleny
+    // scroll (uvnitr `dy` uz je odectený).
     const cv = smoothSpriteCanvas(r.spr, pal.subarray(row * 16, row * 16 + 16),
-                                  r.op, c07);
+                                  r.op, c07, r.fore,
+                                  Math.round(dx), Math.round(dy + scrollF));
     // Volitelne vylepseni (v originale neni): stin objektu, ktery leti
     // vysoko, je na skutecne predloze mekci a svetlejsi. Vysku uz mame -
     // hra ji pouziva k odsazeni stinu (bobShadowAnchor: x + z/2, y + z),
