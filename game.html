@@ -804,7 +804,11 @@ function renderMap(state, lv, withObjects, count = CHAIN_MAPS) {
     for (const t of tiles) {
       paintTerrainControl(t.x, t.y, t.gfx);
       blit(t.x, t.y, t.gfx); ntiles++;
-      if (t.layer < 4) markForeground(t.x, t.y, t.gfx, t.layer);
+      // Popredi je JEN vrstva 1. Zmereno na FLATTANKu v RIVERu proti
+      // originalu: s "vsechny vrstvy pod vrstvou objektu" vyslo 85 %
+      // shody obrysu, s "jen vrstva 1" **100 %**. Vrstva 0 popredi neni -
+      // razeni dlazdic ji dava prioritu 5, tedy uplne dozadu.
+      if (t.layer === 1) markForeground(t.x, t.y, t.gfx, t.layer);
     }
   if (withObjects !== false)
     for (const t of objs) blit(t.x, t.y, t.gfx);
@@ -1966,12 +1970,27 @@ function composeTownBobs(g, top) {
       for (const r of batch.records)
         if (r.kind === "main") r.fore = spec.fore;
   }
-  /* Vrstva objektu z mapy (`+276` se nepouziva, je to `parsed.objs`
-     `layer`). Dlazdice s NIZSIM cislem vrstvy lezi pred nim. */
+  /* Kdo se schovava za popredi, rika `+397` bit 0 - originalni priznak,
+     ktery nastavuje 28 mist v AMPROG.OBJ. Je to **per uloha**, takze si
+     ho nastavuji i deti: vlak ma dve mista (lokomotiva `0x9b90`, vagon
+     `0x9c4a`), tank dve (korba `0x9f00`, vez `0x9fc8`), `plat` tri,
+     `junhatch` a `flame` po dvou. Diky tomu je slozeny objekt maskovany
+     cely; drivejsi pravidlo podle vrstvy z mapy maskovalo jen mapovy
+     zaznam a deti nechavalo nad porostem (hlaseny "divny prekryv"
+     u vlaku a zavor).
+
+     Mimo dispatch tabulku bit nastavuji jeste dekal `0x898c`, vez jeepu
+     `0x89ee`, lod `0x8e88`, jeep `0x90f0` a cakance `0x937a`. */
   const foreFor = s => (state.objectLayers !== false && g.foreLayer &&
-                        (s.layer | 0) > 0)
-    ? { layer: g.foreLayer, W: g.mapW || 320, top, own: (s.layer | 0) + 1 }
+                        GROUND_MASKED.has(typeof s === "string" ? s : s.beh))
+    ? { layer: g.foreLayer, W: g.mapW || 320, top, own: 2 }
     : null;
+
+  const GROUND_MASKED = new Set([
+    "airplane", "trilo", "mine", "train", "flattank", "tank", "juntank",
+    "plat", "junhatch", "popup", "proxmine", "flame", "camogun",
+    "swappad0", "swappad",
+  ]);
 
   function bob(id, file, idx, x, y, z, opts) {
     opts = opts || {};

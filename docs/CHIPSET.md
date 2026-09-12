@@ -495,12 +495,36 @@ vrstve 3 - **a stejne tak objekt ve vrstve 2 nebo 3**.
 V RIVERu to sedi na pozorovany pripad: FLATTANK ma vrstvu 2 a lezi pod
 `_JUNGLE#2` (vrstva 1) a `_JUNGLE#3` (vrstva 2).
 
-### Prepis
+### Prepis (model zpresnen 2026-09-12 po druhem hracskem testu)
 
-`renderMap` ted vedle barev a control plane plni jeste `foreLayer`: pro
-kazdy bod vrstvu dlazdice, ktera je tam nejvic vepredu (nizsi cislo
-vyhrava, 0 = zadna). Blit objektu pak pixel preskoci tam, kde
-`foreLayer <= vrstva objektu`.
+Prvni verze maskovala podle VRSTVY OBJEKTU z mapy. Hrac nahlasil divny
+prekryv u vyjizdejiciho vlaku a u zavor - a prava pricina byla, ze tu
+vrstvu ma jen mapovy zaznam. Deti a za behu vznikle casti ji nemaji,
+takze u slozeneho objektu sla jedna cast pod porost a druha ne.
+
+Zmereno proti originalu (FLATTANK v RIVERu, pozice 45488, poloha
+nezavisle dohledana hledanim nejlepsi shody spritu):
+
+    bez masky                              904 / 1330 =  68 %
+    podle vrstvy objektu z mapy (byla 2)  1129 / 1330 =  85 %
+    jen vrstva 1 prekryva                 1330 / 1330 = 100 %
+    prah 3 nebo 4                          648 / 1330 =  49 %
+
+**Popredi je tedy JEN vrstva 1**, bez ohledu na vrstvu objektu. Vrstva 0
+popredi neni - razeni dlazdic ji dava prioritu 5, tedy uplne dozadu.
+
+**Kdo se maskuje, rika `+397` bit 0** - originalni priznak, ktery
+nastavuje 28 mist v AMPROG.OBJ. Je **per uloha**, takze si ho nastavuji
+i deti: `train` ma dve mista (lokomotiva `0x9b90`, vagon `0x9c4a`),
+`tank` dve (korba `0x9f00`, vez `0x9fc8`), `plat` tri, `junhatch` a
+`flame` po dvou, `swappad` dve. Mimo dispatch tabulku jeste dekal
+`0x898c`, vez jeepu `0x89ee`, lod `0x8e88`, jeep `0x90f0` a cakance
+`0x937a`. Slozeny objekt je tim maskovany cely.
+
+Tenhle model navic nepotrebuje u objektu cist nic z mapy, coz je dobre:
+vrstvove bity u OBJEKTOVEHO zaznamu original pri dekodovani zahazuje
+(`0x371e` maskuje x na devet bitu). Drivejsi pravidlo tedy stalo na
+poli, ktere original ignoruje.
 
 **Zmereno** na tom konkretnim FLATTANKu (RIVER, pozice 45488, x 22,
 obrazovkove y 71), shoda obrysu spritu s originalem:

@@ -1560,3 +1560,51 @@ pohyblive objekty nerostly bez mezi.
 i beh BEZ maskovani dal 67 ms na snimek. Absolutni cisla odtud nic
 nerikaji; pouzitelna je jen metrika nezavisla na hardwaru, tedy pocet
 prepocitanych masek.
+
+
+## Vrstvy: model zpresnen podle druheho hracskeho testu (2026-09-12)
+
+Hrac nahlasil, ze u **vyjizdejiciho vlaku** a u **zavor** dela vrstva
+divny prekryv. Mel pravdu a pricina byla v modelu, ne v zapojeni.
+
+Prvni verze maskovala podle **vrstvy objektu z mapy**. Tu ma ale jen
+mapovy zaznam - deti a za behu vznikle casti ji nemaji, takze
+`foreFor()` u nich vratil `null` a nemaskovaly se vubec. U slozeneho
+objektu tim sla jedna cast pod porost a druha ne: vlak ma lokomotivu
+jako mapovy zaznam a vagony jako deti, `plat` (zavory) ma casti taky
+jako samostatne ulohy.
+
+**Originalni signal je jiny a je per ULOHA:** `+397` bit 0 nastavuje 28
+mist a mezi nimi jsou i deti - `train` dve (`0x9b90` lokomotiva,
+`0x9c4a` vagon), `tank` dve (korba, vez), `plat` tri, `junhatch`,
+`flame` a `swappad` po dvou. Kazda potomkovska rutina si ho nastavi
+sama, takze je slozeny objekt maskovany cely.
+
+**Zmereno** proti originalu na FLATTANKu v RIVERu (poloha nezavisle
+dohledana hledanim nejlepsi shody spritu):
+
+| model | shoda obrysu |
+|---|---:|
+| bez masky | 68 % |
+| podle vrstvy objektu z mapy | 85 % |
+| **jen vrstva 1 prekryva, vyber podle `+397` bit 0** | **100 %** |
+| prah 3 nebo 4 | 49 % |
+
+Zavedeno. Vsech dvanact checkpointu `compare.py` beze zmeny.
+
+Vedlejsi prinos: novy model nepotrebuje u objektu cist z mapy nic, coz
+je v souladu s tim, ze original vrstvove bity u OBJEKTOVEHO zaznamu pri
+dekodovani **zahazuje** (`0x371e` maskuje x na devet bitu). Drivejsi
+pravidlo stalo na poli, ktere original ignoruje - fungovalo jen proto,
+ze designeri objekty umistovali konzistentne s okolim.
+
+### Co zustava otevrene
+
+- **Hazardy a strely** (plamen za behu, strepy) se nemaskuji - kresli se
+  jinou cestou nez mapove objekty. V originale `flame` bit 0 ma
+  (`0xab2a`, `0xab8a`), takze by se maskovat mel.
+- **Tank u mustku pres koryto** hrac zminil jako treti divny pripad;
+  nove pravidlo ho meni, ale nemame na nej referencni snimek originalu,
+  takze to zatim neni overene.
+- Kde presne se priznak dostane do poradi kresleni, porad nevime - pro
+  obraz uz to ale neni potreba.
