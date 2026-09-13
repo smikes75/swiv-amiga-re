@@ -126,6 +126,7 @@ a { color:#cfe0ff }
     <label title="Kamera zaostrena na rovinu objektu: teren pod nimi je mirne mekci. Amiga obraz skladala z pevnych bitplanu, zadny filtr mezi nimi a monitorem nebyl."><input type="checkbox" id="dofchk" checked> hloubka ostrosti</label>
     &nbsp;&middot;&nbsp; <label title="Stin objektu se s vyskou rozostri a zesvetli; blitter zna jen plnou masku, alfu neumi"><input type="checkbox" id="softshchk2" checked> m&#283;kk&#233; st&#237;ny</label>
     &nbsp;&middot;&nbsp; <label title="Pomahá plynulosti pri malem zvetseni: svisle prolnuti mezi dvema polohami. Neni to vizualni efekt, pri 4x a vice je zbytecne."><input type="checkbox" id="blendchk" checked> prolnut&#237; pohybu</label>
+    &nbsp;&middot;&nbsp; <label title="Rotorovy disk se sklopi do smeru letu. Telo zustava pixel po pixelu nedotcene - naklani se jen rotor, ktery je jednobarevna plocha. Original naklonene snimky nema."><input type="checkbox" id="tiltchk" checked> n&#225;klon vrtuln&#237;ku</label>
     <input type="checkbox" id="softshchk" hidden>
   </div>
   <div id="zoomrow" role="group" aria-label="Velikost hern&#237;ho pole">
@@ -3743,6 +3744,36 @@ const JOY_ANGLE = [-1, 192, 64, -1, 128, 160, 96, 64,
 /* 0x945a neni smerova animace: raw skript period(1) proklada zakladni
    JEEPHELI#0 mezi ctyri krajni polohy rotoru. */
 const HELI_SEQUENCE = [0, 1, 0, 2, 0, 3, 0, 4];
+
+/* Vrtulnik se da rozlozit na telo a rotor BEZ ZTRATY. `JEEPHELI#0` je
+   cele telo (306 neprusvitnych pixelu, sedm barev) a `#5`..`#8` jsou
+   samotne listy rotoru - cely snimek ma jediny index 7, protoze se
+   kresli sekundarni cestou `0x0B0A`, ktera barvu zdroje ignoruje
+   a zapisuje barvu 0. Ve slozenem snimku `#1`..`#4` jsou tytez pixely
+   barvou 0.
+
+   Zmereno na vsech ctyrech fazich (telo `#0` + rotor posunuty o (dx, dy),
+   rotor navrch): `#2`, `#3` i `#4` vyjdou na pixel presne, `#1` se lisi
+   jedinym bodem ze 448. Pri nulovem naklonu proto rozklad obraz nemeni.
+   Tabulka je [rotor, dx, dy]. */
+const HELI_ROTOR_PART = { 1: [5, 1, 1], 2: [6, 1, 1],
+                          3: [7, 0, 0], 4: [8, 2, 2] };
+/* Rychlost vrtulniku je `+356` = 768 v 16.16, tedy 3 px/tik po ose
+   (0x9476). Naklon se tim normuje na plny vychyl pri plne rychlosti. */
+const HELI_TILT_SPEED = 3;
+const HELI_TILT_MAX = 13 * Math.PI / 180;
+/* Vyska rotoru nad podelnou osou, kolem ktere se stroj naklani: pri
+   naklonu se hub vychyli vodorovne o `HELI_TILT_HUB * sin(uhel)`, disk
+   se v ose naklonu zkrati na `cos(uhel)`. Pri 13 stupnich to je 1,1 px
+   vychylky a 0,8 px zuzeni na 32 px sirokem disku. Vetsi uhly uz vypadaji,
+   ze se rotor od stroje odpojil - zkouseno az do 22 stupnu. */
+const HELI_TILT_HUB = 5;
+/* Naklon se nabira postupne, aby pri stisku klavesy neskocil: casova
+   konstanta ctyri tiky, tedy 80 ms. Krokuje se po TICICH, ne po snimcich,
+   aby nezavisel na obnovovaci frekvenci monitoru. Je to ciste zobrazovaci
+   stav - zije na `state`, ne na `g`, takze se nedostane do simulace ani
+   do `netStateHash`. */
+const HELI_TILT_LAG = 0.25;
 
 function resetPlayerHeliAnim(p) {
   p.heliAnimPos = 0;
@@ -7984,6 +8015,7 @@ function setMode(fx) {
   // original bez ohledu na to, co je v panelu odskrtnute.
   for (const [id, klic] of [["dofchk", "depthOfField"],
                             ["softshchk2", "softShadows"],
+                            ["tiltchk", "heliTilt"],
                             ["blendchk", "blendBg"]])
     state[klic] = fx && document.getElementById(id).checked;
   if (state.g) { state.g.bobCur = state.g.bobPrev = null; }
@@ -7996,6 +8028,10 @@ document.getElementById("dofchk").onchange = e => {
 };
 document.getElementById("softshchk2").onchange = e => {
   state.softShadows = state.smooth && e.target.checked;
+};
+document.getElementById("tiltchk").onchange = e => {
+  state.heliTilt = state.smooth && e.target.checked;
+  if (!state.heliTilt) state.heliTiltX = state.heliTiltY = 0;
 };
 /* Vyvojarska zkratka (neni v originale): postupne "sebere" TOKENy, ktere
    zvedaji silu zbrane. Sila `+100` je omezena tabulkou `0x70c0` podle
@@ -11290,6 +11326,48 @@ function smoothSpriteCanvas(spr, palWords, op, c07, fore, left, top) {
   cache.set(key, cv);
   return cv;
 }
+
+const clampUnit = v => v < -1 ? -1 : v > 1 ? 1 : v;
+
+/* Poloha vrtulniku z PREDCHOZIHO tiku. Klic je stejny jako u parovani
+   spritu, jen se sklada rovnou z ordinalu hrace. */
+function prevPlayerPos(g) {
+  const prev = g.bobPrev, ord = g.player && g.player.bobOrdinal;
+  if (!prev || !Number.isInteger(ord)) return null;
+  return prev.byKey.get("player-main#" + ord) || null;
+}
+
+/* Telo a rotor aktualni faze animace, nebo null (naklon vypnuty, faze
+   bez rotoru, snimek chybi). Resi se pred kreslenim, aby uprostred uz
+   nebylo co selhat. */
+function heliTiltParts(g) {
+  if (!state.heliTilt || !g.player) return null;
+  const part = HELI_ROTOR_PART[HELI_SEQUENCE[(g.player.heliAnimPos | 0) & 7]];
+  if (!part) return null;
+  const body = indexedFrameFor(state, "JEEPHELI.LIN", 0);
+  const rotor = indexedFrameFor(state, "JEEPHELI.LIN", part[0]);
+  return body && rotor ? { body, rotor, dx: part[1], dy: part[2] } : null;
+}
+
+/* Vrtulnik slozeny z tela a naklonenoho rotoru. Telo se kresli beze
+   zmeny; rotor se kolem hubu zkrati na `cos(uhel)` a hub se vychyli
+   o `HELI_TILT_HUB * sin(uhel)`, protoze lezi nad podelnou osou, kolem
+   ktere se stroj naklani. */
+function drawTiltedHeli(ctx, r, dx, dy, palRow, c07, part, tiltX, tiltY) {
+  const { body, rotor } = part;
+  const ax = dx - r.spr.ox, ay = dy - r.spr.oy;       // kotva objektu
+  const rotorOp = r.op === BOB_FILL_INDEX9 ? BOB_FILL_INDEX9
+                                           : BOB_CLEAR_INDEX0;
+  ctx.drawImage(smoothSpriteCanvas(body, palRow, r.op, c07, null, 0, 0),
+                ax + body.ox, ay + body.oy);
+  ctx.save();
+  ctx.translate(ax + HELI_TILT_HUB * Math.sin(tiltX),
+                ay + HELI_TILT_HUB * Math.sin(tiltY));
+  ctx.scale(Math.cos(tiltX), Math.cos(tiltY));
+  ctx.drawImage(smoothSpriteCanvas(rotor, palRow, rotorOp, c07, null, 0, 0),
+                rotor.ox + part.dx, rotor.oy + part.dy);
+  ctx.restore();
+}
 /* HUD pruh do pruhledneho platna - stejna smycka jako compositeHudPlane,
    jen misto do hotoveho snimku zapisuje do vrstvy s alfa 0 na pozadi. */
 function hudOverlayCanvas(g, plane, tick, firstPass) {
@@ -11397,6 +11475,29 @@ function renderSmoothField(ctx, g, S, composed, hudCv) {
     ctx.imageSmoothingEnabled = false;
   }
   const cur = g.bobCur, prev = g.bobPrev;
+  /* Naklon vrtulniku (v originale neni - `JEEPHELI.LIN` zadny naklonny
+     snimek nema, viz HELI_ROTOR_PART). Sklapi se JEN rotorovy disk:
+     je to jednobarevna plocha, takze na nem neni zadna kresba, kterou by
+     preskalovani poskodilo. Telo zustava pixel po pixelu nedotcene.
+     Uhel se bere z vlastniho pohybu hrace po obrazovce, ne z posuvu mapy -
+     jinak by stroj trvale visel nosem dopredu. */
+  // Snimky se resi uz tady, aby `drawTiltedHeli` nemohl selhat uprostred
+  // kresleni a nechat vrtulnik nenakresleny.
+  const heliFrame = heliTiltParts(g);
+  // Jednou za TIK, ne za snimek: `g.tick` je jediny spolehlivy ukazatel,
+  // protoze renderer muze mezi dvema tiky vykreslit vic snimku.
+  if (state.heliTilt && g.player && state.heliTiltTick !== g.tick) {
+    state.heliTiltTick = g.tick;
+    const pp = prev ? prevPlayerPos(g) : null;
+    const cilX = pp ? clampUnit((g.player.x - pp.x) / HELI_TILT_SPEED) : 0;
+    const cilY = pp ? clampUnit((g.player.y - pp.y) / HELI_TILT_SPEED) : 0;
+    state.heliTiltX = (state.heliTiltX || 0) +
+      (cilX - (state.heliTiltX || 0)) * HELI_TILT_LAG;
+    state.heliTiltY = (state.heliTiltY || 0) +
+      (cilY - (state.heliTiltY || 0)) * HELI_TILT_LAG;
+  }
+  const tiltX = (state.heliTiltX || 0) * HELI_TILT_MAX;
+  const tiltY = (state.heliTiltY || 0) * HELI_TILT_MAX;
   for (const r of composed.ordered) {
     if (!r.spr) continue;
     const key = smoothBobKey(r);
@@ -11430,9 +11531,23 @@ function renderSmoothField(ctx, g, S, composed, hudCv) {
       ctx.save();
       ctx.globalAlpha = Math.max(0.25, 0.75 - z / 90);
       if (blur > 0.4) ctx.filter = "blur(" + blur.toFixed(2) + "px)";
+      if (heliFrame && r.id === "player-shadow") {    // uz uvnitr stinu
+        ctx.translate(dx + r.spr.w / 2, dy + r.spr.h / 2);
+        ctx.scale(grow, grow);
+        ctx.translate(-dx - r.spr.w / 2, -dy - r.spr.h / 2);
+        drawTiltedHeli(ctx, r, dx, dy, pal.subarray(row * 16, row * 16 + 16),
+                       c07, heliFrame, tiltX, tiltY);
+        ctx.restore();
+        continue;
+      }
       const w = cv.width * grow, h = cv.height * grow;
       ctx.drawImage(cv, dx - (w - cv.width) / 2, dy - (h - cv.height) / 2, w, h);
       ctx.restore();
+      continue;
+    }
+    if (heliFrame && (r.id === "player-main" || r.id === "player-shadow")) {
+      drawTiltedHeli(ctx, r, dx, dy, pal.subarray(row * 16, row * 16 + 16),
+                     c07, heliFrame, tiltX, tiltY);
       continue;
     }
     ctx.drawImage(cv, dx, dy);

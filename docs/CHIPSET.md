@@ -310,6 +310,85 @@ vysku a jsou kreslene s tvrdou paletou. Gradient pres tak malou plochu
 vypada jako spina, ne jako svetlo. Skutecne nasvíceni by potrebovalo znat
 normalu povrchu, kterou z indexoveho spritu neziskame.
 
+## Naklon vrtulniku (2026-09-13)
+
+Sesty efekt vylepseneho rezimu. Zadani znelo "slo by prevzorkovat
+a zvetsit rozliseni vrtulniku a tim umoznit animaci naklonu?". Odpoved
+je ano, ale ukazalo se, ze na tenhle konkretni efekt prevzorkovani
+potreba neni.
+
+### Tri ruzne naklony, ktere se pletou dohromady
+
+Na spritu 17x32 pri 10 stupnich:
+
+| co | posun |
+|---|---:|
+| roll (naklon do strany, fyzikalne spravny) | 17 * (1-cos 10) = **0,26 px** |
+| pitch (nos dolu pri rozjezdu) | 32 * (1-cos 10) = **0,5 px** |
+| otoceni v rovine obrazovky | 16 * sin 10 = **2,8 px** |
+
+Prvni dva jsou pod rozlisenim spritu, treti ne. Otoceni trupu by tedy
+opravdu chtelo vyssi rozliseni - a poskodilo by pixel art.
+
+### Rotor je oddelitelny BEZ ZTRATY
+
+`JEEPHELI.LIN` obsahuje telo i rotor zvlast:
+
+- `#0` = cele telo, 306 neprusvitnych pixelu, sedm barev
+- `#5`..`#8` = samotne listy rotoru; cely snimek ma **jediny index 7**,
+  protoze se kresli sekundarni cestou `0x0B0A`, ktera barvu zdroje
+  ignoruje a zapisuje barvu 0. Je to maska, ne obrazek.
+- ve slozenem snimku `#1`..`#4` jsou tytez pixely barvou 0
+
+Slozeni `telo #0 + rotor #(4+i)` s pevnym posunem dava puvodni snimek:
+
+| slozeny | rotor | posun | chybnych pixelu |
+|---|---|---|---:|
+| `#1` | `#5` | (+1, +1) | 1 ze 448 |
+| `#2` | `#6` | (+1, +1) | **0** ze 429 |
+| `#3` | `#7` | (0, 0) | **0** ze 406 |
+| `#4` | `#8` | (+2, +2) | **0** ze 403 |
+
+Zmereno i na hotovem obraze (zoom 1, vsech osm fazi animace): pri nulovem
+naklonu se rozlozeny vrtulnik lisi od slozeneho o **0 pixelu v sedmi
+fazich z osmi**, ve fazi 1 o dva (telo a jeho stin, kazdy o jeden bod).
+
+### Co se naklani
+
+Sklapi se **jen rotorovy disk**. Je to jednobarevna plocha, takze na nem
+neni zadna kresba, kterou by preskalovani poskodilo - proto zadny
+prevzorkovavac. Telo zustava pixel po pixelu nedotcene.
+
+Disk lezi nad podelnou osou, kolem ktere se stroj naklani, takze se pri
+naklonu o uhel `a`:
+
+    hub vychyli vodorovne o  HELI_TILT_HUB * sin(a)   = 1,1 px
+    disk zkrati v ose        cos(a)                   = 0,8 px na 32 px
+
+Uhel se bere z **vlastniho pohybu hrace po obrazovce**, ne z posuvu mapy -
+jinak by stroj trvale visel nosem dopredu. Plny vychyl odpovida plne
+rychlosti vrtulniku, tedy `+356` = 768 v 16.16 = 3 px/tik (`0x9476`).
+
+`HELI_TILT_MAX` je 13 stupnu. Zkouseno az do 22, kde uz to vypada, ze se
+rotor od stroje odpojil.
+
+Naklon se nabira exponencialne s konstantou ctyri tiky (80 ms) a krokuje
+se **po ticich, ne po snimcich**, aby nezavisel na obnovovaci frekvenci
+monitoru. Zmereno pri drzene klavese: 0 -> 0,25 -> 0,44 -> 0,58 -> ... ->
+0,98 za ctrnact tiku, po pusteni zpet pod 0,02.
+
+Je to ciste zobrazovaci stav na `state`, ne na `g`: do simulace ani do
+`netStateHash` se nedostane, takze lockstep i sitovy kontrakt zustavaji
+nedotcene.
+
+### Kontrakt
+
+`uitest.py` meri obe strany: pri nulovem naklonu nejvyse 2 zmenene pixely
+(rozklad nesmi byt ztratovy), pri plnem aspon 100 (efekt nesmi byt jen
+deklarovany). Overeno negativni kontrolou - po vynulovani posunu
+v `HELI_ROTOR_PART` kontrakt spadne na `[0, 73, 0, 70, 0, 0, 0, 83]`,
+tedy presne na trech fazich, ktere nenulovy posun potrebuji.
+
 ## Blitovaci rada `0x3e0c`..`0x4218` - prectena (2026-09-11)
 
 Posledni neprectena cast enginu. Podnetem bylo hracske pozorovani, ze

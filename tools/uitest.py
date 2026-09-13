@@ -6889,6 +6889,55 @@ def main():
                    "10 %%, nejvic %.0f %%) - model je nejspis preuceny" %
                    (town["nalezu"], town["vzorku"], 100 * town["nej"]))
 
+            # ---- naklon vrtulniku: rozklad na telo a rotor ------------
+            # `JEEPHELI#0` je cele telo, `#5`..`#8` samotny rotor (jediny
+            # index 7 - kresli se sekundarni cestou 0x0B0A, ktera zapisuje
+            # barvu 0). Pri NULOVEM naklonu musi slozeni obou dat presne
+            # puvodni snimek: zmereno 0 zmenenych pixelu v sedmi z osmi
+            # fazi, ve fazi 1 (snimek #1) dva - tam se telo a rotor v
+            # predloze lisi o jediny bod. Pri plnem naklonu se musi hnout
+            # aspon sto pixelu, jinak je efekt jen deklarovany.
+            naklon = page.evaluate("""() => {
+              state.zoom = 1; state.smooth = true; state.blendBg = false;
+              state.depthOfField = false; state.softShadows = false;
+              const g = state.g; g.lives = 99999;
+              const cv = document.querySelector('#game');
+              const shot = (zap, tilt) => {
+                state.heliTilt = zap;
+                state.heliTiltX = tilt; state.heliTiltY = 0;
+                state.heliTiltTick = g.tick;      // drz zadany naklon
+                g.bobPrev = null; g.frac = 0; g.last = 0; frame(0);
+                return cv.getContext('2d')
+                         .getImageData(0, 0, cv.width, cv.height).data;
+              };
+              const diff = (a, b) => {
+                let n = 0;
+                for (let i = 0; i < a.length; i += 4)
+                  if (a[i] !== b[i] || a[i+1] !== b[i+1] ||
+                      a[i+2] !== b[i+2]) n++;
+                return n;
+              };
+              const nula = [], plny = [];
+              for (let faze = 0; faze < 8; faze++) {
+                g.player.heliAnimPos = faze;
+                shot(false, 0);                   // zahrivaci snimek
+                const bez = shot(false, 0).slice();
+                nula.push(diff(bez, shot(true, 0)));
+                if (HELI_ROTOR_PART[HELI_SEQUENCE[faze & 7]])
+                  plny.push(diff(bez, shot(true, 1)));
+              }
+              return { nula, plny,
+                       fazi: Object.keys(HELI_ROTOR_PART).length };
+            }""")
+            expect(naklon["fazi"] == 4,
+                   "HELI_ROTOR_PART ma mit ctyri faze, ma %d" %
+                   (naklon["fazi"],))
+            expect(max(naklon["nula"]) <= 2,
+                   "rozklad vrtulniku je pri nulovem naklonu ztratovy: %r" %
+                   (naklon["nula"],))
+            expect(len(naklon["plny"]) == 4 and min(naklon["plny"]) > 100,
+                   "naklon vrtulniku neni videt: %r" % (naklon["plny"],))
+
             # ---- joysticky (Gamepad API) -----------------------------
             pad = page.evaluate("""() => {
               startGame(0);
