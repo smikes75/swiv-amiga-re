@@ -381,13 +381,79 @@ Je to ciste zobrazovaci stav na `state`, ne na `g`: do simulace ani do
 `netStateHash` se nedostane, takze lockstep i sitovy kontrakt zustavaji
 nedotcene.
 
+### Proc rotor sam nestacil (2026-09-13, druhe kolo)
+
+Hrac nahlasil, ze naklon nevidi. Zmereno pri zvetseni 4x, kolik bodu
+displeje se zmeni:
+
+| zmena | bodu |
+|---|---:|
+| naklon rotoru (plny vychyl) | 2 544 |
+| vlastni zmena faze rotoru mezi tiky | 7 904 az 9 536 |
+| zmizeni rotoru (faze bez nej) | 5 152 |
+
+Efekt se tedy utopil ve vlastni animaci: rotor se kazdy tik promeni
+tri az ctyrikrat vic, nez cim ho naklon posune, a `HELI_SEQUENCE`
+ho navic pulku tiku nekresli vubec. **Stabilni plocha, na ktere je
+zmena videt, je telo** - to se mezi tiky nemeni.
+
+Telo se proto jeste natoci v rovine obrazovky o `HELI_YAW_MAX` = 8
+stupnu. Roll ani pitch to byt nemuzou, ty jsou pod rozlisenim spritu
+(0,26 a 0,5 px); viditelne je az otoceni, kde spicka 32 px vysokeho
+spritu ujede `16 * sin(uhel)` = 2,2 px. Je to **vylozene stylizace, ne
+fyzika**: skutecny vrtulnik muze letet bokem bez otoceni. Po pridani se
+naklon hne 8 633 body misto 2 544, tedy stejny rad jako vlastni animace.
+
+Pri tom se naslo, ze `heliTiltParts` vracelo null ve ctyrech fazich
+z osmi (ty bez rotoru), takze se telo pulku tiku kreslilo rovne a stroj
+pri letu do strany blikal. Kontrakt ted meri vsech osm fazi.
+
+### Prevzorkovat? Merenim vyvraceno
+
+Puvodni uvaha byla, ze otoceni potrebuje vyssi rozliseni spritu.
+Nepotrebuje. Zmereno na platne: **rotace spritu 1:1 a rotace jeho
+ctyrnasobne zvetseniny nejblizsim sousedem daji pixel po pixelu TOTEZ** -
+0 rozdilnych bodu ze 147 456 pri 0, 3, 8 i 15 stupnich. Platno vzorkuje
+az v rozliseni displeje, takze predem zvetsovat nema co pridat; pri
+zvetseni 6x vychazi zrno rotace stejne tak jeden bod displeje.
+
+Zmenu prinese teprve **chytry** zvetsovac (Scale2x, hq4x, xBRZ), ktery
+hrany dopocitava, nebo zapnute vyhlazovani - to se od rotace 1:1 lisi
+v 12 tisicich bodu ze 147 tisic, tedy 8 % plochy. Oboji by ale dalo
+vrtulnik z jine hry nez zbytek obrazu, ktery zustava tvrdy pixel art.
+Zavedeno proto neni.
+
+### Plynulost pohybu: neni co zlepsit
+
+Logika bezi 50 Hz a vrtulnik 3 px/tik, tedy 150 px/s; kresli se
+s kvantem 1/S px. Krok nakreslene polohy mezi snimky:
+
+| zvetseni | 60 Hz | 120 Hz | 144 Hz |
+|---|---|---|---|
+| 1x (S=1) | 2 a 3 px, rozptyl **1,0** | 1 a 2 px | 1 a 2 px |
+| 2x | 2,5 px, rozptyl **0** | 1,0 a 1,5 px | 1,0 a 1,5 px |
+| 4x | 2,5 px, rozptyl **0** | 1,25 px, rozptyl **0** | 1,0 a 1,25 px |
+| 6x | 2,5 px, rozptyl **0** | 1,167 a 1,333 px | 1,0 a 1,167 px |
+
+Na 60 Hz monitoru je od dvojnasobneho zvetseni pohyb **naprosto
+rovnomerny**. Zbytkovy rozptyl na 120 a 144 Hz je 0,17 az 0,5 px a je
+principialni: kvantum 1/S px je presne jeden bod displeje, jemneji uz
+to bez vyhlazovani nejde.
+
+Co pusobi netrhane neni poloha, ale to, ze stroj nema zadne zrychleni -
+`+356` se nastavi na 768 naraz (`0x9476`). To je chovani originalu
+a menit ho by byla zmena hratelnosti; vizualni doklouzani by navic
+odpojilo sprite od zasahove plochy. Vahu pohybu proto dodava naklon,
+ne zmena polohy.
+
 ### Kontrakt
 
 `uitest.py` meri obe strany: pri nulovem naklonu nejvyse 2 zmenene pixely
-(rozklad nesmi byt ztratovy), pri plnem aspon 100 (efekt nesmi byt jen
-deklarovany). Overeno negativni kontrolou - po vynulovani posunu
-v `HELI_ROTOR_PART` kontrakt spadne na `[0, 73, 0, 70, 0, 0, 0, 83]`,
-tedy presne na trech fazich, ktere nenulovy posun potrebuji.
+(rozklad nesmi byt ztratovy), pri plnem aspon 100 ve **vsech osmi fazich**
+(efekt nesmi byt jen deklarovany a nesmi blikat). Overeno negativni
+kontrolou - po vynulovani posunu v `HELI_ROTOR_PART` kontrakt spadne na
+`[0, 73, 0, 70, 0, 0, 0, 83]`, tedy presne na trech fazich, ktere
+nenulovy posun potrebuji.
 
 ## Blitovaci rada `0x3e0c`..`0x4218` - prectena (2026-09-11)
 

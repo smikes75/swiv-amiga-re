@@ -6895,8 +6895,12 @@ def main():
             # barvu 0). Pri NULOVEM naklonu musi slozeni obou dat presne
             # puvodni snimek: zmereno 0 zmenenych pixelu v sedmi z osmi
             # fazi, ve fazi 1 (snimek #1) dva - tam se telo a rotor v
-            # predloze lisi o jediny bod. Pri plnem naklonu se musi hnout
-            # aspon sto pixelu, jinak je efekt jen deklarovany.
+            # predloze lisi o jediny bod.
+            #
+            # Pri plnem naklonu se musi hnout VSECH OSM fazi, nejen ctyri
+            # s rotorem. Ctyri faze rotor nemaji a driv se v nich stroj
+            # kreslil rovne, takze pri letu do strany blikal mezi
+            # natocenym a rovnym telem.
             naklon = page.evaluate("""() => {
               state.zoom = 1; state.smooth = true; state.blendBg = false;
               state.depthOfField = false; state.softShadows = false;
@@ -6923,8 +6927,7 @@ def main():
                 shot(false, 0);                   // zahrivaci snimek
                 const bez = shot(false, 0).slice();
                 nula.push(diff(bez, shot(true, 0)));
-                if (HELI_ROTOR_PART[HELI_SEQUENCE[faze & 7]])
-                  plny.push(diff(bez, shot(true, 1)));
+                plny.push(diff(bez, shot(true, 1)));
               }
               return { nula, plny,
                        fazi: Object.keys(HELI_ROTOR_PART).length };
@@ -6935,8 +6938,10 @@ def main():
             expect(max(naklon["nula"]) <= 2,
                    "rozklad vrtulniku je pri nulovem naklonu ztratovy: %r" %
                    (naklon["nula"],))
-            expect(len(naklon["plny"]) == 4 and min(naklon["plny"]) > 100,
-                   "naklon vrtulniku neni videt: %r" % (naklon["plny"],))
+            expect(len(naklon["plny"]) == 8 and min(naklon["plny"]) > 100,
+                   "naklon vrtulniku neni videt ve vsech osmi fazich "
+                   "(jinak stroj blika mezi natocenym a rovnym): %r" %
+                   (naklon["plny"],))
 
             # ---- joysticky (Gamepad API) -----------------------------
             pad = page.evaluate("""() => {

@@ -3768,6 +3768,26 @@ const HELI_TILT_MAX = 13 * Math.PI / 180;
    vychylky a 0,8 px zuzeni na 32 px sirokem disku. Vetsi uhly uz vypadaji,
    ze se rotor od stroje odpojil - zkouseno az do 22 stupnu. */
 const HELI_TILT_HUB = 5;
+/* Naklon SAMOTNEHO ROTORU je v pohybu skoro neviditelny: zmereno pri 4x
+   zvetseni hne 2544 body, zatimco vlastni zmena faze rotoru mezi dvema
+   tiky 7904 az 9536 a jeho zmizeni 5152. Efekt se tedy utopi v animaci,
+   navic rotor je videt jen ve ctyrech fazich z osmi. Stabilni plocha,
+   na ktere je zmena videt, je TELO - to se mezi tiky nemeni.
+
+   Telo se proto jeste natoci v rovine obrazovky. Roll ani pitch to byt
+   nemuzou (17 * (1-cos 10) = 0,26 px, resp. 0,5 px - pod rozlisenim
+   spritu); viditelne je az otoceni, kde spicka 32 px vysokeho spritu
+   ujede 16 * sin(uhel). Je to vylozene stylizace, ne fyzika: skutecny
+   vrtulnik muze letet bokem bez otoceni. V originale zadny natoceny
+   snimek neni.
+
+   PREVZORKOVANI NENI POTREBA - zmereno: rotace spritu 1:1 a rotace jeho
+   ctyrnasobne zvetseniny nejblizsim sousedem daji pixel po pixelu TOTEZ
+   (0 rozdilnych bodu ze 147456 pri 0, 3, 8 i 15 stupnich). Platno totiz
+   vzorkuje az v rozliseni displeje, takze zvetsovat predem nema co
+   pridat. Zmenu prinese jen chytry zvetsovac nebo vyhlazovani - to by
+   ale dalo vrtulnik z jine hry nez zbytek obrazu. */
+const HELI_YAW_MAX = 8 * Math.PI / 180;
 /* Naklon se nabira postupne, aby pri stisku klavesy neskocil: casova
    konstanta ctyri tiky, tedy 80 ms. Krokuje se po TICICH, ne po snimcich,
    aby nezavisel na obnovovaci frekvenci monitoru. Je to ciste zobrazovaci
@@ -11337,35 +11357,47 @@ function prevPlayerPos(g) {
   return prev.byKey.get("player-main#" + ord) || null;
 }
 
-/* Telo a rotor aktualni faze animace, nebo null (naklon vypnuty, faze
-   bez rotoru, snimek chybi). Resi se pred kreslenim, aby uprostred uz
-   nebylo co selhat. */
+/* Telo a rotor aktualni faze animace, nebo null (naklon vypnuty, snimek
+   chybi). Resi se pred kreslenim, aby uprostred uz nebylo co selhat.
+
+   Ctyri faze z osmi rotor NEMAJI - `HELI_SEQUENCE` strida telo samotne
+   s telem a rotorem. Vraci se i pro ne (`rotor: null`), protoze natoceni
+   stroje musi platit v KAZDEM tiku; kdyz se vracelo null, telo se pulku
+   tiku kreslilo rovne a vrtulnik pri letu do strany blikal. */
 function heliTiltParts(g) {
   if (!state.heliTilt || !g.player) return null;
   const part = HELI_ROTOR_PART[HELI_SEQUENCE[(g.player.heliAnimPos | 0) & 7]];
-  if (!part) return null;
   const body = indexedFrameFor(state, "JEEPHELI.LIN", 0);
-  const rotor = indexedFrameFor(state, "JEEPHELI.LIN", part[0]);
-  return body && rotor ? { body, rotor, dx: part[1], dy: part[2] } : null;
+  if (!body) return null;
+  const rotor = part ? indexedFrameFor(state, "JEEPHELI.LIN", part[0]) : null;
+  return { body, rotor: part && rotor ? rotor : null,
+           dx: part ? part[1] : 0, dy: part ? part[2] : 0 };
 }
 
 /* Vrtulnik slozeny z tela a naklonenoho rotoru. Telo se kresli beze
    zmeny; rotor se kolem hubu zkrati na `cos(uhel)` a hub se vychyli
    o `HELI_TILT_HUB * sin(uhel)`, protoze lezi nad podelnou osou, kolem
    ktere se stroj naklani. */
-function drawTiltedHeli(ctx, r, dx, dy, palRow, c07, part, tiltX, tiltY) {
+function drawTiltedHeli(ctx, r, dx, dy, palRow, c07, part, tiltX, tiltY,
+                       yaw) {
   const { body, rotor } = part;
   const ax = dx - r.spr.ox, ay = dy - r.spr.oy;       // kotva objektu
   const rotorOp = r.op === BOB_FILL_INDEX9 ? BOB_FILL_INDEX9
                                            : BOB_CLEAR_INDEX0;
-  ctx.drawImage(smoothSpriteCanvas(body, palRow, r.op, c07, null, 0, 0),
-                ax + body.ox, ay + body.oy);
   ctx.save();
-  ctx.translate(ax + HELI_TILT_HUB * Math.sin(tiltX),
-                ay + HELI_TILT_HUB * Math.sin(tiltY));
-  ctx.scale(Math.cos(tiltX), Math.cos(tiltY));
-  ctx.drawImage(smoothSpriteCanvas(rotor, palRow, rotorOp, c07, null, 0, 0),
-                rotor.ox + part.dx, rotor.oy + part.dy);
+  // Cely stroj se natoci kolem kotvy; hub rotoru a jeho zkraceni uz jsou
+  // v souradnicich stroje, takze se vezou s nim.
+  ctx.translate(ax, ay);
+  if (yaw) ctx.rotate(yaw);
+  ctx.drawImage(smoothSpriteCanvas(body, palRow, r.op, c07, null, 0, 0),
+                body.ox, body.oy);
+  if (rotor) {
+    ctx.translate(HELI_TILT_HUB * Math.sin(tiltX),
+                  HELI_TILT_HUB * Math.sin(tiltY));
+    ctx.scale(Math.cos(tiltX), Math.cos(tiltY));
+    ctx.drawImage(smoothSpriteCanvas(rotor, palRow, rotorOp, c07, null, 0, 0),
+                  rotor.ox + part.dx, rotor.oy + part.dy);
+  }
   ctx.restore();
 }
 /* HUD pruh do pruhledneho platna - stejna smycka jako compositeHudPlane,
@@ -11498,6 +11530,7 @@ function renderSmoothField(ctx, g, S, composed, hudCv) {
   }
   const tiltX = (state.heliTiltX || 0) * HELI_TILT_MAX;
   const tiltY = (state.heliTiltY || 0) * HELI_TILT_MAX;
+  const yaw = (state.heliTiltX || 0) * HELI_YAW_MAX;
   for (const r of composed.ordered) {
     if (!r.spr) continue;
     const key = smoothBobKey(r);
@@ -11536,7 +11569,7 @@ function renderSmoothField(ctx, g, S, composed, hudCv) {
         ctx.scale(grow, grow);
         ctx.translate(-dx - r.spr.w / 2, -dy - r.spr.h / 2);
         drawTiltedHeli(ctx, r, dx, dy, pal.subarray(row * 16, row * 16 + 16),
-                       c07, heliFrame, tiltX, tiltY);
+                       c07, heliFrame, tiltX, tiltY, yaw);
         ctx.restore();
         continue;
       }
@@ -11547,7 +11580,7 @@ function renderSmoothField(ctx, g, S, composed, hudCv) {
     }
     if (heliFrame && (r.id === "player-main" || r.id === "player-shadow")) {
       drawTiltedHeli(ctx, r, dx, dy, pal.subarray(row * 16, row * 16 + 16),
-                     c07, heliFrame, tiltX, tiltY);
+                     c07, heliFrame, tiltX, tiltY, yaw);
       continue;
     }
     ctx.drawImage(cv, dx, dy);
