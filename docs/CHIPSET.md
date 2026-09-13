@@ -510,6 +510,85 @@ se kresli bez michani a rovnost s klasickym snimkem plati dal - mimo
 obdelniky spritu je rozdil **0 bodu**. Uvnitr obdelniku vzrostl ze 364
 na 925 bodu, coz je presne ten mekky okraj.
 
+### Stopy vozidel (2026-09-13)
+
+Hrac se ptal, jestli by za tanky mohly zustavat stopy. Original je MA,
+jen je skoro nikdy neni videt.
+
+`0xad30` (`trackzone`) je mapovy objekt, ktery otevre pasmo 600 px
+vysoke; uvnitr nej necha vez tanku (`0xa000`) stopu kazdych 20 tiku
+a jeep (`0x9172`) kazde 3 tiky. Dekal je `JEEPHELI#40..#43` a snimek se
+vybira vzorcem `((uhel + 16) & 0xE0) >> 5 & 3`.
+
+Zmereno pres celou mapu, 6000 tiku na uroven:
+
+| uroven | tanku | `trackzone` v mape | zona se otevrela | vzniklo stop |
+|---|---:|---:|---|---:|
+| TOWN | 65 | 1 | ne | 0 |
+| DESERT | 47 | 1 | ne | 0 |
+| GRASS | 25 | 1 | **ano, y 16359..16959** | **149** |
+| RIVER | 14 | 0 | - | 0 |
+| ICE | 3 | 0 | - | 0 |
+| SCIFI | 3 | 0 | - | 0 |
+
+V RIVERu, ICE ani SCIFI ten objekt v mape vubec neni.
+
+Ctyri snimky dekalu: `#40` jsou dva vodorovne pasy nad sebou (jizda do
+stran - pasy tanku jsou kolmo na smer), `#42` dva svisle vedle sebe
+(nahoru dolu), `#41` a `#43` uhlopricky. Vsech 149 stop v GRASSu bylo
+`#42`, tedy tanky jedouci svisle.
+
+### Rozsireni
+
+Volba `stopy vozidel` je pusti i mimo pasmo. Drzi se STRANOU SIMULACE:
+seznam zije na `state`, ne na `g`, takze se nedostane do `netStateHash`
+ani nesahne na RNG a dva hraci po siti muzou mit kazdy jine nastaveni.
+Snimek se voli puvodnim vzorcem, jen uhel neni z veze, ale ze smeru
+pohybu. Vozidla: `tank`, `flattank`, `juntank` a jeep; stopa po kazdych
+sedmi ujetych pixelech, strop 3000.
+
+Pri tom se doplnil **orez dekalu podle viditelnosti** v obou
+vykreslovacich cestach. Dekaly maji `life: Infinity`, takze jich za
+dlouhou hru muzou byt tisice a slepe blitovani vsech by stalo cas; plati
+to i pro puvodni kratery a stopy min.
+
+### Past, do ktere se slaplo podruhe
+
+Prvni verze podpixelove cesty si drzela zvetseninu u KAZDEHO platna
+spritu. `smoothSpriteCanvas` ale zaklada nove platno pro kazdou
+kombinaci sprite + operace + paleta a u maskovanych spritu je v klici
+jeste poloha, takze vznika nove kazdy snimek. Do pameti se tim sypala
+dve platna na maskovany sprite a snimek: v dlouhem behu **425 ms na
+snimek** misto jedne milisekundy.
+
+V `smoothSpriteCanvas` je na presne tohle varovani uz z drivejska
+("s novym platnem na kazdy maskovany sprite stalo dvanact objektu na
+scene 90,9 ms na snimek misto 1,3 ms"). Stejna past o patro vys.
+
+Opraveno jednim sdilenym platnem (`state.spriteScratch`). Nulova alokace
+za behu.
+
+### Nejdrazsi vec v obraze jsou mekke stiny
+
+Pri hledani te regrese se zmerilo neco jineho. Tataz scena v RIVERu,
+17 stinu a 18 letcu na obrazovce:
+
+| | ms/snimek |
+|---|---:|
+| mekke stiny vyp | 28,3 |
+| mekke stiny zap | **192,3** |
+
+Tedy zhruba 9,6 ms na jeden stin - `ctx.filter = blur(...)` se vola na
+kazdy stin zvlast pri kresleni. V ridke scene (7 pozemnich objektu,
+0 letcu) to nestoji nic, proto to drivejsi mereni nechytilo.
+
+Da se to opravit: rozostreni zavisi jen na vysce (`min(6, z/6)`) a `z`
+nabyva par hodnot, takze staci predrozostreny stin zakesovat misto
+filtrovani pri kazdem kresleni. Zatim NEUDELANO.
+
+Cisla jsou z headless softwaroveho platna, na GPU to bude radove
+levnejsi - informativni je pomer, ne absolutni hodnota.
+
 ### Prevzorkovat kvuli ROTACI? Merenim vyvraceno
 
 (Kvuli podpixelovemu umisteni smysl ma - viz vyse. Tohle je o rotaci.)

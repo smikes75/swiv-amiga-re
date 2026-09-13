@@ -126,6 +126,7 @@ a { color:#cfe0ff }
     <label title="Kamera zaostrena na rovinu objektu: teren pod nimi je mirne mekci. Amiga obraz skladala z pevnych bitplanu, zadny filtr mezi nimi a monitorem nebyl."><input type="checkbox" id="dofchk" checked> hloubka ostrosti</label>
     &nbsp;&middot;&nbsp; <label title="Stin objektu se s vyskou rozostri a zesvetli; blitter zna jen plnou masku, alfu neumi"><input type="checkbox" id="softshchk2" checked> m&#283;kk&#233; st&#237;ny</label>
     &nbsp;&middot;&nbsp; <label title="Pomahá plynulosti pri malem zvetseni: svisle prolnuti mezi dvema polohami. Neni to vizualni efekt, pri 4x a vice je zbytecne."><input type="checkbox" id="blendchk" checked> prolnut&#237; pohybu</label>
+    &nbsp;&middot;&nbsp; <label title="Vozidla nechavaji stopy i mimo pasmo, ktere pro ne original otevira jen na tech mistech. Kresli se puvodnim dekalem JEEPHELI#40..#43 a jsou ciste zobrazovaci - do simulace ani po siti nezasahuji."><input type="checkbox" id="stopychk" checked> stopy vozidel</label>
     &nbsp;&middot;&nbsp; <label title="Sprity se kladou na zlomkovou polohu jako teren, misto aby skakaly po celych bodech displeje. Bez toho objekty po plynule jedouci zemi podkluzuji. Rozmaze se jen okraj spritu o jeden bod displeje, vnitrek zustava tvrdy."><input type="checkbox" id="subpxchk" checked> podpixelov&#233; sprity</label>
     &nbsp;&middot;&nbsp; <label title="Rotorovy disk se sklopi do smeru letu. Telo zustava pixel po pixelu nedotcene - naklani se jen rotor, ktery je jednobarevna plocha. Original naklonene snimky nema."><input type="checkbox" id="tiltchk" checked> n&#225;klon vrtuln&#237;ku</label>
     <input type="checkbox" id="softshchk" hidden>
@@ -1954,8 +1955,10 @@ function composeTownBobs(g, top) {
   // pozadi pred BOB frontou. Stateless compositor jej aplikuje jako
   // ekvivalentni indexovy prepass (nikoli jako z=1 objekt).
   for (const ef of g.effects || []) {
+    const ry = ef.y - top;
+    if (ry < -64 || ry > H + 64) continue;      // viz orez v plynule ceste
     const decal = indexedFrameFor(state, ef.file, ef.frame);
-    if (decal) blitIndexedCookie(dst, W, H, decal, ef.x, ef.y - top);
+    if (decal) blitIndexedCookie(dst, W, H, decal, ef.x, ry);
   }
 
   let serial = 0;
@@ -8060,6 +8063,7 @@ function setMode(fx) {
                             ["softshchk2", "softShadows"],
                             ["tiltchk", "heliTilt"],
                             ["subpxchk", "subpixelSprites"],
+                            ["stopychk", "vehicleTracks"],
                             ["blendchk", "blendBg"]])
     state[klic] = fx && document.getElementById(id).checked;
   if (state.g) { state.g.bobCur = state.g.bobPrev = null; }
@@ -8075,6 +8079,10 @@ document.getElementById("softshchk2").onchange = e => {
 };
 document.getElementById("subpxchk").onchange = e => {
   state.subpixelSprites = state.smooth && e.target.checked;
+};
+document.getElementById("stopychk").onchange = e => {
+  state.vehicleTracks = state.smooth && e.target.checked;
+  if (!state.vehicleTracks) { state.trail = []; state.trackLast = null; }
 };
 document.getElementById("tiltchk").onchange = e => {
   state.heliTilt = state.smooth && e.target.checked;
@@ -11376,23 +11384,87 @@ function smoothSpriteCanvas(spr, palWords, op, c07, fore, left, top) {
 
 const clampUnit = v => v < -1 ? -1 : v > 1 ? 1 : v;
 
+/* ---- Stopy vozidel (rozsireni, v originale jen v pasmu) --------------
+   Original stopy MA: `0xad30` (`trackzone`) otevre pasmo 600 px vysoke
+   a uvnitr nej nechava vez tanku (`0xa000`, kazdych 20 tiku) a jeep
+   (`0x9172`, kazde 3 tiky) dekal `JEEPHELI#40..#43`. Zmereno: pasmo je
+   v mape jen tremi objekty (TOWN, DESERT, GRASS) a za 6000 tiku vznikne
+   v GRASSu 149 stop, jinde zadna.
+
+   Rozsireni je pusti i mimo pasmo. Drzi se ale STRANOU SIMULACE: zije
+   na `state`, ne na `g`, takze se nedostane do `netStateHash` ani
+   nesahne na RNG a dva hraci po siti muzou mit kazdy jine nastaveni.
+
+   Volba snimku je puvodni vzorec `((uhel + 16) & 0xE0) >> 5 & 3`, jen
+   uhel neni z veze, ale ze smeru pohybu: `#40` jsou dva vodorovne pasy
+   nad sebou (jizda do stran), `#42` dva svisle vedle sebe (nahoru dolu),
+   `#41` a `#43` uhlopricky. */
+const TRACK_BEHAVIORS = new Set(["tank", "flattank", "juntank"]);
+const TRACK_STEP = 7;             // px ujete mezi dvema stopami
+const TRACK_MAX = 3000;           // strop, aby seznam nerostl bez mezi
+
+function trackSector(dx, dy) {
+  // Uhel v jednotkach originalu: 0 = doprava, roste po smeru hodin.
+  const a = Math.round(Math.atan2(dy, dx) / (2 * Math.PI) * 256) & 255;
+  return ((a + 16) & 0xE0) >> 5 & 3;
+}
+
+/* Jednou za TIK doplni stopy pod pozemni vozidla. Vola se z rendereru,
+   protoze je to ciste zobrazovaci efekt. */
+function updateVehicleTracks(g) {
+  if (!state.vehicleTracks) return;
+  if (state.trackLv !== g.lv) {          // nova uroven, nova stopa
+    state.trackLv = g.lv; state.trail = []; state.trackLast = new Map();
+  }
+  if (state.trackTick === g.tick) return;
+  state.trackTick = g.tick;
+  const trail = state.trail || (state.trail = []);
+  const last = state.trackLast || (state.trackLast = new Map());
+  const pridej = (klic, x, y) => {
+    const p = last.get(klic);
+    if (p) {
+      const dx = x - p.x, dy = y - p.y;
+      if (dx * dx + dy * dy < TRACK_STEP * TRACK_STEP) return;
+      trail.push({ frame: 40 + trackSector(dx, dy), x, y });
+      if (trail.length > TRACK_MAX) trail.splice(0, trail.length - TRACK_MAX);
+    }
+    last.set(klic, { x, y });
+  };
+  for (const s of g.spawns)
+    if (s.born && s.alive && TRACK_BEHAVIORS.has(s.beh))
+      pridej(s.bobOrdinal, s.x, s.y);
+  const jp = g.player2;
+  if (jp && jp.alive && !jp.boat && !jp.airborne)
+    pridej("jeep", jp.x, jp.y + scrollTop(g));
+  if (last.size > 256) last.clear();     // pojistka proti rustu
+}
+
 /* Sprite zvetseny na rozliseni displeje NEJBLIZSIM SOUSEDEM. Samo o sobe
    to nic nemeni (zvetseni nejblizsim sousedem a nasledny odber nejblizsim
    sousedem je totez jako odber z originalu - zmereno: 0 rozdilnych bodu
    ze 147 456 pri rotaci o 0, 3, 8 i 15 stupnu). Smysl to dostane az ve
    dvojici s vyhlazovanim: pak se michaji BODY DISPLEJE, ne herni pixely,
-   takze vnitrek spritu zustane tvrdy a rozmaze se jen okraj. */
+   takze vnitrek spritu zustane tvrdy a rozmaze se jen okraj.
+
+   Zvetsenina se NECACHUJE u zdrojoveho platna, ale kresli do jedineho
+   sdileneho platna. Duvod je zmereny: `smoothSpriteCanvas` zaklada nove
+   platno pro kazdou kombinaci sprite + operace + paleta a u MASKOVANYCH
+   spritu je v klici jeste poloha, takze vznika nove kazdy snimek. Kdyby
+   si kazde takove platno drzelo jeste svou zvetseninu, sypaly by se do
+   pameti dve platna na maskovany sprite a snimek - pri dlouhem behu to
+   vyslo na 425 ms na snimek misto jedne milisekundy. */
 function upscaledSprite(cv, S) {
   if (S === 1) return cv;
-  const cache = cv._upsc || (cv._upsc = new Map());
-  let big = cache.get(S);
-  if (big) return big;
-  big = document.createElement("canvas");
-  big.width = cv.width * S; big.height = cv.height * S;
+  const w = cv.width * S, h = cv.height * S;
+  let big = state.spriteScratch;
+  if (!big) big = state.spriteScratch = document.createElement("canvas");
+  if (big.width < w || big.height < h) {
+    big.width = Math.max(big.width, w); big.height = Math.max(big.height, h);
+  }
   const x = big.getContext("2d");
+  x.clearRect(0, 0, w, h);
   x.imageSmoothingEnabled = false;
-  x.drawImage(cv, 0, 0, big.width, big.height);
-  cache.set(S, big);
+  x.drawImage(cv, 0, 0, w, h);
   return big;
 }
 
@@ -11409,12 +11481,14 @@ function drawSpriteDevice(ctx, cv, dx, dy, S, blurDev) {
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   if (blurDev > 0.02) ctx.filter = "blur(" + blurDev.toFixed(3) + "px)";
+  const w = cv.width * S, h = cv.height * S;
+  const big = upscaledSprite(cv, S);
   if (naBodu && !(blurDev > 0.02)) {
     ctx.imageSmoothingEnabled = false;       // presne na bodu: zadne michani
-    ctx.drawImage(upscaledSprite(cv, S), Math.round(px), Math.round(py));
+    ctx.drawImage(big, 0, 0, w, h, Math.round(px), Math.round(py), w, h);
   } else {
     ctx.imageSmoothingEnabled = true;
-    ctx.drawImage(upscaledSprite(cv, S), px, py);
+    ctx.drawImage(big, 0, 0, w, h, px, py, w, h);
   }
   ctx.restore();
 }
@@ -11536,9 +11610,21 @@ function renderSmoothField(ctx, g, S, composed, hudCv) {
   // stopy min i telo INST5 v plynulem rezimu chybely.
   if (!st.idx || st.idx.length !== 320 * rows) st.idx = new Uint8Array(320 * rows);
   st.idx.set(g.mapIndex.subarray(topI * 320, (topI + rows) * 320));
+  // Orez podle viditelnosti: dekaly maji `life: Infinity`, takze jich za
+  // dlouhou hru muzou byt tisice a slepe blitovani vsech by stalo cas.
+  // Marze 64 px pokryje i nejvyssi dekal, ktery presahuje svou kotvu.
   for (const ef of g.effects || []) {
+    const ry = ef.y - topI;
+    if (ry < -64 || ry > rows + 64) continue;
     const decal = indexedFrameFor(state, ef.file, ef.frame);
-    if (decal) blitIndexedCookie(st.idx, 320, rows, decal, ef.x, ef.y - topI);
+    if (decal) blitIndexedCookie(st.idx, 320, rows, decal, ef.x, ry);
+  }
+  updateVehicleTracks(g);
+  for (const tr of state.vehicleTracks ? (state.trail || []) : []) {
+    const ry = tr.y - topI;
+    if (ry < -64 || ry > rows + 64) continue;
+    const decal = indexedFrameFor(state, "JEEPHELI.LIN", tr.frame);
+    if (decal) blitIndexedCookie(st.idx, 320, rows, decal, tr.x, ry);
   }
   colorizeIndexedField(st.idx, 320, rows, state.mapMeta.height,
                        state.mapMeta.margin, topI, state.copperChecks, st.buf,
