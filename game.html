@@ -3807,6 +3807,19 @@ const HELI_BANK_ROTOR = 4;
    sve skutecne poloze (sprite trupu je to, podle ceho hrac miri a uhyba)
    a pritom je rozpeti mezi rotorem a stinem 5,5 px, tedy dobre videt. */
 const HELI_BANK_SHADOW = -1.5;
+/* Posun sam o sobe NENI VIDET. Zmereno pri opravdovem behu: vychyl dojede
+   na plnou jednicku za dvacet snimku, ale vyrobi z toho 1 px na trupu,
+   4 px na rotoru a -1,5 px na stinu - a oko na posun o par pixelu pri
+   pohybujicim se obraze nereaguje. Otoceni (prvni verze) videt bylo,
+   protoze menilo TVAR siluety.
+
+   Hlavnim signalem je proto ZUZENI: naklonenou vec vidi kamera shora
+   kratsi napric osy naklonu. Sirka se nasobi `1 - HELI_SQUASH * |vychyl|`,
+   tedy trup 17 -> 13,6 px a rotorovy disk 32 -> 25,6 px. Zuzeni navic
+   nehybe stredem, takze na rozdil od posunu vubec nelze o poloze - a
+   sprite trupu je to, podle ceho hrac miri. Ciste hladke je diky
+   podpixelove ceste; driv by se projevilo vypadavanim sloupcu. */
+const HELI_SQUASH = 0.2;
 
 /* Hloubka ostrosti: rozostreni v bodech DISPLEJE (filtr se nastavuje az
    za `ctx.scale(S, S)`, takze se zadava v `DOF_BLUR / S` uzivatelskych
@@ -11474,21 +11487,25 @@ function upscaledSprite(cv, S) {
    a objekty pak po zemi viditelne podkluzuji.
 
    `blurDev` je hloubka ostrosti, taky v bodech displeje. */
-function drawSpriteDevice(ctx, cv, dx, dy, S, blurDev) {
-  const px = dx * S, py = dy * S;
-  const naBodu = Math.abs(px - Math.round(px)) < 0.01 &&
+function drawSpriteDevice(ctx, cv, dx, dy, S, blurDev, sx, sy, cx, cy) {
+  const zx = sx === undefined ? 1 : sx, zy = sy === undefined ? 1 : sy;
+  const cele = zx === 1 && zy === 1;
+  const px = (cele ? dx : cx + (dx - cx) * zx) * S;
+  const py = (cele ? dy : cy + (dy - cy) * zy) * S;
+  const sw = cv.width * S, sh = cv.height * S;
+  const w = sw * zx, h = sh * zy;
+  const naBodu = cele && Math.abs(px - Math.round(px)) < 0.01 &&
                  Math.abs(py - Math.round(py)) < 0.01;
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   if (blurDev > 0.02) ctx.filter = "blur(" + blurDev.toFixed(3) + "px)";
-  const w = cv.width * S, h = cv.height * S;
   const big = upscaledSprite(cv, S);
   if (naBodu && !(blurDev > 0.02)) {
     ctx.imageSmoothingEnabled = false;       // presne na bodu: zadne michani
-    ctx.drawImage(big, 0, 0, w, h, Math.round(px), Math.round(py), w, h);
+    ctx.drawImage(big, 0, 0, sw, sh, Math.round(px), Math.round(py), w, h);
   } else {
     ctx.imageSmoothingEnabled = true;
-    ctx.drawImage(big, 0, 0, w, h, px, py, w, h);
+    ctx.drawImage(big, 0, 0, sw, sh, px, py, w, h);
   }
   ctx.restore();
 }
@@ -11532,15 +11549,19 @@ function drawTiltedHeli(ctx, r, dx, dy, palRow, c07, part, ux, uy,
   const ay = dy - r.spr.oy + (offY || 0);
   const rotorOp = r.op === BOB_FILL_INDEX9 ? BOB_FILL_INDEX9
                                            : BOB_CLEAR_INDEX0;
+  // Zuzeni kolem kotvy; stin se uklani taky, jen na druhou stranu.
+  const zx = 1 - HELI_SQUASH * Math.abs(ux);
+  const zy = 1 - HELI_SQUASH * Math.abs(uy);
   drawSpriteDevice(ctx,
     smoothSpriteCanvas(body, palRow, r.op, c07, null, 0, 0),
     ax + ux * HELI_BANK_BODY + body.ox,
-    ay + uy * HELI_BANK_BODY + body.oy, S, blurDev);
+    ay + uy * HELI_BANK_BODY + body.oy, S, blurDev, zx, zy, ax, ay);
   if (rotor)
     drawSpriteDevice(ctx,
       smoothSpriteCanvas(rotor, palRow, rotorOp, c07, null, 0, 0),
       ax + ux * HELI_BANK_ROTOR + rotor.ox + part.dx,
-      ay + uy * HELI_BANK_ROTOR + rotor.oy + part.dy, S, blurDev);
+      ay + uy * HELI_BANK_ROTOR + rotor.oy + part.dy, S, blurDev,
+      zx, zy, ax, ay);
 }
 /* HUD pruh do pruhledneho platna - stejna smycka jako compositeHudPlane,
    jen misto do hotoveho snimku zapisuje do vrstvy s alfa 0 na pozadi. */

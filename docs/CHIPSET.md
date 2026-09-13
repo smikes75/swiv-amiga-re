@@ -510,6 +510,46 @@ se kresli bez michani a rovnost s klasickym snimkem plati dal - mimo
 obdelniky spritu je rozdil **0 bodu**. Uvnitr obdelniku vzrostl ze 364
 na 925 bodu, coz je presne ten mekky okraj.
 
+### Naklon potreti: zuzeni misto posunu (2026-09-13)
+
+Hrac naklon porad nevidel. Zive mereni ukazalo, ze **chyba to nebyla**:
+`heliTilt` zapnuty, zadne JS chyby a `heliTiltX` vyjede na plnou
+jednicku za dvacet snimku:
+
+    prubeh: 0 -> 0,9 -> 0,99 -> 0,999 -> 1 -> 1 -> 1 -> 0,237 -> 0
+
+(Pokles je tim, ze vrtulnik dojel k okraji obrazovky a prestal se hybat;
+naklon jede z rychlosti, takze je to spravne.)
+
+Z plneho vychylu ale vzesel posun 1 px na trupu, 4 px na rotoru a
+-1,5 px na stinu - a **na posun o par pixelu oko pri pohybujicim se
+obraze nereaguje**. Otoceni (prvni verze) videt bylo, protoze menilo
+TVAR siluety. To je docela jina kategorie signalu.
+
+Hlavnim signalem je proto ZUZENI. Naklonenou vec vidi kamera shora
+kratsi napric osy naklonu; sirka se nasobi `1 - HELI_SQUASH * |vychyl|`
+s `HELI_SQUASH` = 0,2:
+
+| cast | pri plnem vychylu |
+|---|---|
+| trup | 17 -> 13,6 px |
+| rotorovy disk | 32 -> 25,6 px |
+
+Posuny rotoru a stinu zustavaji jako doplnek, hlavni praci dela zuzeni.
+
+Dve veci, ktere to dela lepsim nez posun:
+
+- **Zuzeni nehybe stredem**, takze na rozdil od posunu vubec nelze
+  o poloze. Sprite trupu je to, podle ceho hrac miri a uhyba.
+- Hladke je jen diky podpixelove ceste; bez ni by se zuzeni o necely
+  pixel projevilo vypadavanim sloupcu.
+
+Naklon dopredu a dozadu je tyz vzorec v ose y - stroj se zkrati svisle.
+
+**Pouceni: posun neni signal, tvar ano.** Pri navrhu efektu na malem
+spritu se vyplati ptat, jestli se meni silueta, ne o kolik pixelu se
+neco hne.
+
 ### Stopy vozidel (2026-09-13)
 
 Hrac se ptal, jestli by za tanky mohly zustavat stopy. Original je MA,
