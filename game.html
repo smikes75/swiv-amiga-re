@@ -3787,7 +3787,29 @@ const HELI_TILT_HUB = 5;
    vzorkuje az v rozliseni displeje, takze zvetsovat predem nema co
    pridat. Zmenu prinese jen chytry zvetsovac nebo vyhlazovani - to by
    ale dalo vrtulnik z jine hry nez zbytek obrazu. */
-const HELI_YAW_MAX = 8 * Math.PI / 180;
+/* Naklon se kresli jako UKLON, ne jako otoceni. Z pohledu shora je videt
+   HORNI strana stroje, takze se pri uklonu o uhel `a` kazdy bod posune do
+   strany o `vyska_nad_podelnou_osou * sin(a)`. Rotor je nejvys, trup niz,
+   stin lezi na zemi a nehne se vubec - a prave ten rozdil oko cte jako
+   uklon. Cisla jsou rovnou v pixelech pri plnem vychylu.
+
+   Hrac prvni verzi (otoceni spritu o 8 stupnu) videl, ale cetl ji jako
+   ZATACENI, ne jako naklon. Otoceni je proto pryc. */
+const HELI_BANK_BODY = 1;
+const HELI_BANK_ROTOR = 4;
+/* Stin se posune NA OPACNOU STRANU, a to cely naraz. Fyzikalne by se
+   stin kazde casti posunul stejne jako ta cast, takze tohle je vedoma
+   STYLIZACE - kupuje se za ni to, ze trup zustane do jednoho pixelu na
+   sve skutecne poloze (sprite trupu je to, podle ceho hrac miri a uhyba)
+   a pritom je rozpeti mezi rotorem a stinem 5,5 px, tedy dobre videt. */
+const HELI_BANK_SHADOW = -1.5;
+
+/* Hloubka ostrosti: rozostreni v bodech DISPLEJE (filtr se nastavuje az
+   za `ctx.scale(S, S)`, takze se zadava v `DOF_BLUR / S` uzivatelskych
+   jednotek). Kamera je zaostrena na rovinu, ve ktere leti hrac, tedy
+   `z` = 32; co je niz, je mekci, zem uplne. */
+const DOF_BLUR = 0.7;
+const DOF_FOCUS_Z = 32;
 /* Naklon se nabira postupne, aby pri stisku klavesy neskocil: casova
    konstanta ctyri tiky, tedy 80 ms. Krokuje se po TICICH, ne po snimcich,
    aby nezavisel na obnovovaci frekvenci monitoru. Je to ciste zobrazovaci
@@ -11378,23 +11400,26 @@ function heliTiltParts(g) {
    zmeny; rotor se kolem hubu zkrati na `cos(uhel)` a hub se vychyli
    o `HELI_TILT_HUB * sin(uhel)`, protoze lezi nad podelnou osou, kolem
    ktere se stroj naklani. */
-function drawTiltedHeli(ctx, r, dx, dy, palRow, c07, part, tiltX, tiltY,
-                       yaw) {
+/* `ux`, `uy` je vychyl -1..1 a resi VNITRNI uklon (rotor jde dal nez
+   trup). `offX`, `offY` posunou celou kresbu naraz - tak se hybe stin,
+   ktery se rozpadnout nesmi. */
+function drawTiltedHeli(ctx, r, dx, dy, palRow, c07, part, ux, uy,
+                        offX, offY) {
   const { body, rotor } = part;
-  const ax = dx - r.spr.ox, ay = dy - r.spr.oy;       // kotva objektu
+  const ax = dx - r.spr.ox + (offX || 0);            // kotva objektu
+  const ay = dy - r.spr.oy + (offY || 0);
   const rotorOp = r.op === BOB_FILL_INDEX9 ? BOB_FILL_INDEX9
                                            : BOB_CLEAR_INDEX0;
   ctx.save();
-  // Cely stroj se natoci kolem kotvy; hub rotoru a jeho zkraceni uz jsou
-  // v souradnicich stroje, takze se vezou s nim.
-  ctx.translate(ax, ay);
-  if (yaw) ctx.rotate(yaw);
+  ctx.translate(ax + ux * HELI_BANK_BODY, ay + uy * HELI_BANK_BODY);
   ctx.drawImage(smoothSpriteCanvas(body, palRow, r.op, c07, null, 0, 0),
                 body.ox, body.oy);
   if (rotor) {
-    ctx.translate(HELI_TILT_HUB * Math.sin(tiltX),
-                  HELI_TILT_HUB * Math.sin(tiltY));
-    ctx.scale(Math.cos(tiltX), Math.cos(tiltY));
+    // Rotor je nad trupem, takze se uklonem posune vic; disk se navic
+    // v ose uklonu zkrati na cos(uhel).
+    ctx.translate((ux * HELI_BANK_ROTOR) - (ux * HELI_BANK_BODY),
+                  (uy * HELI_BANK_ROTOR) - (uy * HELI_BANK_BODY));
+    ctx.scale(Math.cos(ux * HELI_TILT_MAX), Math.cos(uy * HELI_TILT_MAX));
     ctx.drawImage(smoothSpriteCanvas(rotor, palRow, rotorOp, c07, null, 0, 0),
                   rotor.ox + part.dx, rotor.oy + part.dy);
   }
@@ -11488,7 +11513,7 @@ function renderSmoothField(ctx, g, S, composed, hudCv) {
   // nimi a monitorem neexistuje. Rozostreni je zamerne male; vic uz
   // rozbiji pixelovy charakter hry.
   if (state.depthOfField) {
-    ctx.filter = "blur(" + (0.7 / S).toFixed(3) + "px)";
+    ctx.filter = "blur(" + (DOF_BLUR / S).toFixed(3) + "px)";
     ctx.imageSmoothingEnabled = true;
   }
   if (state.blendBg) {
@@ -11528,9 +11553,7 @@ function renderSmoothField(ctx, g, S, composed, hudCv) {
     state.heliTiltY = (state.heliTiltY || 0) +
       (cilY - (state.heliTiltY || 0)) * HELI_TILT_LAG;
   }
-  const tiltX = (state.heliTiltX || 0) * HELI_TILT_MAX;
-  const tiltY = (state.heliTiltY || 0) * HELI_TILT_MAX;
-  const yaw = (state.heliTiltX || 0) * HELI_YAW_MAX;
+  const tiltX = state.heliTiltX || 0, tiltY = state.heliTiltY || 0;
   for (const r of composed.ordered) {
     if (!r.spr) continue;
     const key = smoothBobKey(r);
@@ -11557,6 +11580,20 @@ function renderSmoothField(ctx, g, S, composed, hudCv) {
     // hra ji pouziva k odsazeni stinu (bobShadowAnchor: x + z/2, y + z),
     // takze staci tutez hodnotu promitnout i do rozostreni a pruhlednosti.
     // Amiga to neumela: blitter zna jen plnou masku, ne alfu.
+    /* Objekty na zemi patri do teze roviny jako zem pod nimi, takze maji
+       byt stejne mekke. Drive se rozostril jen teren a tanky, miny nebo
+       instalace na nem zustaly ostre - hrac to nahlasil jako nesrovnalost.
+       Stinu se to netyka, ten uz ma vlastni rozostreni podle vysky. */
+    const mekkost = state.depthOfField && r.kind !== "shadow"
+      ? 1 - Math.min(1, Math.abs(r.z | 0) / DOF_FOCUS_Z) : 0;
+    const sHloubkou = kresli => {
+      if (mekkost <= 0.05) { kresli(); return; }
+      ctx.save();                       // save/restore vrati i smoothing
+      ctx.filter = "blur(" + (DOF_BLUR * mekkost / S).toFixed(3) + "px)";
+      ctx.imageSmoothingEnabled = true;
+      kresli();
+      ctx.restore();
+    };
     if (state.softShadows && r.kind === "shadow") {
       const z = Math.abs(r.z | 0);
       const blur = Math.min(6, z / 6);
@@ -11569,7 +11606,8 @@ function renderSmoothField(ctx, g, S, composed, hudCv) {
         ctx.scale(grow, grow);
         ctx.translate(-dx - r.spr.w / 2, -dy - r.spr.h / 2);
         drawTiltedHeli(ctx, r, dx, dy, pal.subarray(row * 16, row * 16 + 16),
-                       c07, heliFrame, tiltX, tiltY, yaw);
+                       c07, heliFrame, 0, 0,
+                       tiltX * HELI_BANK_SHADOW, tiltY * HELI_BANK_SHADOW);
         ctx.restore();
         continue;
       }
@@ -11579,11 +11617,14 @@ function renderSmoothField(ctx, g, S, composed, hudCv) {
       continue;
     }
     if (heliFrame && (r.id === "player-main" || r.id === "player-shadow")) {
-      drawTiltedHeli(ctx, r, dx, dy, pal.subarray(row * 16, row * 16 + 16),
-                     c07, heliFrame, tiltX, tiltY, yaw);
+      sHloubkou(() => drawTiltedHeli(
+        ctx, r, dx, dy, pal.subarray(row * 16, row * 16 + 16), c07, heliFrame,
+        r.kind === "shadow" ? 0 : tiltX, r.kind === "shadow" ? 0 : tiltY,
+        r.kind === "shadow" ? tiltX * HELI_BANK_SHADOW : 0,
+        r.kind === "shadow" ? tiltY * HELI_BANK_SHADOW : 0));
       continue;
     }
-    ctx.drawImage(cv, dx, dy);
+    sHloubkou(() => ctx.drawImage(cv, dx, dy));
   }
   // HUD (5. bitplane) jako **pruhledna** vrstva: drive se sem kopirovalo
   // prvnich 16 radku klasickeho snimku, jenze ten ma teren na celem

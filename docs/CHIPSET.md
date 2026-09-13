@@ -397,16 +397,60 @@ tri az ctyrikrat vic, nez cim ho naklon posune, a `HELI_SEQUENCE`
 ho navic pulku tiku nekresli vubec. **Stabilni plocha, na ktere je
 zmena videt, je telo** - to se mezi tiky nemeni.
 
-Telo se proto jeste natoci v rovine obrazovky o `HELI_YAW_MAX` = 8
-stupnu. Roll ani pitch to byt nemuzou, ty jsou pod rozlisenim spritu
-(0,26 a 0,5 px); viditelne je az otoceni, kde spicka 32 px vysokeho
-spritu ujede `16 * sin(uhel)` = 2,2 px. Je to **vylozene stylizace, ne
-fyzika**: skutecny vrtulnik muze letet bokem bez otoceni. Po pridani se
-naklon hne 8 633 body misto 2 544, tedy stejny rad jako vlastni animace.
+Telo se proto zacalo hybat taky. Prvni pokus bylo otoceni v rovine
+obrazovky o 8 stupnu (naklon pak hnul 8 633 body misto 2 544, tedy
+stejny rad jako vlastni animace) - hrac ho uz videl, ale cetl ho jako
+zataceni. Nahrazeno uklonem, viz nize.
 
 Pri tom se naslo, ze `heliTiltParts` vracelo null ve ctyrech fazich
 z osmi (ty bez rotoru), takze se telo pulku tiku kreslilo rovne a stroj
 pri letu do strany blikal. Kontrakt ted meri vsech osm fazi.
+
+### Otoceni nahrazeno uklonem (2026-09-13, treti kolo)
+
+Hrac natoceni **videl**, ale cetl ho jako ZATACENI, ne jako naklon.
+Otoceni je proto pryc a naklon se kresli jinak.
+
+Z pohledu shora je videt HORNI strana stroje, takze se pri uklonu o uhel
+`a` kazdy bod posune do strany o `vyska_nad_podelnou_osou * sin(a)`.
+Rozdil mezi castmi je to, co oko cte jako uklon:
+
+| cast | posun pri plnem vychylu |
+|---|---:|
+| rotor (nejvys) | +4 px |
+| trup | +1 px |
+| stin | -1,5 px |
+
+Trup se tedy od sve skutecne polohy vzdali nejvys o **jediny pixel** -
+to je zamer, protoze sprite trupu je to, podle ceho hrac miri a uhyba.
+Rozpeti mezi rotorem a stinem je pritom 5,5 px.
+
+Posun stinu na opacnou stranu je **vedoma stylizace**: fyzikalne by se
+stin kazde casti posunul stejne jako ta cast. Ciste fyzikalni varianta
+ale dava jen rozdil rotor - trup (3 px) a ten se, jak uz vime, utopi ve
+vlastni animaci rotoru.
+
+Naklon dopredu a dozadu je tyz kod v ose y, bez dalsi prace.
+
+### Objekty na zemi dostaly hloubku ostrosti
+
+Hrac nahlasil, ze "objekty lezici nebo vznikajici na zemi jsou ostre
+jako puvodne". Mel pravdu: rozostril se teren a objekty na nem zustaly
+ostre, coz rozbijelo iluzi.
+
+Kamera je zaostrena na rovinu, ve ktere leti hrac (`z` = 32), takze
+mekkost je `1 - |z| / 32`. Primy odecet po BOB zaznamech:
+
+| zaznam | z | mekkost |
+|---|---:|---:|
+| `tank-hull`, `trilo` | 0 | **1,00** |
+| `tank-turret` | 1 | 0,97 |
+| `player`, `mama`, `air-fod` | 32 | 0,00 |
+| stiny (vsechny) | - | 0,00 |
+
+Stinu se to netyka, ten uz ma vlastni rozostreni podle vysky
+(`mekke stiny`). Cena pri sedmi pozemnich objektech na scene: 10,37 ->
+10,42 ms na snimek v headless Chromiu, tedy pul procenta.
 
 ### Prevzorkovat? Merenim vyvraceno
 

@@ -6900,7 +6900,9 @@ def main():
             # Pri plnem naklonu se musi hnout VSECH OSM fazi, nejen ctyri
             # s rotorem. Ctyri faze rotor nemaji a driv se v nich stroj
             # kreslil rovne, takze pri letu do strany blikal mezi
-            # natocenym a rovnym telem.
+            # natocenym a rovnym telem. Zmereno pri zvetseni 1x: faze bez
+            # rotoru 96 bodu, s rotorem 120 az 155 - prah 80 obe pokryva
+            # a od nuly (blikani) je bezpecne oddeli.
             naklon = page.evaluate("""() => {
               state.zoom = 1; state.smooth = true; state.blendBg = false;
               state.depthOfField = false; state.softShadows = false;
@@ -6938,7 +6940,7 @@ def main():
             expect(max(naklon["nula"]) <= 2,
                    "rozklad vrtulniku je pri nulovem naklonu ztratovy: %r" %
                    (naklon["nula"],))
-            expect(len(naklon["plny"]) == 8 and min(naklon["plny"]) > 100,
+            expect(len(naklon["plny"]) == 8 and min(naklon["plny"]) > 80,
                    "naklon vrtulniku neni videt ve vsech osmi fazich "
                    "(jinak stroj blika mezi natocenym a rovnym): %r" %
                    (naklon["plny"],))
