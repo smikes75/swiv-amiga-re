@@ -128,7 +128,7 @@ a { color:#cfe0ff }
     &nbsp;&middot;&nbsp; <label title="Pomahá plynulosti pri malem zvetseni: svisle prolnuti mezi dvema polohami. Neni to vizualni efekt, pri 4x a vice je zbytecne."><input type="checkbox" id="blendchk" checked> prolnut&#237; pohybu</label>
     &nbsp;&middot;&nbsp; <label title="Vozidla nechavaji stopy i mimo pasmo, ktere pro ne original otevira jen na tech mistech. Kresli se puvodnim dekalem JEEPHELI#40..#43 a jsou ciste zobrazovaci - do simulace ani po siti nezasahuji."><input type="checkbox" id="stopychk" checked> stopy vozidel</label>
     &nbsp;&middot;&nbsp; <label title="Sprity se kladou na zlomkovou polohu jako teren, misto aby skakaly po celych bodech displeje. Bez toho objekty po plynule jedouci zemi podkluzuji. Rozmaze se jen okraj spritu o jeden bod displeje, vnitrek zustava tvrdy."><input type="checkbox" id="subpxchk" checked> podpixelov&#233; sprity</label>
-    &nbsp;&middot;&nbsp; <label title="Rotorovy disk se sklopi do smeru letu. Telo zustava pixel po pixelu nedotcene - naklani se jen rotor, ktery je jednobarevna plocha. Original naklonene snimky nema."><input type="checkbox" id="tiltchk" checked> n&#225;klon vrtuln&#237;ku</label>
+    &nbsp;&middot;&nbsp; <label title="Rotorovy disk se sklopi do smeru letu. Telo zustava pixel po pixelu nedotcene - naklani se jen rotor, ktery je jednobarevna plocha. Original naklonene snimky nema."><input type="checkbox" id="tiltchk"> n&#225;klon vrtuln&#237;ku</label>
     <input type="checkbox" id="softshchk" hidden>
   </div>
   <div id="zoomrow" role="group" aria-label="Velikost hern&#237;ho pole">
@@ -3798,7 +3798,10 @@ const HELI_TILT_HUB = 5;
    uklon. Cisla jsou rovnou v pixelech pri plnem vychylu.
 
    Hrac prvni verzi (otoceni spritu o 8 stupnu) videl, ale cetl ji jako
-   ZATACENI, ne jako naklon. Otoceni je proto pryc. */
+   ZATACENI, ne jako naklon. Druha (posun) videt nebyla vubec. Treti
+   (zuzeni) videt je, ale hraci se nelibi - proto je volba ve vychozim
+   stavu VYPNUTA. Kod zustava, protoze je zmereny a popsany; kdyby se
+   nemel k nicemu hodit, patri pryc cely, ne jen z panelu. */
 const HELI_BANK_BODY = 1;
 const HELI_BANK_ROTOR = 4;
 /* Stin se posune NA OPACNOU STRANU, a to cely naraz. Fyzikalne by se
