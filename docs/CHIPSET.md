@@ -452,7 +452,67 @@ Stinu se to netyka, ten uz ma vlastni rozostreni podle vysky
 (`mekke stiny`). Cena pri sedmi pozemnich objektech na scene: 10,37 ->
 10,42 ms na snimek v headless Chromiu, tedy pul procenta.
 
-### Prevzorkovat? Merenim vyvraceno
+### Podpixelove sprity (2026-09-13, ctvrte kolo)
+
+Hrac: "objekty na zemi jsou ok, ale naklon neni videt, a oproti scrollu
+pozadi mi to prijde takove trhane".
+
+Trhani nebylo rychlosti, ale **rozdilem mrizek**. Krok mezi snimky pri
+60 Hz, mereno na pozemnim objektu a na nakreslenem scrollu:
+
+| zoom | krok pozadi | krok objektu |
+|---|---|---|
+| 4x | -0,208 px (plynule) | 0,25 / 0,5 px |
+| 6x | -0,208 px (plynule) | 0,333 / 0,5 px |
+
+Teren se pri zapnutem `prolnuti pohybu` kresli na ZLOMKOVOU polohu
+(dvoubodove svisle prolnuti), sprity se ale kvantovaly na 1/S px, tedy
+na cely bod displeje. Objekty proto po plynule jedouci zemi podkluzovaly.
+
+### Tady ma prevzorkovani smysl
+
+Minule bylo zmereno, ze zvetseni nejblizsim sousedem samo o sobe nemeni
+nic (0 rozdilnych bodu ze 147 456). To plati porad - ale jen dokud se
+vzorkuje taky nejblizsim sousedem. Ve dvojici s VYHLAZOVANIM je to
+najednou uzitecne: sprite se zvetsi na rozliseni displeje a teprve pak
+se kresli na zlomkovou polohu, takze se michaji **body displeje, ne
+herni pixely**. Vnitrek spritu zustane pixel po pixelu tvrdy a rozmaze
+se jen okraj o jeden bod displeje.
+
+`upscaledSprite()` drzi zvetseninu u zdrojoveho platna (`_upsc`), takze
+se stavi jednou na kombinaci sprite + operace + paleta.
+`drawSpriteDevice()` prepne na souradnice displeje, a kdyz poloha na bod
+displeje padne presne, jde puvodni cestou bez michani.
+
+Zmereno po zavedeni - rozkmit kroku spritu mezi snimky:
+
+| zoom | podpixel vyp | podpixel zap |
+|---|---:|---:|
+| 4x | 0,25 px | **0** |
+| 6x | 0,167 px | **0** |
+
+Pozadi ma rozkmit 0 v obou pripadech, sprity se mu tedy vyrovnaly.
+
+Vedlejsi ucinek: **naklon je konecne videt**. Posuny 1 / 4 / -1,5 px se
+pri kvantovani na cely bod displeje zaokrouhlovaly skoro k nule; ted se
+kresli tak, jak jsou.
+
+### Co to stoji a co to nerozbije
+
+Hloubka ostrosti se pro sprity presunula do souradnic displeje
+(`blurDev` v bodech displeje misto `/ S` v uzivatelskych). Cena celkem:
+10,24 -> 10,31 ms na snimek pri sedmi pozemnich objektech v headless
+Chromiu.
+
+`smoothtest` bezi nove v tom, co se nasazuje (podpixelove sprity
+zapnute). Pri alfa = 1 vychazi poloha spritu na cely herni pixel, takze
+se kresli bez michani a rovnost s klasickym snimkem plati dal - mimo
+obdelniky spritu je rozdil **0 bodu**. Uvnitr obdelniku vzrostl ze 364
+na 925 bodu, coz je presne ten mekky okraj.
+
+### Prevzorkovat kvuli ROTACI? Merenim vyvraceno
+
+(Kvuli podpixelovemu umisteni smysl ma - viz vyse. Tohle je o rotaci.)
 
 Puvodni uvaha byla, ze otoceni potrebuje vyssi rozliseni spritu.
 Nepotrebuje. Zmereno na platne: **rotace spritu 1:1 a rotace jeho

@@ -38,7 +38,12 @@ JS = """(tick) => {
     return [n, out]; };
   // frame(0) s g.last = 0 ma dt = 0, takze nekrokuje; g.frac = TICK krokuje
   // presne jeden tik. Parovani poloh se zaznamenava jen pri zapnutem smooth.
-  const render = (smooth, frac) => { state.smooth = smooth; g.frac = frac; g.last = 0; frame(0); };
+  // Kontrakt bezi v tom, co se opravdu nasazuje: podpixelove sprity jsou
+  // ve vylepsenem rezimu vychozi. Pri alfa = 1 vychazi poloha spritu na
+  // cely herni pixel, takze se kresli bez michani a rovnost s klasickym
+  // snimkem musi platit i tak.
+  const render = (smooth, frac) => { state.smooth = smooth;
+    state.subpixelSprites = smooth; g.frac = frac; g.last = 0; frame(0); };
   const snap = () => { const top = Math.max(0, Math.min(g.mapH - 256, Math.floor(g.scroll)));
     return composeTownBobs(g, top).ordered.filter(r => r.spr).map(r => ({ key: smoothBobKey(r),
       ax: r.x, ay: r.y, spr: r.spr, op: r.op })); };
