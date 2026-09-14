@@ -11480,13 +11480,27 @@ function jeVodniSnimek(owner, fname, frame, pal) {
   cache.set(key, je);
   return je;
 }
-/* Vlnky cyklovanim vlastnich indexu vody. Poradi je od nejtmavsiho po
-   nejsvetlejsi, jak je `_LAKE` pouziva (14 na 57 %, 15 na 20 %, 13 na
-   15 %). Faze se posouva po radcich i v case, takze hladinou prochazi
-   pomala vlna smerem dolu. */
-const WATER_CYCLE = [13, 14, 15];
-const WATER_BAND = 6;             // radku na jeden krok vlny
-const WATER_SPEED = 3;            // tiku na posun vlny o krok
+/* Vlnky POSOUVANIM TEXTURY, ne cyklovanim palety.
+
+   Prvni verze prehazovala tri vodni indexy mezi sebou. Bylo to technicky
+   spravne (53 081 zmenenych indexu, 0 mimo masku), a presto uplne
+   neviditelne - protoze ty tri odstiny jsou v cele hre skoro totozne:
+
+     RIVER   (1,5,6) (1,4,4) (1,3,3)
+     ICE     (11,11,13) (10,10,12) (9,9,11)
+
+   Rozpeti pres vsechny tri kanaly je 5 az 6 ze 45 moznych, tedy jeden
+   az dva kroky. Jsou to sousedni odstiny jednoho prechodu, kterym je
+   nakreslena vlnkova textura. Prehazovat je nemuze byt videt nikdy.
+
+   Textura vln ale v dlazdici uz JE - staci ji posouvat. Pohyb oko
+   zachyti i pri nizkem kontrastu a nepribude ani jedna nova barva, jsou
+   to tytez pixely jen jinde. Posun se bere podle radku a casu, takze
+   hladinou prochazi vlna; cte se jen z pixelu, ktery je taky voda, aby
+   se od breh nepritahla zem. */
+const WATER_BAND = 5;             // radku na jeden krok vlny
+const WATER_SPEED = 4;            // tiku na posun vlny o krok
+const WATER_AMPL = 2;             // px, o kolik se textura nejvic posune
 
 const TRACK_BEHAVIORS = new Set(["tank", "flattank", "juntank"]);
 /* Rozestup stop. Razitko `#40..#43` je pres dvacet pixelu dlouhe, takze
@@ -11716,17 +11730,20 @@ function renderSmoothField(ctx, g, S, composed, hudCv) {
      a nic mimo hladinu se nehne. Faze jde po radcich i v case, tedy
      hladinou prochazi pomala vlna dolu. */
   if (state.waterWaves && g.waterMask) {
-    const wm = g.waterMask, idx = st.idx;
+    const wm = g.waterMask, idx = st.idx, mi = g.mapIndex;
     const faze = (g.tick / WATER_SPEED) | 0;
     for (let y = 0; y < rows; y++) {
-      const posun = (((y + topI) / WATER_BAND | 0) + faze) % 3;
-      if (!posun) continue;                 // nulovy posun nic nemeni
-      const radek = y * 320, mradek = (y + topI) * 320;
+      const mradek = (y + topI) * 320;
+      // Trojuhelnikova vlna -AMPL..+AMPL, posouva se po radcich i v case.
+      const f = (((y + topI) / WATER_BAND | 0) + faze) & 3;
+      const posun = (f === 1 ? WATER_AMPL : f === 3 ? -WATER_AMPL : 0);
+      if (!posun) continue;
+      const radek = y * 320;
       for (let x = 0; x < 320; x++) {
         if (!wm[mradek + x]) continue;
-        const c = idx[radek + x];
-        const k = c === 13 ? 0 : c === 14 ? 1 : c === 15 ? 2 : -1;
-        if (k >= 0) idx[radek + x] = WATER_CYCLE[(k + posun) % 3];
+        const sx = x + posun;
+        if (sx < 0 || sx >= 320 || !wm[mradek + sx]) continue;  // breh
+        idx[radek + x] = mi[mradek + sx];
       }
     }
   }

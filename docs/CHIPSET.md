@@ -526,10 +526,38 @@ stejne jako `foreLayer`: dlazdice z `WATER_TILES` masku nastavuji,
 kazda dalsi dlazdice nad nimi ji rusi. Zmereno v RIVERu: 252 855 bodu
 na radcich 13505..14336.
 
-Vlnka je pak prehozeni indexu uvnitr masky podle faze, ktera jde po
-radcich (`WATER_BAND` = 6) i v case (`WATER_SPEED` = 3 tiky na krok).
-V obraze tedy nepribude ani jedna nova barva - jen se prehazuje to, co
-uz tam je.
+### Cyklovani palety je tady principialne neviditelne
+
+Prvni verze prehazovala tri vodni indexy mezi sebou. Technicky bez
+chyby - 53 081 zmenenych indexu, 0 mimo masku - a hrac presto nic
+nevidel. Duvod se nasel az merenim BAREV techto indexu pres vsechny
+vodni radky ve hre:
+
+| uroven | tri vodni barvy | rozpeti pres kanaly |
+|---|---|---:|
+| RIVER | (1,5,6) (1,4,4) (1,3,3) | 6 ze 45 |
+| ICE | (11,11,13) (10,10,12) (9,9,11) | 6 ze 45 |
+| SCIFI | totez | 6 |
+
+Jsou to SOUSEDNI ODSTINY jednoho prechodu, kterym je nakreslena vlnkova
+textura - lisi se o jeden az dva kroky v kanalu. Prehazovat je nemuze
+byt videt nikdy, at je maska sebepresnejsi. Tri kola se ladila maska
+a pritom byl slepy misto jinde: sam efekt byl principialne neviditelny.
+
+### Posouvani textury
+
+Vlny v dlazdici uz nakreslene JSOU, takze se jen posouvaji. Pohyb oko
+zachyti i pri nizkem kontrastu a nepribude ani jedna nova barva - jsou
+to tytez pixely, jen jinde. Posun je trojuhelnikova vlna -2..+2 px podle
+radku (`WATER_BAND` = 5) a casu (`WATER_SPEED` = 4 tiky na krok); cte se
+jen z pixelu, ktery je taky voda, aby se od brehu nepritahla zem.
+
+Zmereno na hladine: mezi snimky se meni 3 500 az 7 500 bodu.
+
+**Pouceni: ze je efekt spravne spocitany, neznamena, ze je videt.**
+U kazdeho vizualniho efektu se vyplati zmerit i JEHO AMPLITUDU v tom, co
+uvidi oko - tady staci bylo podivat se na barvy driv, nez se tri kola
+ladi maska.
 
 ### Co je voda: tri pokusy, kazdy se mylil jinak
 
