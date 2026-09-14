@@ -580,22 +580,32 @@ Treti pokus: podle BARVY (modra prevazi nad cervenou). Vyresilo GRASS,
 ale v DESERTu oznacilo `_RIGS#9` (125 dlazdic) a v ICE i led
 `_ARCTIC#0` - tam, kde je cela paleta studena, je modre skoro vse.
 
-**Funguje az PRUNIK obojiho**: pixel se pocita, jen kdyz ma index 13, 14
-nebo 15 a zaroven je jeho barva NA TOM RADKU modrejsi nez cervena.
-Zmereno na vsech sesti urovnich:
+Treti pokus byl PRUNIK obojiho: index 13/14/15 a zaroven barva na tom
+radku modrejsi nez cervena. Na papire to vypadalo ciste - TOWN, DESERT
+a GRASS bez vody, RIVER `_LAKE`, ICE `_ARCTIC#5`. Hrac to pak zapnul ve
+hre a napsal: **"to se vlni v ICE a je to snih a ne voda"**.
 
-| uroven | vodni ramecky |
-|---|---|
-| TOWN, DESERT, GRASS | zadne |
-| RIVER | `_LAKE#0/1/2/3/6`, `LAKESUB#0` |
-| ICE | `_ARCTIC#5` x130 |
-| SCIFI | `_ARCTIC#5` x38 |
+Mel pravdu. Snih je totiz taky "modrejsi nez cervenejsi": `_ARCTIC#5` ma
+index 14 = (10,10,12). Vykresleno se spravnou paletou vedle sebe je to
+hned videt:
 
-Zadny falesny nalez. Overeno i v behu: v ICE cyklovani zmenilo 53 081
-indexu, z toho 0 mimo masku.
+| dlazdice | barva indexu 14 | co to je |
+|---|---|---|
+| `_ARCTIC#5` (ICE, SCIFI) | (10,10,12) na VSECH 168 dlazdicich | svetle modrobila se sikmymi smouhami = **snih** |
+| `_LAKE#0` (RIVER) | (1,4,4) | tmave tyrkysova = **voda** |
 
-**Pouceni: jmeno souboru neni mereni.** `_ARCTIC` znelo jako snih a byla
-to voda; `_LAKE#4` znelo jako jezero a byl to breh.
+V ICE tedy zadna voda neni, je to cele zamrzle. Jedina vodni plocha ve
+hre je jezero v RIVERu.
+
+### Zadne automaticke pravidlo
+
+Tri pokusy, tri ruzne omyly. `WATER_TILES` je proto obycejny seznam
+a udrzuje se tim, ze se na plochu nekdo **podiva** - to je jediny
+postup, ktery zatim nesehnal. Kdyz pribude dalsi vodni plocha, patri tam
+az po vizualnim overeni.
+
+**Pouceni: jmeno souboru neni mereni - a barevna heuristika taky ne.**
+U veci, ktera ma jmeno "arctic", pomohlo az vykreslit ji a kouknout se.
 
 ### Mereni, ktere si samo vyrobilo poplach
 

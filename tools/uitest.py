@@ -6946,18 +6946,18 @@ def main():
                    (naklon["plny"],))
 
             # ---- vlnky na vode: sahaji JEN na vodu -------------------
-            # Cykluji se vlastni tri paletove indexy vody (13/14/15)
-            # uvnitr masky `_LAKE` dlazdic. Tytez indexy ma ale i `_CLAY`
-            # (21 % pixelu) a `_JUNGLE` (7 %), takze bez masky by se
-            # rozvlnil i jil a dzungle. Meri se na INDEXOVEM poli, ne na
-            # hotovych pixelech - tam do toho mluvi pruhledny HUD
-            # a prepocet palety. Zmereno v RIVERu na radku 13600:
-            # 46 975 zmenenych indexu, z toho 0 mimo masku.
+            # Posouva se TEXTURA vln uvnitr masky vodnich dlazdic.
+            # Meri se na INDEXOVEM poli, ne na hotovych pixelech - tam do
+            # toho mluvi pruhledny HUD a prepocet palety po radcich.
+            #
+            # Radek 13505 je jezero `_LAKE` v RIVERu, nejsirsi misto
+            # hladiny (160 sloupcu). Drive tu bylo 13600, coz vybrala
+            # stara maska, ktera za vodu povazovala i snih `_ARCTIC`.
             vlnky = page.evaluate("""() => {
               startGame(3);
               const g = state.g;
               for (let i = 0; i < 24; i++) step(g);
-              g.scroll = 13600; g.scrollPrev = 13600;    // pasmo s jezerem
+              g.scroll = 13505; g.scrollPrev = 13505;    // jezero `_LAKE`
               for (const s of g.spawns) s.armed = armedAtStart(g, s);
               g.lives = 99999; g.player.inv = 99999;
               state.zoom = 4; state.smooth = true; state.blendBg = false;

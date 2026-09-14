@@ -8085,6 +8085,7 @@ document.getElementById("blendchk").onchange = e => {
    rozbali jejich seznam. */
 function setMode(fx) {
   state.smooth = fx;
+  try { localStorage.setItem("swivMode", fx ? "fx" : "orig"); } catch (e) {}
   document.getElementById("fxbar").hidden = !fx;
   // Vylepseny rezim zapne vsechny sve podvolby, ktere ma hrac zaskrtnute;
   // v originalnim rezimu je drzi vypnute, at je "original" opravdu
@@ -8102,6 +8103,15 @@ function setMode(fx) {
 }
 document.getElementById("modeorig").onchange = () => setMode(false);
 document.getElementById("modefx").onchange = () => setMode(true);
+/* Volba rezimu prezije reload, stejne jako zvetseni. Bez toho se po
+   kazdem nacteni vracel "original" a vsechny efekty byly potichu vypnute
+   - hrac je pak hledal a nechapal, proc nejsou videt. */
+try {
+  if (localStorage.getItem("swivMode") === "fx") {
+    document.getElementById("modefx").checked = true;
+    setMode(true);
+  }
+} catch (e) {}
 document.getElementById("dofchk").onchange = e => {
   state.depthOfField = state.smooth && e.target.checked;
 };
@@ -11433,71 +11443,41 @@ const clampUnit = v => v < -1 ? -1 : v > 1 ? 1 : v;
    uhel neni z veze, ale ze smeru pohybu: `#40` jsou dva vodorovne pasy
    nad sebou (jizda do stran), `#42` dva svisle vedle sebe (nahoru dolu),
    `#41` a `#43` uhlopricky. */
-/* Co je vodni hladina, se NEURCUJE podle jmena souboru, ale z dat.
-   Trvalo to tri pokusy a kazdy se mylil jinak:
+/* Ktera dlazdice je vodni hladina. Zkousel jsem to urcit automaticky
+   TRIKRAT a pokazde spatne:
 
-   1. Podle JMENA (`_LAKE.LIN`). Spatne na obe strany: `_ARCTIC.LIN`
-      jsem podle jmena povazoval za snih, pritom je to hlavni vodni
-      plocha ICE (130 dlazdic), a naopak `_LAKE#4/5/11` je breh.
-   2. Podle PODILU indexu 13/14/15. Vyresilo ICE, ale v GRASS oznacilo
-      za vodu hneda pole `_CORN#8` a `_GREEN#17` - tyhle indexy nejsou
-      "vodni", jsou to jen paletove prihradky a jejich barva zavisi na
-      urovni i na radku mapy.
-   3. Podle BARVY (modra prevazi nad cervenou). Vyresilo GRASS, ale
-      v DESERTu oznacilo `_RIGS#9` (125 dlazdic) a v ICE i led
-      `_ARCTIC#0` - tam, kde je cela paleta studena, je modre skoro vse.
+   1. Podle JMENA souboru (`_LAKE.LIN`). `_ARCTIC.LIN` jsem podle jmena
+      povazoval za snih a vynechal.
+   2. Podle PODILU indexu 13/14/15. Pribralo to `_ARCTIC`, ale v GRASS
+      oznacilo za vodu hneda pole - ty indexy nejsou "vodni", je to jen
+      paletova prihradka a jeji barva zavisi na urovni i radku mapy.
+   3. Podle BARVY (modra prevazi nad cervenou). Opravilo GRASS, ale
+      `_ARCTIC` proslo dal - a hrac pak ve hre videl, ze se mu vlni SNIH.
+      Snih je totiz taky "modrejsi nez cervenejsi": (11,11,13).
 
-   Funguje az PRUNIK obojiho: pixel se pocita, jen kdyz ma index 13, 14
-   nebo 15 A ZAROVEN je jeho barva na tomhle radku mapy modrejsi nez
-   cervena. Zmereno na vsech sesti urovnich:
+   Zmereno na obrazku se spravnou paletou, cim to konci:
 
-     TOWN, DESERT, GRASS   zadna voda
-     RIVER                 _LAKE#0/1/2/3/6, LAKESUB#0
-     ICE                   _ARCTIC#5 x130
-     SCIFI                 _ARCTIC#5 x38
+     _ARCTIC#5 v ICE i SCIFI   index 14 = (10,10,12) na VSECH 168
+                               dlazdicich, svetle modrobila se sikmymi
+                               smouhami = SNIH, nikde tyrkysova
+     _LAKE#0 v RIVERu          index 14 = (1,4,4), tmave tyrkysova
+                               = VODA
 
-   Zadny falesny nalez. */
-const WATER_SHARE = 0.9;
+   Automaticke pravidlo proto neni zadne. Seznam se udrzuje tim, ze se
+   na plochu nekdo PODIVA - to je jediny zpusob, ktery zatim nesehnal.
+   Kdyz pribude dalsi vodni plocha, patri sem az po vizualnim overeni. */
+const WATER_TILES = new Set(["_LAKE.LIN"]);
 function jeVodniSnimek(owner, fname, frame, pal) {
-  // Klic nese i barvy tri vodnich indexu, protoze paleta se meni po
-  // radcich mapy - tataz dlazdice muze byt jinde jina.
-  const cache = owner.waterFrameCache ||
-                (owner.waterFrameCache = new Map());
-  const key = fname + ":" + frame + ":" +
-              [13, 14, 15].map(i => (pal[i] || [0, 0, 0]).join(",")).join("|");
-  if (cache.has(key)) return cache.get(key);
-  const spr = indexedFrameFor(owner, fname, frame);
-  let celkem = 0, vodni = 0;
-  if (spr) for (let i = 0; i < spr.pix.length; i++) {
-    const c = spr.pix[i];
-    if (c === 0xFF) continue;
-    celkem++;
-    if (c !== 13 && c !== 14 && c !== 15) continue;
-    const barva = pal[c];
-    if (barva && barva[2] > barva[0]) vodni++;   // modra prevazi nad cervenou
-  }
-  const je = celkem > 0 && vodni / celkem >= WATER_SHARE;
-  cache.set(key, je);
-  return je;
+  return WATER_TILES.has(fname);
 }
-/* Vlnky POSOUVANIM TEXTURY, ne cyklovanim palety.
 
-   Prvni verze prehazovala tri vodni indexy mezi sebou. Bylo to technicky
-   spravne (53 081 zmenenych indexu, 0 mimo masku), a presto uplne
-   neviditelne - protoze ty tri odstiny jsou v cele hre skoro totozne:
+/* Vlnky POSOUVANIM TEXTURY, ne cyklovanim palety. Prehazovat tri vodni
+   indexy mezi sebou bylo technicky spravne a pritom uplne neviditelne -
+   ty odstiny jsou v cele hre jen krok od sebe ((1,5,6) (1,4,4) (1,3,3)
+   v RIVERu), protoze je jimi nakreslena sama vlnkova textura.
 
-     RIVER   (1,5,6) (1,4,4) (1,3,3)
-     ICE     (11,11,13) (10,10,12) (9,9,11)
-
-   Rozpeti pres vsechny tri kanaly je 5 az 6 ze 45 moznych, tedy jeden
-   az dva kroky. Jsou to sousedni odstiny jednoho prechodu, kterym je
-   nakreslena vlnkova textura. Prehazovat je nemuze byt videt nikdy.
-
-   Textura vln ale v dlazdici uz JE - staci ji posouvat. Pohyb oko
-   zachyti i pri nizkem kontrastu a nepribude ani jedna nova barva, jsou
-   to tytez pixely jen jinde. Posun se bere podle radku a casu, takze
-   hladinou prochazi vlna; cte se jen z pixelu, ktery je taky voda, aby
-   se od breh nepritahla zem. */
+   Textura uz v dlazdici JE, takze se jen posouva. Pohyb oko zachyti
+   i pri nizkem kontrastu a nepribude ani jedna nova barva. */
 const WATER_BAND = 5;             // radku na jeden krok vlny
 const WATER_SPEED = 4;            // tiku na posun vlny o krok
 const WATER_AMPL = 2;             // px, o kolik se textura nejvic posune
