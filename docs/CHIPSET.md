@@ -531,8 +531,43 @@ radcich (`WATER_BAND` = 6) i v case (`WATER_SPEED` = 3 tiky na krok).
 V obraze tedy nepribude ani jedna nova barva - jen se prehazuje to, co
 uz tam je.
 
-Vodni plocha je v cele hre jen v RIVERu; `_ARCTIC` v ICE je snih, ne
-voda.
+### Co je voda: tri pokusy, kazdy se mylil jinak
+
+Prvni verze urcovala vodu podle JMENA souboru (`_LAKE.LIN`). Hrac poslal
+snimek z ICE, kde je pul obrazovky vody a nic se nevlni - `_ARCTIC.LIN`
+jsem podle jmena povazoval za snih, pritom je to hlavni vodni plocha
+ICE (130 dlazdic). Zaroven se maskoval `_LAKE#4/5/11`, coz je breh.
+
+Druhy pokus: podil indexu 13/14/15 na plose ramecku. Vyresilo ICE, ale
+v GRASS oznacilo za vodu hneda pole `_CORN#8` a `_GREEN#17`. Ty indexy
+totiz nejsou "vodni" - jsou to jen paletove prihradky a jejich barva
+zavisi na urovni I NA RADKU MAPY:
+
+    indexy 13/14/15 uprostred mapy
+    TOWN    (A,9,7) (4,5,3) (4,3,1)
+    GRASS   (6,5,1) (4,3,0) (3,1,0)     hneda
+    RIVER   (0,6,5) (3,5,5) (1,3,3)     tyrkysova
+
+Treti pokus: podle BARVY (modra prevazi nad cervenou). Vyresilo GRASS,
+ale v DESERTu oznacilo `_RIGS#9` (125 dlazdic) a v ICE i led
+`_ARCTIC#0` - tam, kde je cela paleta studena, je modre skoro vse.
+
+**Funguje az PRUNIK obojiho**: pixel se pocita, jen kdyz ma index 13, 14
+nebo 15 a zaroven je jeho barva NA TOM RADKU modrejsi nez cervena.
+Zmereno na vsech sesti urovnich:
+
+| uroven | vodni ramecky |
+|---|---|
+| TOWN, DESERT, GRASS | zadne |
+| RIVER | `_LAKE#0/1/2/3/6`, `LAKESUB#0` |
+| ICE | `_ARCTIC#5` x130 |
+| SCIFI | `_ARCTIC#5` x38 |
+
+Zadny falesny nalez. Overeno i v behu: v ICE cyklovani zmenilo 53 081
+indexu, z toho 0 mimo masku.
+
+**Pouceni: jmeno souboru neni mereni.** `_ARCTIC` znelo jako snih a byla
+to voda; `_LAKE#4` znelo jako jezero a byl to breh.
 
 ### Mereni, ktere si samo vyrobilo poplach
 

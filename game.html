@@ -728,9 +728,9 @@ function renderMap(state, lv, withObjects, count = CHAIN_MAPS) {
     if (lf.parts[0].flags & 0x10) return;  // bit 4 = znacka, hra nekresli
     const spr = indexedFrameFor(state, fname, frame);
     if (!spr) return;
-    const voda = WATER_TILES.has(fname);
-    if (voda) maWodu = true;
     const pal = palAtRy(ry);
+    const voda = jeVodniSnimek(state, fname, frame, pal);
+    if (voda) maWodu = true;
     // Index i stary RGBA vystup vzniknou z jednoho dekodovaneho chainu.
     // RGBA zatim zamerne drzi paletu kotvy objektu, aby krok B nezmenil obraz.
     const x0 = rx + XOFF + spr.ox;
@@ -11433,9 +11433,53 @@ const clampUnit = v => v < -1 ? -1 : v > 1 ? 1 : v;
    uhel neni z veze, ale ze smeru pohybu: `#40` jsou dva vodorovne pasy
    nad sebou (jizda do stran), `#42` dva svisle vedle sebe (nahoru dolu),
    `#41` a `#43` uhlopricky. */
-/* Dlazdice, ktere kresli vodni hladinu. Zjisteno z map: v RIVERu je to
-   `_LAKE.LIN` (64 dlazdic, 276 480 px), jinde zadna takova neni. */
-const WATER_TILES = new Set(["_LAKE.LIN"]);
+/* Co je vodni hladina, se NEURCUJE podle jmena souboru, ale z dat.
+   Trvalo to tri pokusy a kazdy se mylil jinak:
+
+   1. Podle JMENA (`_LAKE.LIN`). Spatne na obe strany: `_ARCTIC.LIN`
+      jsem podle jmena povazoval za snih, pritom je to hlavni vodni
+      plocha ICE (130 dlazdic), a naopak `_LAKE#4/5/11` je breh.
+   2. Podle PODILU indexu 13/14/15. Vyresilo ICE, ale v GRASS oznacilo
+      za vodu hneda pole `_CORN#8` a `_GREEN#17` - tyhle indexy nejsou
+      "vodni", jsou to jen paletove prihradky a jejich barva zavisi na
+      urovni i na radku mapy.
+   3. Podle BARVY (modra prevazi nad cervenou). Vyresilo GRASS, ale
+      v DESERTu oznacilo `_RIGS#9` (125 dlazdic) a v ICE i led
+      `_ARCTIC#0` - tam, kde je cela paleta studena, je modre skoro vse.
+
+   Funguje az PRUNIK obojiho: pixel se pocita, jen kdyz ma index 13, 14
+   nebo 15 A ZAROVEN je jeho barva na tomhle radku mapy modrejsi nez
+   cervena. Zmereno na vsech sesti urovnich:
+
+     TOWN, DESERT, GRASS   zadna voda
+     RIVER                 _LAKE#0/1/2/3/6, LAKESUB#0
+     ICE                   _ARCTIC#5 x130
+     SCIFI                 _ARCTIC#5 x38
+
+   Zadny falesny nalez. */
+const WATER_SHARE = 0.9;
+function jeVodniSnimek(owner, fname, frame, pal) {
+  // Klic nese i barvy tri vodnich indexu, protoze paleta se meni po
+  // radcich mapy - tataz dlazdice muze byt jinde jina.
+  const cache = owner.waterFrameCache ||
+                (owner.waterFrameCache = new Map());
+  const key = fname + ":" + frame + ":" +
+              [13, 14, 15].map(i => (pal[i] || [0, 0, 0]).join(",")).join("|");
+  if (cache.has(key)) return cache.get(key);
+  const spr = indexedFrameFor(owner, fname, frame);
+  let celkem = 0, vodni = 0;
+  if (spr) for (let i = 0; i < spr.pix.length; i++) {
+    const c = spr.pix[i];
+    if (c === 0xFF) continue;
+    celkem++;
+    if (c !== 13 && c !== 14 && c !== 15) continue;
+    const barva = pal[c];
+    if (barva && barva[2] > barva[0]) vodni++;   // modra prevazi nad cervenou
+  }
+  const je = celkem > 0 && vodni / celkem >= WATER_SHARE;
+  cache.set(key, je);
+  return je;
+}
 /* Vlnky cyklovanim vlastnich indexu vody. Poradi je od nejtmavsiho po
    nejsvetlejsi, jak je `_LAKE` pouziva (14 na 57 %, 15 na 20 %, 13 na
    15 %). Faze se posouva po radcich i v case, takze hladinou prochazi
