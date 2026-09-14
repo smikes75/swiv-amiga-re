@@ -6945,6 +6945,50 @@ def main():
                    "(jinak stroj blika mezi natocenym a rovnym): %r" %
                    (naklon["plny"],))
 
+            # ---- vlnky na vode: sahaji JEN na vodu -------------------
+            # Cykluji se vlastni tri paletove indexy vody (13/14/15)
+            # uvnitr masky `_LAKE` dlazdic. Tytez indexy ma ale i `_CLAY`
+            # (21 % pixelu) a `_JUNGLE` (7 %), takze bez masky by se
+            # rozvlnil i jil a dzungle. Meri se na INDEXOVEM poli, ne na
+            # hotovych pixelech - tam do toho mluvi pruhledny HUD
+            # a prepocet palety. Zmereno v RIVERu na radku 13600:
+            # 46 975 zmenenych indexu, z toho 0 mimo masku.
+            vlnky = page.evaluate("""() => {
+              startGame(3);
+              const g = state.g;
+              for (let i = 0; i < 24; i++) step(g);
+              g.scroll = 13600; g.scrollPrev = 13600;    // pasmo s jezerem
+              for (const s of g.spawns) s.armed = armedAtStart(g, s);
+              g.lives = 99999; g.player.inv = 99999;
+              state.zoom = 4; state.smooth = true; state.blendBg = false;
+              state.subpixelSprites = true; state.depthOfField = false;
+              state.softShadows = false; state.heliTilt = false;
+              state.vehicleTracks = false;
+              const sejmi = zap => { state.waterWaves = zap;
+                g.frac = 0; g.last = 0; frame(0);
+                return state.smoothState.idx.slice(); };
+              sejmi(false);
+              const vyp = sejmi(false), zap = sejmi(true);
+              const topI = Math.floor(g.smoothScrollF);
+              const wm = g.waterMask;
+              if (!wm) return { maska: false };
+              let zmeneno = 0, mimo = 0;
+              for (let y = 0; y < 256; y++)
+                for (let x = 0; x < 320; x++) {
+                  const i = y * 320 + x;
+                  if (vyp[i] === zap[i]) continue;
+                  zmeneno++;
+                  if (!wm[(y + topI) * 320 + x]) mimo++;
+                }
+              return { maska: true, zmeneno, mimo };
+            }""")
+            expect(vlnky.get("maska"), "RIVER nema masku vody")
+            expect(vlnky["zmeneno"] > 10000,
+                   "vlnky se skoro neprojevily: %r" % (vlnky,))
+            expect(vlnky["mimo"] == 0,
+                   "vlnky sahly mimo vodu na %d bodu - rozvlni se i jil "
+                   "a dzungle, ktere maji tytez indexy" % (vlnky["mimo"],))
+
             # ---- joysticky (Gamepad API) -----------------------------
             pad = page.evaluate("""() => {
               startGame(0);

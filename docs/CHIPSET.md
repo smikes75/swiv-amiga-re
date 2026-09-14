@@ -510,6 +510,53 @@ se kresli bez michani a rovnost s klasickym snimkem plati dal - mimo
 obdelniky spritu je rozdil **0 bodu**. Uvnitr obdelniku vzrostl ze 364
 na 925 bodu, coz je presne ten mekky okraj.
 
+### Vlnky na vode (2026-09-14)
+
+Hrac: voda v originale stoji, nesla by animovat? Ano, a technikou,
+kterou Amiga pouzivala - cyklovanim palety. Jen ne globalne.
+
+Zmereno, ktere paletove indexy kresli vodni dlazdice `_LAKE.LIN`
+v RIVERu (64 dlazdic, 276 480 px): **14 na 57 %, 15 na 20 %, 13 na
+15 %**, tedy 92 % plochy tremi indexy. Jenze tytez indexy pouziva
+i `_CLAY` (21 % svych pixelu) a `_JUNGLE` (7 %) - globalni cyklovani
+palety by rozvlnilo i jil a dzungli.
+
+Odtud **maska vodnich dlazdic** (`waterMask`), stavena v `renderMap`
+stejne jako `foreLayer`: dlazdice z `WATER_TILES` masku nastavuji,
+kazda dalsi dlazdice nad nimi ji rusi. Zmereno v RIVERu: 252 855 bodu
+na radcich 13505..14336.
+
+Vlnka je pak prehozeni indexu uvnitr masky podle faze, ktera jde po
+radcich (`WATER_BAND` = 6) i v case (`WATER_SPEED` = 3 tiky na krok).
+V obraze tedy nepribude ani jedna nova barva - jen se prehazuje to, co
+uz tam je.
+
+Vodni plocha je v cele hre jen v RIVERu; `_ARCTIC` v ICE je snih, ne
+voda.
+
+### Mereni, ktere si samo vyrobilo poplach
+
+Prvni overeni pocitalo zmenene body na HOTOVEM PLATNE a vyslo z nej,
+ze se mimo masku meni 5 211 bodu - tedy ze efekt leze, kam nema.
+Nelezl. Do porovnani plaven mluvi pruhledny HUD (voda pod nim
+prosvita, coz je spravne) a prepocet palety po radcich.
+
+Rozhodlo az mereni na INDEXOVEM poli, kde zadna z techto vrstev
+nefiguruje: **46 975 zmenenych indexu, z toho 0 mimo masku.**
+
+Pouceni: kdyz se meri efekt, ktery pracuje s indexy, ma se merit na
+indexech. Hotove pixely nesou navic vsechno, co se s nimi pak deje.
+(A nulovou hladinu mereni je potreba zmerit driv, nez se cislo cte -
+tady vysla 0, takze cisla byla duveryhodna, jen merila neco jineho,
+nez jsem myslel.)
+
+### Stopy jemnejsi
+
+Razitko `#40..#43` je pres dvacet pixelu dlouhe, takze pri rozestupu
+sedmi pixelu se prekryvalo trikrat a pas vychazel uplne plny - hrac to
+mel za prilis vyrazne. `TRACK_STEP` je proto 16: stopa je porad
+souvisla (razitko je delsi nez rozestup), ale o dost lehci.
+
 ### Naklon potreti: zuzeni misto posunu (2026-09-13)
 
 Hrac naklon porad nevidel. Zive mereni ukazalo, ze **chyba to nebyla**:

@@ -126,6 +126,7 @@ a { color:#cfe0ff }
     <label title="Kamera zaostrena na rovinu objektu: teren pod nimi je mirne mekci. Amiga obraz skladala z pevnych bitplanu, zadny filtr mezi nimi a monitorem nebyl."><input type="checkbox" id="dofchk" checked> hloubka ostrosti</label>
     &nbsp;&middot;&nbsp; <label title="Stin objektu se s vyskou rozostri a zesvetli; blitter zna jen plnou masku, alfu neumi"><input type="checkbox" id="softshchk2" checked> m&#283;kk&#233; st&#237;ny</label>
     &nbsp;&middot;&nbsp; <label title="Pomahá plynulosti pri malem zvetseni: svisle prolnuti mezi dvema polohami. Neni to vizualni efekt, pri 4x a vice je zbytecne."><input type="checkbox" id="blendchk" checked> prolnut&#237; pohybu</label>
+    &nbsp;&middot;&nbsp; <label title="Voda v originale stoji. Vlnky vznikaji prehazovanim jejich VLASTNICH tri paletovych indexu uvnitr masky vodnich dlazdic, takze v obraze nepribude zadna nova barva a nic mimo hladinu se nehne. Tak se voda na Amize animovala."><input type="checkbox" id="vlnkychk" checked> vlnky na vod&#283;</label>
     &nbsp;&middot;&nbsp; <label title="Vozidla nechavaji stopy i mimo pasmo, ktere pro ne original otevira jen na tech mistech. Kresli se puvodnim dekalem JEEPHELI#40..#43 a jsou ciste zobrazovaci - do simulace ani po siti nezasahuji."><input type="checkbox" id="stopychk" checked> stopy vozidel</label>
     &nbsp;&middot;&nbsp; <label title="Sprity se kladou na zlomkovou polohu jako teren, misto aby skakaly po celych bodech displeje. Bez toho objekty po plynule jedouci zemi podkluzuji. Rozmaze se jen okraj spritu o jeden bod displeje, vnitrek zustava tvrdy."><input type="checkbox" id="subpxchk" checked> podpixelov&#233; sprity</label>
     &nbsp;&middot;&nbsp; <label title="Rotorovy disk se sklopi do smeru letu. Telo zustava pixel po pixelu nedotcene - naklani se jen rotor, ktery je jednobarevna plocha. Original naklonene snimky nema."><input type="checkbox" id="tiltchk"> n&#225;klon vrtuln&#237;ku</label>
@@ -696,6 +697,14 @@ function renderMap(state, lv, withObjects, count = CHAIN_MAPS) {
      Objekty maji v mape vrstvu take (v TOWN 1, 2 nebo 3) a podle
      hracskeho pozorovani se za popredove dlazdice schovavaji. */
   const foreLayer = new Uint8Array(W * H);
+  /* Maska vodnich dlazdic. Voda v originale stoji; ve vylepsenem rezimu
+     se da rozvlnit CYKLOVANIM JEJICH VLASTNICH paletovych indexu, coz je
+     presne to, cim se voda na Amize animovala. Zmereno, ze `_LAKE.LIN`
+     kresli 92 % pixelu indexy 13, 14 a 15 - jenze tytez indexy ma i
+     `_CLAY` (21 % pixelu) a `_JUNGLE` (7 %), takze cyklovat paletu
+     globalne nejde, rozvlnil by se i jil a dzungle. Odtud maska. */
+  const waterMask = new Uint8Array(W * H);
+  let maWodu = false;
 
   const rgb = v => [((v >> 8) & 15) * 17, ((v >> 4) & 15) * 17, (v & 15) * 17];
   function palAtRy(ry) {
@@ -719,6 +728,8 @@ function renderMap(state, lv, withObjects, count = CHAIN_MAPS) {
     if (lf.parts[0].flags & 0x10) return;  // bit 4 = znacka, hra nekresli
     const spr = indexedFrameFor(state, fname, frame);
     if (!spr) return;
+    const voda = WATER_TILES.has(fname);
+    if (voda) maWodu = true;
     const pal = palAtRy(ry);
     // Index i stary RGBA vystup vzniknou z jednoho dekodovaneho chainu.
     // RGBA zatim zamerne drzi paletu kotvy objektu, aby krok B nezmenil obraz.
@@ -734,6 +745,7 @@ function renderMap(state, lv, withObjects, count = CHAIN_MAPS) {
         if (color === 0xFF) continue;
         const pos = ty * W + tx, o = pos * 4, c = pal[color];
         mapIndex[pos] = color;
+        waterMask[pos] = voda ? 1 : 0;      // dlazdice nad vodou masku rusi
         px[o] = c[0]; px[o + 1] = c[1]; px[o + 2] = c[2];
       }
     }
@@ -814,7 +826,8 @@ function renderMap(state, lv, withObjects, count = CHAIN_MAPS) {
     }
   if (withObjects !== false)
     for (const t of objs) blit(t.x, t.y, t.gfx);
-  return { px, mapIndex, terrainOpen, foreLayer, w: W, h: H, name: pamName,
+  return { px, mapIndex, terrainOpen, foreLayer,
+           waterMask: maWodu ? waterMask : null, w: W, h: H, name: pamName,
            parsed, tiles: ntiles, objs: objs.length };
 }
 
@@ -7858,6 +7871,7 @@ function startGame(lv) {
   const g = state.g = {
     lv, big, mapIndex: m.mapIndex, terrainOpen: m.terrainOpen,
     foreLayer: m.foreLayer,
+    waterMask: m.waterMask,
     mapW: m.w, spawns, mapH: m.h,
     // radky prvni mapy = img radek - rowOffset (checkpointy, testy)
     rowOffset: parsed.rowOffset,
@@ -8080,6 +8094,7 @@ function setMode(fx) {
                             ["tiltchk", "heliTilt"],
                             ["subpxchk", "subpixelSprites"],
                             ["stopychk", "vehicleTracks"],
+                            ["vlnkychk", "waterWaves"],
                             ["blendchk", "blendBg"]])
     state[klic] = fx && document.getElementById(id).checked;
   if (state.g) { state.g.bobCur = state.g.bobPrev = null; }
@@ -8095,6 +8110,9 @@ document.getElementById("softshchk2").onchange = e => {
 };
 document.getElementById("subpxchk").onchange = e => {
   state.subpixelSprites = state.smooth && e.target.checked;
+};
+document.getElementById("vlnkychk").onchange = e => {
+  state.waterWaves = state.smooth && e.target.checked;
 };
 document.getElementById("stopychk").onchange = e => {
   state.vehicleTracks = state.smooth && e.target.checked;
@@ -11415,8 +11433,23 @@ const clampUnit = v => v < -1 ? -1 : v > 1 ? 1 : v;
    uhel neni z veze, ale ze smeru pohybu: `#40` jsou dva vodorovne pasy
    nad sebou (jizda do stran), `#42` dva svisle vedle sebe (nahoru dolu),
    `#41` a `#43` uhlopricky. */
+/* Dlazdice, ktere kresli vodni hladinu. Zjisteno z map: v RIVERu je to
+   `_LAKE.LIN` (64 dlazdic, 276 480 px), jinde zadna takova neni. */
+const WATER_TILES = new Set(["_LAKE.LIN"]);
+/* Vlnky cyklovanim vlastnich indexu vody. Poradi je od nejtmavsiho po
+   nejsvetlejsi, jak je `_LAKE` pouziva (14 na 57 %, 15 na 20 %, 13 na
+   15 %). Faze se posouva po radcich i v case, takze hladinou prochazi
+   pomala vlna smerem dolu. */
+const WATER_CYCLE = [13, 14, 15];
+const WATER_BAND = 6;             // radku na jeden krok vlny
+const WATER_SPEED = 3;            // tiku na posun vlny o krok
+
 const TRACK_BEHAVIORS = new Set(["tank", "flattank", "juntank"]);
-const TRACK_STEP = 7;             // px ujete mezi dvema stopami
+/* Rozestup stop. Razitko `#40..#43` je pres dvacet pixelu dlouhe, takze
+   pri sedmi px se prekryva trikrat a pas vyjde uplne plny - hrac to mel
+   za prilis vyrazne. Pri sestnacti se jeste prekryva, tedy stopa zustava
+   souvisla, ale je o dost lehci. */
+const TRACK_STEP = 16;
 const TRACK_MAX = 3000;           // strop, aby seznam nerostl bez mezi
 
 function trackSector(dx, dy) {
@@ -11634,6 +11667,25 @@ function renderSmoothField(ctx, g, S, composed, hudCv) {
   // stopy min i telo INST5 v plynulem rezimu chybely.
   if (!st.idx || st.idx.length !== 320 * rows) st.idx = new Uint8Array(320 * rows);
   st.idx.set(g.mapIndex.subarray(topI * 320, (topI + rows) * 320));
+  /* Vlnky na vode (v originale stoji). Prehazuji se VLASTNI indexy vody
+     uvnitr masky `_LAKE`, takze v obraze nepribude ani jedna nova barva
+     a nic mimo hladinu se nehne. Faze jde po radcich i v case, tedy
+     hladinou prochazi pomala vlna dolu. */
+  if (state.waterWaves && g.waterMask) {
+    const wm = g.waterMask, idx = st.idx;
+    const faze = (g.tick / WATER_SPEED) | 0;
+    for (let y = 0; y < rows; y++) {
+      const posun = (((y + topI) / WATER_BAND | 0) + faze) % 3;
+      if (!posun) continue;                 // nulovy posun nic nemeni
+      const radek = y * 320, mradek = (y + topI) * 320;
+      for (let x = 0; x < 320; x++) {
+        if (!wm[mradek + x]) continue;
+        const c = idx[radek + x];
+        const k = c === 13 ? 0 : c === 14 ? 1 : c === 15 ? 2 : -1;
+        if (k >= 0) idx[radek + x] = WATER_CYCLE[(k + posun) % 3];
+      }
+    }
+  }
   // Orez podle viditelnosti: dekaly maji `life: Infinity`, takze jich za
   // dlouhou hru muzou byt tisice a slepe blitovani vsech by stalo cas.
   // Marze 64 px pokryje i nejvyssi dekal, ktery presahuje svou kotvu.
