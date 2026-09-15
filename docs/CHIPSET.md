@@ -1075,3 +1075,44 @@ ted je jasne proc: **neni v ni**. Poradi urcuje klic `+8` a vrstva se do
 nej musi dostat driv, uz pri zakladani BOB zaznamu. Kde presne, zustava
 otevrene - ale pro obraz uz to neni potreba, protoze vysledek je zmereny
 a odpovida.
+
+## Ovladace: proc nefungovaly na Windows (2026-09-15)
+
+Hrac hlasil, ze mu joystick na Windows nejede. Pricina je prozaicka.
+
+**`navigator.getGamepads()` vraci RIDKE pole**, kde index je slot
+ovladace, ne poradi pripojeni. Na Windows ovladac bezne pristane na
+indexu 1 az 3, zatimco nula je `null`. Kod cetl natvrdo `pads[0]`
+a `pads[1]`, takze takovy ovladac hru neovladal vubec.
+
+Dalsi dve veci selhavaly mimo standardni mapovani (na Windows bezne
+u DirectInput zarizeni):
+
+- **krizovy prepinac na ose 9** misto tlacitek 12..15. Kodovani je uhel:
+  -1 nahoru a dal po smeru hodin po 2/7, klidova poloha lezi mimo
+  interval <-1, 1>.
+- **tlacitka na jinych cislech.** Palba brala jen 0/2/7; u ovladace
+  s jinym rozlozenim neslo vystrelit. Ted bere jakekoli tlacitko mimo
+  smerovy kriz, kdyz mapovani neni `standard`.
+
+### Vyber ovladani
+
+Lista `ovladani` da kazdemu slotu rozbalovatko (automaticky / jen
+klavesnice / konkretni ovladac) a vedle **zivy vypis toho, co hra
+z ovladace opravdu cte** - sipky, palba, skok a priznak nestandardniho
+mapovani. To je tam zamerne: bez neho se vzdalena diagnostika
+"joystick nefunguje" vest neda, protoze kazdy ovladac hlasi jina cisla.
+Volba prezije reload.
+
+### Kontrakt
+
+`uitest.py` overuje pet pripadu: ovladac na indexu 2 (nuly `null`), hat
+nahoru, hat v klidu (nesmi hlasit nic), palba na netypickem tlacitku
+u nestandardniho mapovani a rucni prirazeni ovladace #3 slotu 1.
+
+Pri psani toho testu jsem se sam chytil do pasti: pomocna funkce mela
+`mapping: map || "standard"` a prazdny retezec je falsy, takze se
+z nestandardniho ovladace stal standardni a pripad "palba" hlasil
+nepravem chybu. Kod byl spravne, test ne - rozhodlo az prime volani
+`readPad`.
+

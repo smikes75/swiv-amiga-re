@@ -132,6 +132,12 @@ a { color:#cfe0ff }
     &nbsp;&middot;&nbsp; <label title="Rotorovy disk se sklopi do smeru letu. Telo zustava pixel po pixelu nedotcene - naklani se jen rotor, ktery je jednobarevna plocha. Original naklonene snimky nema."><input type="checkbox" id="tiltchk"> n&#225;klon vrtuln&#237;ku</label>
     <input type="checkbox" id="softshchk" hidden>
   </div>
+  <div id="padrow" style="margin-top:4px;font:12px monospace;color:#9ab">
+    <span>ovl&#225;d&#225;n&#237;:</span>
+    <label>slot 1 <select id="padsel0" style="font:inherit"></select></label>
+    &nbsp;<label>slot 2 <select id="padsel1" style="font:inherit"></select></label>
+    &nbsp;<span id="padinfo" style="opacity:.8">hled&#225;m ovlada&#269;e&#8230;</span>
+  </div>
   <div id="zoomrow" role="group" aria-label="Velikost hern&#237;ho pole">
     <span>velikost</span>
     <button type="button" data-zoom="0" aria-pressed="true">do okna</button>
@@ -8527,6 +8533,34 @@ window.addEventListener("keyup", e => {
    druhemu nepretlacuje uvolneni klavesy. */
 const PAD_PREV = [{}, {}];
 const PAD_DEAD = 0.4;                    // mrtva zona analogove paky
+
+/* Seznam PRIPOJENYCH ovladacu. `navigator.getGamepads()` vraci ridke
+   pole, kde index je slot ovladace, ne poradi pripojeni - na Windows
+   umi ovladac pristat na indexu 1, 2 nebo 3, zatimco nula je `null`.
+   Drive se cetlo natvrdo `pads[0]` a `pads[1]`, takze takovy ovladac
+   hru vubec neovladal. Tady se pole nejdriv zhusti. */
+function padList() {
+  if (!navigator.getGamepads) return [];
+  try {
+    return Array.from(navigator.getGamepads()).filter(Boolean);
+  } catch (e) { return []; }
+}
+function padCount() { return padList().length; }
+
+/* Krizovy prepinac (hat) byva u ovladacu MIMO standardni mapovani na
+   ose 9 misto tlacitek 12..15. Kodovani je uhel: -1 nahoru a dal po
+   smeru hodin po 2/7; klidova poloha lezi mimo <-1, 1>. */
+function padHat(v) {
+  const out = {};
+  if (typeof v !== "number" || v < -1.05 || v > 1.05) return out;
+  const smer = Math.round((v + 1) * 3.5) & 7;   // 0 = nahoru, po hodinach
+  if (smer === 7 || smer === 0 || smer === 1) out.u = true;
+  if (smer >= 1 && smer <= 3) out.r = true;
+  if (smer >= 3 && smer <= 5) out.d = true;
+  if (smer >= 5 && smer <= 7) out.l = true;
+  return out;
+}
+
 function readPad(p) {
   const out = {};
   if (!p) return out;
@@ -8536,29 +8570,113 @@ function readPad(p) {
   if (on(13) || ax[1] > PAD_DEAD) out.d = true;
   if (on(14) || ax[0] < -PAD_DEAD) out.l = true;
   if (on(15) || ax[0] > PAD_DEAD) out.r = true;
+  if (ax.length > 9) Object.assign(out, padHat(ax[9]));
   if (on(0) || on(2) || on(7)) out.f = true;      // A / X / prave rameno
   if (on(1) || on(3) || on(6)) out.j = true;      // B / Y / leve rameno
+  // Mimo standardni mapovani muzou byt tlacitka kdekoli. Palba proto
+  // bere JAKEKOLI tlacitko, ktere neni na smerovem krizi - bez toho
+  // nesla u nestandardniho ovladace vystrelit vubec.
+  if (!out.f && p.mapping !== "standard")
+    for (let i = 0; i < bt.length; i++)
+      if (i < 12 && on(i)) { out.f = true; break; }
   return out;
 }
+
+/* Prirazeni ovladacu slotum. `null` = slot jede jen z klavesnice.
+   Vychozi je poradi pripojeni, jako drive. */
+const PAD_SLOT = [null, null];
+function padForSlot(seznam, slot) {
+  const volba = PAD_SLOT[slot];
+  if (volba === -1) return null;                    // jen klavesnice
+  if (volba === null || volba === undefined) return seznam[slot] || null;
+  return seznam.find(p => p.index === volba) || null;
+}
+
+/* Panel ovladani. Zive ukazuje, co hra z ovladace opravdu cte - bez toho
+   se vzdalena diagnostika "joystick nefunguje" neda vest, protoze kazdy
+   ovladac hlasi jina cisla tlacitek a os. */
+function padLabel(p) {
+  const jm = (p.id || "ovladac").replace(/\s*\([^)]*\)\s*$/, "").trim();
+  return "#" + p.index + " " + (jm.length > 28 ? jm.slice(0, 28) + "\u2026" : jm);
+}
+function fillPadSelects() {
+  const seznam = padList();
+  for (let slot = 0; slot < 2; slot++) {
+    const sel = document.getElementById("padsel" + slot);
+    if (!sel) continue;
+    const drive = sel.value;
+    sel.innerHTML = "";
+    const auto = document.createElement("option");
+    auto.value = ""; auto.textContent = "automaticky";
+    sel.appendChild(auto);
+    const zadny = document.createElement("option");
+    zadny.value = "-1"; zadny.textContent = "jen kl\u00e1vesnice";
+    sel.appendChild(zadny);
+    for (const p of seznam) {
+      const o = document.createElement("option");
+      o.value = String(p.index); o.textContent = padLabel(p);
+      sel.appendChild(o);
+    }
+    sel.value = drive && [...sel.options].some(o => o.value === drive)
+      ? drive : "";
+  }
+  updatePadPanel(seznam);
+}
+function padSlotZmena(slot) {
+  const sel = document.getElementById("padsel" + slot);
+  const v = sel.value;
+  PAD_SLOT[slot] = v === "" ? null : (v === "-1" ? -1 : parseInt(v, 10));
+  try { localStorage.setItem("swivPad" + slot, v); } catch (e) {}
+}
+function updatePadPanel(seznam) {
+  const el = document.getElementById("padinfo");
+  if (!el) return;
+  if (!navigator.getGamepads) { el.textContent = "prohlizec Gamepad API nema"; return; }
+  if (!seznam.length) {
+    el.textContent = "zadny ovladac - pripoj ho a zmackni na nem tlacitko";
+    return;
+  }
+  const casti = [];
+  for (let slot = 0; slot < 2; slot++) {
+    const p = padForSlot(seznam, slot);
+    if (!p) { casti.push("slot " + (slot + 1) + ": klavesnice"); continue; }
+    const st = readPad(p);
+    const smer = (st.u ? "\u2191" : "") + (st.d ? "\u2193" : "") +
+                 (st.l ? "\u2190" : "") + (st.r ? "\u2192" : "");
+    casti.push("slot " + (slot + 1) + ": #" + p.index +
+               (p.mapping === "standard" ? "" : " [nestandardni]") +
+               " " + (smer || "\u00b7") +
+               (st.f ? " palba" : "") + (st.j ? " skok" : ""));
+  }
+  el.textContent = casti.join("   |   ");
+}
+for (let slot = 0; slot < 2; slot++) {
+  const sel = document.getElementById("padsel" + slot);
+  if (sel) {
+    sel.onchange = () => padSlotZmena(slot);
+    try {
+      const ulozeno = localStorage.getItem("swivPad" + slot);
+      if (ulozeno !== null) { sel.value = ulozeno; padSlotZmena(slot); }
+    } catch (e) {}
+  }
+}
+window.addEventListener("gamepadconnected", fillPadSelects);
+window.addEventListener("gamepaddisconnected", fillPadSelects);
+fillPadSelects();
+state.padPanelOpen = true;
+
 function pollGamepads(g) {
-  if (!navigator.getGamepads) return;
-  let pads;
-  try { pads = navigator.getGamepads(); } catch (e) { return; }
+  const seznam = padList();
   const pocet = NET.active ? 1 : 2;
   for (let i = 0; i < pocet; i++) {
-    const ted = readPad(pads[i]);
+    const ted = readPad(padForSlot(seznam, i));
     const cil = NET.active ? (g.netLocal = g.netLocal || {})
                            : (i === 0 ? g.keys : g.keys2);
     for (const k in PAD_PREV[i]) if (!ted[k]) cil[k] = false;
     for (const k in ted) cil[k] = true;
     PAD_PREV[i] = ted;
   }
-}
-function padCount() {
-  if (!navigator.getGamepads) return 0;
-  try {
-    return Array.from(navigator.getGamepads()).filter(Boolean).length;
-  } catch (e) { return 0; }
+  if (state.padPanelOpen) updatePadPanel(seznam);
 }
 
 /* ---- logika (50 Hz) ---- */

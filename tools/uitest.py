@@ -6989,6 +6989,50 @@ def main():
                    "vlnky sahly mimo vodu na %d bodu - rozvlni se i jil "
                    "a dzungle, ktere maji tytez indexy" % (vlnky["mimo"],))
 
+            # ---- ovladace na Windows: ridke pole, hat, cizi mapovani --
+            # `navigator.getGamepads()` vraci RIDKE pole, kde index je
+            # slot ovladace, ne poradi pripojeni. Na Windows ovladac bezne
+            # pristane na indexu 1 az 3, zatimco nula je `null`; drive se
+            # cetlo natvrdo `pads[0]`/`pads[1]` a takovy ovladac hru
+            # neovladal vubec. Mimo standardni mapovani byva krizovy
+            # prepinac na ose 9 a tlacitka na jinych cislech.
+            ovladace = page.evaluate("""() => {
+              startGame(0);
+              const g = state.g;
+              const mk = (idx, tlac, osy, map) => ({
+                index: idx, id: "Test Pad (Vendor: 0001)",
+                mapping: map === undefined ? "standard" : map,
+                axes: osy || [0, 0, 0, 0],
+                buttons: Array.from({ length: 16 },
+                  (_, i) => ({ pressed: tlac.includes(i) })) });
+              const puv = navigator.getGamepads;
+              const v = {};
+              navigator.getGamepads = () => [null, null, mk(2, [14, 0])];
+              PAD_SLOT[0] = null; PAD_SLOT[1] = null;
+              pollGamepads(g);
+              v.naIndexu2 = !!g.keys.l && !!g.keys.f;
+              navigator.getGamepads =
+                () => [mk(0, [], [0,0,0,0,0,0,0,0,0,-1], "")];
+              pollGamepads(g);
+              v.hatNahoru = !!g.keys.u;
+              navigator.getGamepads =
+                () => [mk(0, [], [0,0,0,0,0,0,0,0,0,3.28], "")];
+              pollGamepads(g);
+              v.hatKlid = !g.keys.u && !g.keys.d && !g.keys.l && !g.keys.r;
+              navigator.getGamepads = () => [mk(0, [4], [0,0,0,0], "")];
+              pollGamepads(g);
+              v.nestandardniPalba = !!g.keys.f;
+              navigator.getGamepads = () => [mk(1, [14]), mk(3, [15])];
+              PAD_SLOT[0] = 3;
+              pollGamepads(g);
+              v.rucniPrirazeni = !!g.keys.r && !g.keys.l;
+              PAD_SLOT[0] = null;
+              navigator.getGamepads = puv;
+              return v;
+            }""")
+            for jmeno, ok in ovladace.items():
+                expect(ok, "ovladace: pripad %r selhal" % (jmeno,))
+
             # ---- joysticky (Gamepad API) -----------------------------
             pad = page.evaluate("""() => {
               startGame(0);
