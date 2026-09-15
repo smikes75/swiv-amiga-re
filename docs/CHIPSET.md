@@ -1116,3 +1116,39 @@ z nestandardniho ovladace stal standardni a pripad "palba" hlasil
 nepravem chybu. Kod byl spravne, test ne - rozhodlo az prime volani
 `readPad`.
 
+## Volba palety: hardware vs dobovy monitor (2026-09-15)
+
+Prevod ctyrbitove slozky na osmibitovou byl roztrouseny na **trinacti
+mistech** jako `n * 17`. Prvni krok proto bylo svest ho do jedine funkce
+`rgb4()`; bez toho by se volba palety nutne nekde roztrhla.
+
+**`hardware` je vychozi a presne `n * 17`** - tak to delaji emulatory
+i nase baseline snimky, takze na tom stoji vsechny kontrakty. Overeno
+na vsech 4096 kombinacich: zadna odchylka.
+
+**`dobovy monitor` NENI mereni.** Zadny Commodore 1084 tu neni. Stoji na
+dvou publikovanych cislech:
+
+- **gama** CRT ma podle ITU-R BT.1886 gamu kolem 2,4, sRGB displej 2,2.
+  Tytez hodnoty proto na CRT vypadaly ve stredech tmavsi.
+- **bily bod** spotrebni PAL monitory (vcetne rady 1084) bezne jely na
+  9300 K misto D65 6500 K. Bila tedy byla CHLADNEJSI, ne teplejsi, jak se
+  casto predpoklada.
+
+Retezec je fyzikalne serazeny: dekodovat gamou CRT do linearniho svetla,
+tam posunout bily bod, teprve pak zakodovat gamou sRGB. Prvni verze
+posouvala bily bod az nad gamou, coz efekt prehanelo a bila se orezavala
+(255 v modre). Pomery jsou normovane tak, aby nejvetsi byl 1, takze nic
+nepretece.
+
+Zmereno: meni 4094 ze 4096 kombinaci, nic mimo rozsah, cerna zustava
+cerna, bila 224,234,255, stredni sed 136 -> 113,118,128.
+
+### Past, do ktere se slaplo
+
+`setMonitorMode()` se vola hned pri definici (radek ~590), ale `const
+state` vznika az na radku 1079. Prvni verze do nej zapisovala a stranka
+padala na "Cannot access 'state' before initialization" - titulek se
+vubec neobjevil. Stav volby proto zije v modulovych promennych, ne na
+`state`.
+

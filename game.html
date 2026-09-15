@@ -95,6 +95,7 @@ a { color:#cfe0ff }
   </div>
   <div id="testbar" style="margin-top:6px;font:12px monospace;color:#9ab">
     <label><input type="checkbox" id="crtchk"> CRT</label>
+    &nbsp;<label title="Prevod ctyrbitove slozky na barvu. 'hardware' je presne n*17, jak to delaji emulatory i nase baseline snimky - na tom stoji vsechny kontrakty. 'dobovy monitor' je PRIBLIZENI, ne mereni: gama 2,4 podle ITU-R BT.1886 misto 2,2 u sRGB (stredy byly na CRT tmavsi) a bily bod 9300 K misto D65, na ktery spotrebni PAL monitory bezne jely - bila proto byla chladnejsi, ne teplejsi.">paleta <select id="monsel" style="font:inherit"><option value="puvodni">hardware</option><option value="crt">dobov&#253; monitor</option></select></label>
     &nbsp;&middot;&nbsp; <label><input type="radio" name="mode" id="modeorig" checked> origin&#225;l</label>
     <label><input type="radio" name="mode" id="modefx"> vylep&#353;eno</label>
     <input type="checkbox" id="smoothchk" hidden>
@@ -259,9 +260,7 @@ function colorizeRawIndexed(raw, paletteWords = raw.paletteWords,
   const rgb = new Array(16);
   for (let i = 0; i < 16; i++) {
     const word = fadeRgb12(paletteWords[i], blackLevel, whiteLevel);
-    rgb[i] = [((word >> 8) & 15) * 17,
-              ((word >> 4) & 15) * 17,
-              (word & 15) * 17];
+    rgb[i] = rgb4(word);
   }
   for (let i = 0; i < raw.pixels.length; i++) {
     const c = rgb[raw.pixels[i]], o = i * 4;
@@ -274,7 +273,7 @@ function rawImage(bytes) {
   const raw = decodeRawIndexed(bytes);
   const px = colorizeRawIndexed(raw);
   const pal = Array.from(raw.paletteWords, v =>
-    [((v >> 8) & 15) * 17, ((v >> 4) & 15) * 17, (v & 15) * 17]);
+    rgb4(v));
   return { px, w: raw.w, h: raw.h, pal,
            pixels: raw.pixels, paletteWords: raw.paletteWords };
 }
@@ -546,8 +545,69 @@ function fadeRgb12(rgb12, blackLevel, whiteLevel) {
    nibble*17 vsude (HUD, HW sprity, COLOR07 i mapa); gamma profil
    emulatoru (vAmiga CRT 2.8 -> sRGB 2.2) je vec porovnavani a aplikuje
    ho tools/compare.py (VAMIGA_LUT) na nas snimek, ne render. */
+/* ---- Prevod 4bitove slozky na 8bitovou ------------------------------
+   Hardware ma na kazdou slozku ctyri bity. Prevod `n * 17` je presne to,
+   co delaji emulatory i nase baseline snimky, takze je VYCHOZI a vsechny
+   kontrakty stoji na nem.
+
+   Volba `monitor` ho umi nahradit priblizenim dobove obrazovky. Neni to
+   mereni - zadny Commodore 1084 tu neni - a stoji na dvou publikovanych
+   cislech, ktera se daji dohledat:
+
+     gama   CRT ma podle ITU-R BT.1886 gamu kolem 2,4, sRGB displej 2,2.
+            Tytez hodnoty proto na CRT vypadaly ve stredech TMAVSI;
+            prevod je `(v/255)^(2.4/2.2)`.
+     bily bod  spotrebni PAL monitory (vcetne rady 1084) bezne jely na
+            9300 K misto D65 6500 K, takze bila byla CHLADNEJSI, ne
+            teplejsi. Posun je aproximovan pomerem slozek.
+
+   Kazda barva ve hre prochazi jedinou tabulkou `RGB4`, takze se to nikde
+   neroztrhne - drive bylo `* 17` na trinacti mistech. */
+const RGB4 = new Uint8Array(16);
+const MONITOR_MODES = {
+  "puvodni": null,                           // n * 17, presne jako hardware
+  // Retezec je fyzikalne serazeny: hodnota se nejdriv dekoduje gamou CRT
+  // do LINEARNIHO svetla, tam se posune bily bod, a teprve pak zakoduje
+  // gamou sRGB. Posun bileho bodu je linearni operace, takze delat ho az
+  // nad gamou (prvni verze) efekt prehanelo a bila se orezavala.
+  //
+  // Pomery jsou normovane tak, aby nejvetsi byl 1 - tim nic nepretece
+  // a plny signal zustane plnym signalem.
+  "crt": { gamaCRT: 2.4, gamaSRGB: 2.2, bily: [0.752, 0.826, 1.0] },
+};
+/* Stav volby zije v modulovych promennych, NE na `state` - tahle cast
+   souboru bezi driv, nez `state` vubec vznikne (drive tu bylo
+   `state.monitorMode = ...` a stranka padala na "Cannot access 'state'
+   before initialization"). */
+let MONITOR_MODE = "puvodni", MONITOR_REZIM = null;
+function setMonitorMode(rezim) {
+  const m = MONITOR_MODES[rezim] || null;
+  MONITOR_MODE = m ? rezim : "puvodni";
+  for (let i = 0; i < 16; i++) RGB4[i] = i * 17;   // zaklad je hardware
+  MONITOR_REZIM = m;
+  try { localStorage.setItem("swivMonitor", MONITOR_MODE); } catch (e) {}
+}
+setMonitorMode("puvodni");
+
+/* Trojice RGB (0..255) upravena podle volby monitoru. Pri `puvodni`
+   vraci vstup beze zmeny, takze kontrakty plati dal. */
+function monitorRgb(r, g, b) {
+  const m = MONITOR_REZIM;
+  if (!m) return [r, g, b];
+  const uprav = (v, k) => {
+    const lin = Math.pow(v / 255, m.gamaCRT) * k;    // do linearniho svetla
+    const out = Math.pow(lin, 1 / m.gamaSRGB);       // zpet do sRGB
+    return Math.max(0, Math.min(255, Math.round(out * 255)));
+  };
+  return [uprav(r, m.bily[0]), uprav(g, m.bily[1]), uprav(b, m.bily[2])];
+}
+function rgb4(word) {
+  return monitorRgb(RGB4[(word >> 8) & 15], RGB4[(word >> 4) & 15],
+                    RGB4[word & 15]);
+}
+
 function capturedRgb12(word) {
-  return [((word >> 8) & 15) * 17, ((word >> 4) & 15) * 17, (word & 15) * 17];
+  return rgb4(word);
 }
 
 /* Sestavi plochou tabulku rows x 16 RGB12 barev pro viditelne scanline.
@@ -595,9 +655,8 @@ function colorizeIndexedRows(mapIndex, width, mapHeight, margin, top, rows,
     for (let x = 0; x < width; x++) {
       const word = palettes[pal + mapIndex[src + x]];
       const o = (sy * width + x) * 4;
-      out[o] = ((word >> 8) & 15) * 17;
-      out[o + 1] = ((word >> 4) & 15) * 17;
-      out[o + 2] = (word & 15) * 17;
+      const c = rgb4(word);
+      out[o] = c[0]; out[o + 1] = c[1]; out[o + 2] = c[2];
       out[o + 3] = 255;
     }
   }
@@ -629,9 +688,8 @@ function colorizeIndexedField(fieldIndex, width, rows, mapHeight, margin,
       const word = direct ? color07Word : palettes[pal + color];
       const capture = direct ? capturedRgb12(word) : null;
       const o = (sy * width + x) * 4;
-      out[o] = direct ? capture[0] : ((word >> 8) & 15) * 17;
-      out[o + 1] = direct ? capture[1] : ((word >> 4) & 15) * 17;
-      out[o + 2] = direct ? capture[2] : (word & 15) * 17;
+      const c = direct ? capture : rgb4(word);
+      out[o] = c[0]; out[o + 1] = c[1]; out[o + 2] = c[2];
       out[o + 3] = 255;
     }
   }
@@ -712,7 +770,7 @@ function renderMap(state, lv, withObjects, count = CHAIN_MAPS) {
   const waterMask = new Uint8Array(W * H);
   let maWodu = false;
 
-  const rgb = v => [((v >> 8) & 15) * 17, ((v >> 4) & 15) * 17, (v & 15) * 17];
+  const rgb = v => rgb4(v);
   function palAtRy(ry) {
     let cur = checks.length ? checks[0].pal : new Array(16).fill(0);
     for (const c of checks) { if (c.y > ry) break; cur = c.pal; }
@@ -3313,8 +3371,7 @@ function palAtImgY(imgY) {
   return { pal: state.checks[ci].pal, ci };
 }
 
-const rgb12 = v => [((v >> 8) & 15) * 17, ((v >> 4) & 15) * 17,
-                     (v & 15) * 17];
+const rgb12 = v => rgb4(v);
 
 /* 0x2afc: kanonove granaty jsou HW sprity. COLOR17/18 jsou bila 0xFFF
    a seda 0x999; COLOR19 blika touto 16tikovou tabulkou. Drive pouzite
@@ -7830,7 +7887,7 @@ function startGame(lv) {
 
   const parsed = m.parsed;                    // retez map od `lv` dal
   // paleta pro sprity: prvni kompletni checkpoint
-  const rgb = v => [((v >> 8) & 15) * 17, ((v >> 4) & 15) * 17, (v & 15) * 17];
+  const rgb = v => rgb4(v);
   state.copperChecks = parsed.checks;
   state.checks = parsed.checks.map(c => ({ y: c.y, pal: c.pal.map(rgb) }));
   state.pal = state.checks[0] ? state.checks[0].pal : [];
@@ -8073,6 +8130,20 @@ document.getElementById("game").addEventListener("pointerdown", () =>
 updateZoomLabel();
 
 /* ---- testovaci lista (CRT, zivoty, rychlost scrollu) ---- */
+document.getElementById("monsel").onchange = e => {
+  setMonitorMode(e.target.value);
+  // `renderMap` barvi mapu uz pri stavbe, takze se po zmene palety musi
+  // uroven postavit znovu. Beh se tim restartuje - to je pro volbu
+  // monitoru prijatelne, meni se jednou za cas.
+  if (state.g) startGame(state.g.lv);
+};
+try {
+  const ulozeno = localStorage.getItem("swivMonitor");
+  if (ulozeno && MONITOR_MODES[ulozeno] !== undefined) {
+    document.getElementById("monsel").value = ulozeno;
+    setMonitorMode(ulozeno);
+  }
+} catch (e) {}
 document.getElementById("crtchk").onchange = e =>
   document.getElementById("crtfx").style.display = e.target.checked ? "" : "none";
 // Rezim "vylepseno": logika zustava 50 Hz jako original, renderer pri kazdem
@@ -11536,8 +11607,9 @@ function smoothSpriteCanvas(spr, palWords, op, c07, fore, left, top) {
     else if (op === BOB_FILL_INDEX9) word = palWords[9];
     else word = (c === 7 && c07 !== undefined) ? c07 : palWords[c];
     const o = (sy * rowPx + sx) * 4;
-    d[o] = ((word >> 8) & 15) * 17; d[o + 1] = ((word >> 4) & 15) * 17;
-    d[o + 2] = (word & 15) * 17; d[o + 3] = 255;
+    const barva = rgb4(word);      // `c` uz tady znamena paletovy index
+    d[o] = barva[0]; d[o + 1] = barva[1]; d[o + 2] = barva[2];
+    d[o + 3] = 255;
   }
   cv.getContext("2d").putImageData(img, 0, 0);
   cache.set(key, cv);
