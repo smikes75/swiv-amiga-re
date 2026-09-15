@@ -6989,6 +6989,69 @@ def main():
                    "vlnky sahly mimo vodu na %d bodu - rozvlni se i jil "
                    "a dzungle, ktere maji tytez indexy" % (vlnky["mimo"],))
 
+            # ---- hrany spritu: tri rezimy MUSI davat tri obrazy ------
+            # Prvni verze rezimu "vyhlazeno" byla BITOVE shodna s "bez"
+            # (0 rozdilnych bodu z 69 696). Duvod: sprite se pred kresbou
+            # predzvetsuje nejblizsim sousedem a na displej se pak
+            # dotahuje v pomeru 1:1, takze bilinearka nema co michat.
+            # Tenhle kontrakt je proto hlavne NEGATIVNI kontrola - hlida,
+            # ze volba neni potichu bez ucinku.
+            #
+            # Zaroven se meri, ze vychozi hodnota je "bez". Kdyz byla
+            # `undefined` a podminka znela `!== "bez"`, zapinal se Scale2x
+            # i tam, kde ma byt vypnuty.
+            hrany = page.evaluate("""() => {
+              startGame(0);
+              const g = state.g;
+              for (let i = 0; i < 400; i++) { step(g); g.lives = 99999; }
+              g.player.inv = 0;            // 99999 pusti bily zablesk
+              state.zoom = 6; state.smooth = true; state.blendBg = false;
+              state.subpixelSprites = true; state.depthOfField = true;
+              state.softShadows = true; state.heliTilt = false;
+              state.vehicleTracks = false; state.waterWaves = false;
+              const vychozi = state.spriteScale;
+              const cv = document.querySelector('#game');
+              const sejmi = rezim => {
+                state.spriteScale = rezim;
+                if (state.indexedFrameCache)
+                  for (const spr of state.indexedFrameCache.values())
+                    if (spr) { spr.smoothCache = null;
+                               if (spr._sc2) spr._sc2.smoothCache = null; }
+                g.frac = 0; g.last = 0; frame(0); frame(0);
+                // POZOR: zvetseni se na platno propise az prvnim
+                // `frame()`. Kdyz se `S` cetlo pred nim, vyslo 1 a vyrez
+                // byl kus pozadi, ve kterem se rezimy nelisi vubec.
+                const S = cv.width / 320;
+                const c2 = document.createElement('canvas');
+                c2.width = 44 * S; c2.height = 44 * S;
+                c2.getContext('2d').drawImage(cv, (g.player.x - 22) * S,
+                  (g.player.y - 24) * S, 44 * S, 44 * S,
+                  0, 0, 44 * S, 44 * S);
+                return c2.getContext('2d')
+                         .getImageData(0, 0, c2.width, c2.height).data;
+              };
+              const a = sejmi("bez"), b = sejmi("scale2x"),
+                    c = sejmi("vyhlazeno");
+              const lisi = (u, v) => { let n = 0;
+                for (let i = 0; i < u.length; i += 4)
+                  if (u[i] !== v[i] || u[i+1] !== v[i+1] ||
+                      u[i+2] !== v[i+2]) n++;
+                return n; };
+              return { vychozi, bodu: a.length / 4,
+                       bez_scale2x: lisi(a, b), bez_vyhlazeno: lisi(a, c),
+                       scale2x_vyhlazeno: lisi(b, c) };
+            }""")
+            expect(hrany["vychozi"] == "bez",
+                   "vychozi rezim hran spritu neni 'bez', ale %r - Scale2x "
+                   "by se zapinal i tam, kde ma byt vypnuty"
+                   % (hrany["vychozi"],))
+            for dvojice in ("bez_scale2x", "bez_vyhlazeno",
+                            "scale2x_vyhlazeno"):
+                expect(hrany[dvojice] > hrany["bodu"] // 100,
+                       "rezimy hran spritu %s davaji temer stejny obraz: "
+                       "%d z %d bodu - volba je bez ucinku"
+                       % (dvojice, hrany[dvojice], hrany["bodu"]))
+
             # ---- ovladace na Windows: ridke pole, hat, cizi mapovani --
             # `navigator.getGamepads()` vraci RIDKE pole, kde index je
             # slot ovladace, ne poradi pripojeni. Na Windows ovladac bezne

@@ -1152,3 +1152,104 @@ padala na "Cannot access 'state' before initialization" - titulek se
 vubec neobjevil. Stav volby proto zije v modulovych promennych, ne na
 `state`.
 
+
+## Hrany spritu: tri rezimy a cena predzvetseni (2026-09-15)
+
+Hrac: "sprity oproti pozadi vypadaji prilis hranate". Ma to tri priciny
+a jen jedna sla resit:
+
+- hloubka ostrosti zmekcuje **teren**, hrace ne - to je zamer toho
+  modelu, pozadi je dal a ma byt mekci;
+- pozadi je ditherovane, takze se pri zvetseni rozpadne do jemneho sumu
+  a pusobi plynule, kdezto sprity maji velke jednolite plochy a ostry
+  obrys;
+- podpixelove sprity vyhladily **pohyb**, ne hrany.
+
+**Oprava drivejsiho tvrzeni.** Rekl jsem, ze prevzorkovani nic neda. To
+platilo pro ROTACI (zmereno: 0 rozdilnych bodu ze 147 456) a pro
+PODPIXELOVE umisteni (limit je bod displeje). Na vzhled HRAN se to
+nevztahuje - tam smysl ma a byl to presne hracuv pripad.
+
+### Co se vybira
+
+Rozbalovatko `sprsel` ma tri polohy, obe upravy stoji na tomtez:
+
+- **bez uprav** (vychozi) - nejblizsi predloze;
+- **Scale2x** (AdvMAME2x) zdvojnasobi mrizku a schody rozdeli na
+  polovicni, hrany ale nechava tvrde: porad je to pixel art, jen
+  jemnejsi. Pracuje na INDEXECH, ne na barvach, takze rovnost je presna
+  a nezavisla na palete radku a vysledek se obarvi beznou cestou;
+- **vyhlazeno** vezme TUTEZ dvojnasobnou mrizku a na displej ji dotahne
+  bilinearne. Bilinearka primo z mrizky 1:1 by pri S = 6 byla kase,
+  z dvojnasobne uz drzi tvar.
+
+Maskovane pozemni objekty (`fore`) se nezvetsuji: maska se cte
+v souradnicich 1:1 a preskalovat ji by znamenalo prepocitat celou
+mapovou masku.
+
+Zmereno na vyrezu 44x44 px kolem vrtulnika pri zvetseni 6 (264x264 bodu
+displeje, 69 696 bodu celkem):
+
+| dvojice | rozdilnych bodu |
+|---|---|
+| bez vs Scale2x | 4 513 (6,5 %) |
+| bez vs vyhlazeno | 10 571 (15,2 %) |
+| Scale2x vs vyhlazeno | 6 821 (9,8 %) |
+
+### Dve pasti
+
+**Prvni verze "vyhlazeno" byla BITOVE shodna s "bez"** - 0 rozdilnych
+bodu z 69 696. Sprite se totiz pred kresbou predzvetsuje nejblizsim
+sousedem a na displej se pak dotahuje v pomeru 1:1, takze bilinearka
+nema co michat. V tomhle rezimu se predzvetseni proto vynechava.
+
+**Vychozi hodnota chybela.** `state.spriteScale` byla `undefined`
+a podminka znela `!== "bez"`, takze se Scale2x zapinal i tam, kde ma byt
+vypnuty. Chytil to kontrakt naklonu vrtulniku: rozklad na telo a rotor
+prestal sedet (8 bodu misto 0). Volba ma ted vychozi hodnotu primo na
+`state`.
+
+### Predzvetseni je nejdrazsi vec v podpixelove ceste
+
+Cena jednoho snimku, uroven 3, zvetseni 5, 1000 tiku napred, prumer
+z 20 snimku, headless Chromium (tedy softwarovy rasterizer - na stroji
+s GPU budou cisla nizsi, pomer ale zustava):
+
+| poloha | bez | Scale2x | vyhlazeno |
+|---|---|---|---|
+| cela (`frac` = 0) | 2,20 ms | 2,31 ms | 2,89 ms |
+| podpixelova (`frac` = 0,37) | 40,39 ms | 46,60 ms | 6,18 ms |
+
+Na cele poloze se kresli 1:1 bez michani a je to zadarmo. Na
+podpixelove se dotahuje ZVETSENE platno bilinearne a to je drahe: cena
+roste s velikosti zdrojove bitmapy. "Vyhlazeno" je 6,5x levnejsi presne
+proto, ze predzvetseni vynechava a bilinearne se dotahuje male platno.
+
+Zmereno, co predzvetseni vlastne kupuje: kdyz se vynecha uplne a kresli
+se primo nejblizsim sousedem, klesne snimek z 50,00 na 8,46 ms a obraz
+se lisi v 57 804 z 2 048 000 bodu (2,82 %, max odchylka 176). Kupuje si
+tedy **vyhlazeny okraj jednotlivych spritovych pixelu** pri podpixelove
+poloze - nic vic.
+
+### Cache zvetsenych platen
+
+Zvetsena platna se ted pamatuji, ale az od DRUHEHO vyskytu tehoz platna.
+Maskovane sprity, ktere se hybou, maji kazdy snimek nove platno; kdyby
+se cachovala hned, zakladalo by se pro ne kazdy snimek nove zvetsene
+platno - do te pasti uz jsem jednou slapl a stalo to 425 ms na snimek.
+Pri prvnim vyskytu se proto porad kresli do sdileneho scratche.
+
+Zmereno: 50,00 -> 41,24 ms na podpixelove poloze a 35,95 -> 2,20 ms na
+cele, obraz BITOVE stejny (0 rozdilnych bodu z 2 048 000).
+
+### Kontrakt
+
+`tools/uitest.py` meri, ze vsechny tri rezimy davaji **tri ruzne
+obrazy** (kazda dvojice se lisi aspon v 1 % bodu vyrezu) a ze vychozi
+hodnota je `bez`. Je to hlavne negativni kontrola: obe pasti vyse byly
+"volba je potichu bez ucinku".
+
+Treti past byla v samotnem kontraktu: `S` se cetlo z `cv.width` JESTE
+PRED prvnim `frame()`, jenze zvetseni se na platno propise az v nem.
+`S` vyslo 1, vyrez byl kus pozadi a kontrakt hlasil 0 rozdilnych bodu -
+tedy "volba je bez ucinku" na kod, ktery byl v poradku.
