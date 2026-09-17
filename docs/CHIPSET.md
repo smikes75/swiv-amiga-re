@@ -1467,9 +1467,13 @@ z 5984, takze v mapovych pozicich je to uzke okno **35543..35191**
 pokus s pozici 32188 mířil UZ ZA konec retezu - proto tehdy original
 dojel na pozici 0 a snimek ukazoval zaviraci obrazovku.
 
-Snimek ale porizuje emulator a ten potrebuje Kickstart v `~/Documents`,
-kam proces nesmi (`Operation not permitted`). Prikazy jsou pripravene
-v komentari u `CHECKPOINTS` v `compare.py`.
+Snimek porizuje emulator a ten potrebuje Kickstart 1.3. `vacmp.py` ho ted
+hleda **v korenu projektu jako `kick13.rom`** (nebo kdekoli podle
+`SWIV_KICKSTART`), vedle diskety a stejne jako ona v `.gitignore`; puvodni
+misto v `~/Documents` zustava jako zaloha, ale proces v sandboxu tam nesmi
+(`Operation not permitted` - a `os.path.exists` tam vraci True, takze se
+musi zkouset cteni, ne existence). Prikazy jsou v komentari u `CHECKPOINTS`
+v `compare.py`.
 
 ### D. Scratch cesta zvetsenin - ZADNY ROZDIL, byla to chyba mereni
 

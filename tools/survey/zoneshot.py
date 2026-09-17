@@ -77,7 +77,14 @@ def main():
         page.on("pageerror", lambda e: errs.append(str(e)))
         page.goto(f"http://127.0.0.1:{port}/vacmp.html")
         page.wait_for_function("window.VA && window.VA.ready", timeout=60000)
-        rom = base64.b64encode(open(vacmp.ROM, "rb").read()).decode()
+        try:
+            rom = base64.b64encode(open(vacmp.ROM, "rb").read()).decode()
+        except OSError as e:
+            b.close(); srv.shutdown()
+            sys.exit(f"Kickstart 1.3 nejde precist ({e.strerror}): {vacmp.ROM}\n"
+                     f"Poloz ho do korene projektu jako kick13.rom (je v "
+                     f".gitignore, stejne jako disketa), nebo nastav "
+                     f"SWIV_KICKSTART=/cesta/k/rom.")
         adf = base64.b64encode(open(vacmp.ADF, "rb").read()).decode()
         err = page.evaluate("([r, a]) => VA.boot(r, a)", [rom, adf])
         if err:

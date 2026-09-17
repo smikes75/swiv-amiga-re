@@ -4,6 +4,11 @@
 *.DMS
 *.dms
 
+# Kickstart do repa taky nepatri - hleda se v korenu jako kick13.rom
+# (nebo pres SWIV_KICKSTART), viz tools/survey/vacmp.py.
+*.rom
+*.ROM
+
 # Rozbalene herni data - odvozena od diskety, tedy taky ne.
 build/
 work/

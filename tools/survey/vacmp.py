@@ -31,8 +31,39 @@ import threading
 from playwright.sync_api import sync_playwright
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-ROM = ("/Users/mik/Documents/FS-UAE/Kickstarts/"
-       "Kickstart v1.3 rev 34.5 (1987)(Commodore)(A500-A1000-A2000-CDTV)[!].rom")
+def _najdi_rom():
+    """Kickstart 1.3. Hleda se v korenu projektu vedle diskety, protoze do
+    ~/Documents proces v sandboxu nesmi (`Operation not permitted`) - a ROM
+    do repa nepatri stejne jako disketa (`.gitignore`)."""
+    env = os.environ.get("SWIV_KICKSTART")
+    if env:
+        return env
+    kandidati = ["kick13.rom", "KICK13.ROM", "kickstart13.rom",
+                 "Kickstart v1.3 rev 34.5 (1987)(Commodore)"
+                 "(A500-A1000-A2000-CDTV)[!].rom"]
+    def da_se_cist(cesta):
+        # POZOR: `os.path.exists` na ~/Documents vraci True i tam, kde pak
+        # cteni spadne na "Operation not permitted" - musi se zkusit otevrit.
+        try:
+            with open(cesta, "rb") as f:
+                return len(f.read(4)) == 4
+        except OSError:
+            return False
+
+    for jm in kandidati:
+        cesta = os.path.join(ROOT, jm)
+        if da_se_cist(cesta):
+            return cesta
+    # Puvodni misto ve sbirce FS-UAE - jen kdyz je opravdu citelne.
+    fsuae = os.path.expanduser(
+        "~/Documents/FS-UAE/Kickstarts/Kickstart v1.3 rev 34.5 (1987)"
+        "(Commodore)(A500-A1000-A2000-CDTV)[!].rom")
+    if da_se_cist(fsuae):
+        return fsuae
+    return os.path.join(ROOT, kandidati[0])          # sem ho polozit
+
+
+ROM = _najdi_rom()
 ADF = os.path.join(ROOT, "SWIVFIX.ADF")
 FPS = 50                                        # PAL
 
