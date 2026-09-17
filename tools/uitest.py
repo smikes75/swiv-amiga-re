@@ -7229,7 +7229,7 @@ def main():
                        tikySnimku: g.tick - tikSnimku,
                        plochaBez: plocha(bez, bezStinu),
                        plochaSc2: plocha(sc2, bezStinu2),
-                       velikostCache: SHADOW_CACHE.size };
+                       velikostCache: BLUR_CACHE.size };
             }""")
             expect(stiny["tikySnimku"] == 0,
                    "snimky variant nejsou z teze sceny: %d tiku rozdil" %

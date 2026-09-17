@@ -1,5 +1,16 @@
 # Zadani: vykon a kontrakty vylepseneho rezimu (pro Opuse)
 
+> **SPLNENO 2026-09-17, ale cisla v tomhle zadani NEPLATI.** Merici
+> protokol v sekci 2 bod 1 je chybny hned dvakrat: `g.frac = 0.37` je
+> 0,37 SEKUNDY, tedy 18 kroku simulace na snimek (a snimek bez
+> interpolace), a bez vynuceneho flushe Chromium rasterizaci vubec
+> nezapocita. Vsechny tabulky nize proto merily neco jineho, nez mely.
+> Co plati po premereni, je v `docs/CHIPSET.md`, sekce "Vykon
+> vylepseneho rezimu (Opus, 2026-09-17)": ukol A hotovy (248 -> 37 ms),
+> ukol B bezpredmetny (Scale2x neni drahy), ukol C hotovy az na snimek
+> FINAL (nejde poridit bez pristupu ke Kickstartu), ukol D zodpovezen
+> tim, ze rozdil nikdy neexistoval.
+
 Navazuje na revizi z 2026-09-17 (`docs/CHIPSET.md`, sekce "Revize
 renderu po Opusovi"). Tohle NENI prepis chovani z disassembly, takze
 metoda ze `ZADANI-GRASS.md` (sekce 2 az 7) tu neplati; plati pravidla

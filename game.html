@@ -11923,30 +11923,32 @@ function upscaledSprite(cv, S) {
    Mez je v BAJTECH, ne v poctu: platno stinu ma pri zvetseni 6 kolem
    350 kB a cache bez meze uz jednou sezrala 256 MB (viz "Revize renderu
    po Opusovi"). */
-const SHADOW_MAX_BYTES = 12 << 20;              // 12 MB
-const SHADOW_CACHE = new Map();                 // klic -> zaznam, poradi = stari
-let SHADOW_BYTES = 0, SHADOW_SEQ = 0;
-function shadowSourceId(cv) {
-  return cv.__stinId || (cv.__stinId = ++SHADOW_SEQ);
+const BLUR_MAX_BYTES = 16 << 20;                // 16 MB
+const BLUR_CACHE = new Map();                   // klic -> zaznam, poradi = stari
+let BLUR_BYTES = 0, BLUR_SEQ = 0;
+function blurSourceId(cv) {
+  return cv.__blurId || (cv.__blurId = ++BLUR_SEQ);
 }
-function blurredShadow(cv, z, S, blur, grow) {
-  const klic = shadowSourceId(cv) + ":" + z + ":" + S;
-  const drive = SHADOW_CACHE.get(klic);
+/* Platno rozostrene JEDNOU, v souradnicich displeje. `wDev`/`hDev` je
+   velikost, na kterou se ma zdroj roztahnout (nejblizsim sousedem, tedy
+   stejne jako pri kresleni); vraci se i rezerva `pad`, o kterou je platno
+   vetsi na kazde strane.
+
+   Klic je platno (to uz nese paletu radku i pripadny Scale2x), zaokrouhlena
+   velikost a rozostreni. Rozmery se zarovnavaji na CELE body displeje: se
+   zlomkovou sirkou zustaval na okraji castecne pokryty bod, ktery se po
+   bilinearnim posunu lisil az o 95 urovni. */
+function preBlurred(cv, wDev, hDev, blur) {
+  const wI = Math.max(1, Math.round(wDev)), hI = Math.max(1, Math.round(hDev));
+  const klic = blurSourceId(cv) + ":" + wI + "x" + hI + ":" + blur.toFixed(2);
+  const drive = BLUR_CACHE.get(klic);
   if (drive) {                                  // obnovit stari
-    SHADOW_CACHE.delete(klic); SHADOW_CACHE.set(klic, drive);
+    BLUR_CACHE.delete(klic); BLUR_CACHE.set(klic, drive);
     return drive;
   }
-  // Platno uz muze byt zvetsene Scale2x, kreslime ale v hernich pixelech.
-  const k = cv._k || 1;
-  const w = (cv.width / k) * S * grow, h = (cv.height / k) * S * grow;
-  // Gaussovo jadro je prakticky nulove za 3 sigma; bez teto rezervy by
-  // se mekky okraj stinu orezal.
+  // Gaussovo jadro je prakticky nulove za 3 sigma; bez teto rezervy by se
+  // mekky okraj orezal.
   const pad = Math.ceil(3 * blur) + 1;
-  // Obdelnik uvnitr cache se zarovnava na CELE body displeje: se zlomkovou
-  // sirkou zustal na okraji castecne pokryty bod, ktery se po bilinearnim
-  // posunu lisil az o 95 urovni (37 bodu na jednom radku). Zvetseni se tim
-  // meni o nejvys pul bodu z ~260, tedy 0,2 %.
-  const wI = Math.max(1, Math.round(w)), hI = Math.max(1, Math.round(h));
   const out = document.createElement("canvas");
   out.width = wI + 2 * pad;
   out.height = hI + 2 * pad;
@@ -11954,13 +11956,13 @@ function blurredShadow(cv, z, S, blur, grow) {
   c.imageSmoothingEnabled = false;              // stejne jako pri kresleni
   c.filter = "blur(" + blur.toFixed(2) + "px)";
   c.drawImage(cv, pad, pad, wI, hI);
-  const zaz = { cv: out, pad, w, h, bytes: out.width * out.height * 4 };
-  SHADOW_CACHE.set(klic, zaz);
-  SHADOW_BYTES += zaz.bytes;
-  while (SHADOW_BYTES > SHADOW_MAX_BYTES && SHADOW_CACHE.size > 1) {
-    const nej = SHADOW_CACHE.keys().next().value;
-    SHADOW_BYTES -= SHADOW_CACHE.get(nej).bytes;
-    SHADOW_CACHE.delete(nej);
+  const zaz = { cv: out, pad, bytes: out.width * out.height * 4 };
+  BLUR_CACHE.set(klic, zaz);
+  BLUR_BYTES += zaz.bytes;
+  while (BLUR_BYTES > BLUR_MAX_BYTES && BLUR_CACHE.size > 1) {
+    const nej = BLUR_CACHE.keys().next().value;
+    BLUR_BYTES -= BLUR_CACHE.get(nej).bytes;
+    BLUR_CACHE.delete(nej);
   }
   return zaz;
 }
@@ -11992,6 +11994,13 @@ function drawSpriteDevice(ctx, cv, dx, dy, S, blurDev, sx, sy, cx, cy) {
   // umisteni. V rezimu "vyhlazeno" se VYNECHAVA: jinak se na displej
   // dotahuje uz zvetsena mrizka v pomeru 1:1 a bilinearka nema co michat
   // - zmereno, vysledek byl BITOVE shodny s "bez" (0 rozdilnych bodu).
+  /* Hloubka ostrosti vypada jako tataz past jako mekke stiny: `ctx.filter`
+     se vola na kazdy rozostreny sprite pri kazdem kresleni a stoji to
+     12,8 ms na snimek (35,35 proti 22,55 ms) za CTYRI pozemni objekty.
+     Predrozostrit je ale ZKOUSENO A JE TO HORSI: tataz scena stoupla na
+     88,9 ms. Neni to rozostrenim - varianta, ktera do cache kreslila BEZ
+     filtru, dala 85,8 ms; drahe je samo kresleni z tech platen (4 volani,
+     68 500 bodu na snimek). Zustava tedy filtr pri kresleni. */
   const predzvetsit = !hladce && zbytek >= 2;
   const big = predzvetsit ? upscaledSprite(cv, Math.floor(zbytek)) : cv;
   const bw = predzvetsit ? cv.width * Math.floor(zbytek) : cv.width;
@@ -12293,7 +12302,7 @@ function renderSmoothField(ctx, g, S, composed, hudCv) {
       if (zCache) {
         // Hotovy rozostreny stin do souradnic displeje; zlomkovou polohu
         // dotahne bilinearka, coz je na rozostrenem obrazu neznatelne.
-        const zaz = blurredShadow(cv, z, S, blur, grow);
+        const zaz = preBlurred(cv, sw * S * grow, sh * S * grow, blur);
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.imageSmoothingEnabled = true;
         ctx.drawImage(zaz.cv, (dx - (w - sw) / 2) * S - zaz.pad,

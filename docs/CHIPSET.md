@@ -1470,3 +1470,55 @@ dojel na pozici 0 a snimek ukazoval zaviraci obrazovku.
 Snimek ale porizuje emulator a ten potrebuje Kickstart v `~/Documents`,
 kam proces nesmi (`Operation not permitted`). Prikazy jsou pripravene
 v komentari u `CHECKPOINTS` v `compare.py`.
+
+### D. Scratch cesta zvetsenin - ZADNY ROZDIL, byla to chyba mereni
+
+Zadani zadalo vysvetlit, proc omezena LRU srazila podpixelovou cestu ze
+42 na 6 ms. Odpoved: **nesrazila**. Cela tabulka v zadani vznikla
+protokolem s 18 kroky simulace na snimek a bez flushe, takze merila
+simulaci a alokace v JS, ne kresleni. Znovu zmereno spravne (RIVER,
+alfa 0,37, stiny vypnute, ms na snimek):
+
+| varianta | bez | Scale2x | vyhlazeno |
+|---|---:|---:|---:|
+| pred revizi (`cf2a273`) | 37,02 | 33,99 | 34,24 |
+| jen tabulka palety | 34,10 | 40,01 | 33,90 |
+| jen omezena LRU | 33,95 | 33,47 | 33,53 |
+| dnes | 35,98 | 34,19 | 33,85 |
+
+Vsechno je v sumu (+-4 ms). Co cache doopravdy delaji:
+
+| | alfa 0 | alfa 0,37 |
+|---|---:|---:|
+| cache zvetsenin (promoce od 3. vyskytu) | 23,38 ms | 34,04 ms |
+| bez cache (vzdy sdileny scratch) | 26,15 ms | 34,50 ms |
+| cache hned od 1. vyskytu | 23,94 ms | 34,42 ms |
+
+Tedy ~2,7 ms na cele poloze a nic na podpixelove. **Cache zvetsenin
+tedy zustava hlavne kvuli PAMETI** (drivejsi neomezena verze sezrala
+256 MB), ne kvuli rychlosti; prah tri vyskytu proti jednomu je take
+v sumu, drzi se kvuli prechodnym variantam pri fade.
+
+### Co se nepovedlo: predrozostrit i hloubku ostrosti
+
+`ctx.filter` se vola i na kazdy rozostreny sprite a stoji to 12,8 ms na
+snimek (35,35 proti 22,55 ms) za CTYRI pozemni objekty. Zkusil jsem na
+ne tutez cache jako na stiny - a je to **HORSI**: 88,9 ms proti 35,4 ms.
+Neni to rozostrenim (varianta, ktera do cache kreslila BEZ filtru, dala
+85,8 ms) ani mijenim cache (9 polozek, 1,24 MB, stabilne) ani lenivou
+rasterizaci (vynucene cteni po stavbe nepomohlo). Drahe je samo kresleni
+z tech ctyr platen: 4 volani a 68 500 bodu displeje na snimek. Proc, to
+nevim - zustava to otevrene a filtr se u spritu kresli dal.
+
+### Kde cas konci dnes (RIVER, zvetseni 5, alfa 0,37)
+
+| | softwarovy raster | SwiftShader "GPU" raster |
+|---|---:|---:|
+| vse zapnute | 35,4 ms | 439,6 ms |
+| mekke stiny vyp | 39,4 ms (sum) | 426,5 ms |
+| hloubka ostrosti vyp | 9,5 ms | 40,5 ms |
+| stiny bez predrozostreni | 265,2 ms | 3 124,5 ms |
+
+Po oprave stinu je nejdrazsi vec v obraze **hloubka ostrosti** (asi 26
+z 35 ms). Cisla jsou z emulovaneho rasteru, takze absolutni hodnoty pro
+hrace neplati - drzi jen pomery.
