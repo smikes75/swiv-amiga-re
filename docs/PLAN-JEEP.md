@@ -32,8 +32,11 @@ Sloty se zakladaji v `0x6f46` a jsou dva:
 
 Cela je citelna, konstanty jsou zmerene:
 
-- grafika `JEEPHELI#23` (`0x2e00` do `0x6d7c`), spawn pres spolecne `0x9046`
-- `+108 = 200` tiku ochrany, `+358 = 192` vychozi uhel veze, `+280 = 1`,
+- grafika `JEEPHELI#23` (`0x2e00` do `0x6d7c`) jen pri zrozeni; za jizdy
+  smerovy snimek #17 + smer (`0x914c` → `0xa27c`), spawn pres spolecne
+  `0x9046`
+- `+108 = 200` tiku ochrany, `+358 = 192` vychozi smer jizdy (vez ho na
+  stredu paky prebira), `+280 = 1`,
   `+282 = 15`
 - **rychlost `+356 = 640`** = 2,5 px/t (vrtulnik ma 768 = 3 px/t)
 - smer ze **stejne** tabulky `0x959e` pres `0x958a` jako vrtulnik

@@ -652,9 +652,13 @@ Sloty zaklada `0x6f46`: `fp@(11176)` = Heli (`+56 = 1`, ovladac `+66 = 1`),
 (`0x6f94`), takze jeep je vzdy slot 2. `+60` odkazuje na druhy slot, `+40`
 drzi jmeno do tabulky skore (`0x6fb0` pred nej lepi `Lazy `).
 
-- grafika `JEEPHELI#23` (`0x2e00` → `0x6d7c`), spawn spolecnym `0x9046`
-- `+108 = 200` ochrana, `+358 = 192` vychozi uhel veze, `+280 = 1`,
-  `+282 = 15`
+- grafika pri zrozeni `JEEPHELI#23` (`0x2e00` → `0x6d7c`), spawn
+  spolecnym `0x9046`; **za jizdy je snimek SMEROVY**: `0x914c` da
+  `0x2200` (#17) a `0xa27c` pricte smer z `+358`, tedy #17..#24 (#23 =
+  17 + 6 je smer 192, nahoru). Lod stejne: #25..#32 (`0x8ee8`), pri
+  zrozeni #31
+- `+108 = 200` ochrana, `+358 = 192` vychozi SMER JIZDY (vez si ho na
+  stredu paky prebira, `0x8a3e`), `+280 = 1`, `+282 = 15`
 - **rychlost `+356 = 640`** = 2,5 px/t; smer ze stejne tabulky `0x959e`
   pres `0x958a` jako vrtulnik, diagonala `181*640/65536`
 - clamp `0x94f0` (vrtulnik ma `0x954c`) v poradi: strop `fp@(3558)`,
@@ -675,6 +679,10 @@ drzi jmeno do tabulky skore (`0x6fb0` pred nej lepi `Lazy `).
 **Vez `0x89e8`.** Vazane dite (`+367 |= 13`), ktere `0x62d2` polohuje na
 rodice plus jeden krok vlastni rychlosti; `+332/+336` z tabulky `0x8a80`
 je tedy pevny ofset a miri OPACNE nez hlaven (zaklad vezicky vzadu).
+Index do tabulky bere `0x8a10` z `+358` RODICE (`a5@(308)`), tedy ze
+smeru jizdy - uhel veze rozhoduje jen o snimku (`0x8a52`) a smeru
+strely (`0x8aa0`). Se zamcenou vezi a jizdou jinam se zaklad presune
+za jeep, hlaven zustane.
 Grafika je `JEEPHELI#9` + smer (`0x8a52`), tedy #9..#16 v poradi vpravo,
 vpravo-dolu, dolu, ... `0x8a32` testuje **bit 7** vstupu, coz je podle
 `0x7272` SYROVY stav tlacitka palby (bit 5 je az kadenci hradlovany
@@ -702,10 +710,14 @@ zatimco na zemi drzi `0x6558` slot `+522` (udalost 2 = pozemni). Ve
 vzduchu tedy jeep prehopne tank, ale muze do nej narazit letec.
 
 `+356 = 896` (3,5 px/t), stoupani `+340 = 0x0001d000`, gravitace
-`+352 = −4096`; uhel veze `+358` se pres skok zachova (uklada se na
-zasobnik na `0x9228`, vraci na `0x9250`), zatimco rizeni smer meni.
-Dopad: `+340 = 0xa000`, `+352 = −4096`, `+504 |= 16`. Zvuk `0x4dc6`
-s `d0 = x`. Zmerena delka skoku je 58 tiku s vrcholem 27,3 px.
+`+352 = −4096`; smer jizdy `+358` se pres skok zachova (uklada se na
+zasobnik na `0x9228`, vraci na `0x9250`), zatimco rizeni smer letu meni.
+Dopad: `0x926e` testuje HORNI slovo `+328`, jeep tedy pristane, jakmile
+je cela cast vysky nula - ne az pri podteceni; pak `+340 = 0xa000`,
+`+352 = −4096`, `+504 |= 16`. Zvuk `0x4dc6` s `d0 = x`. Z klidu je skok
+57 tiku vcetne startovniho s vrcholem 25,375 px v 29. tiku (drivejsich
+"58 a 27,3" bylo mereno z chvejiciho se startu). Lod skace `+356 =
+1024` (4 px/t, `0x8fac`) a pri dopadu pousti brazdu `0x9358` (`0x903a`).
 
 **Vyska `+328` a chveni na zemi.** Integruje ji `0x62d2` (`0x62fe`..
 `0x6336`): rychlost se nejdriv zvysi o zrychleni, pak se pricte k poloze,
@@ -713,7 +725,10 @@ a kdyz `+328` podtece pod nulu, vynuluji se vsechny tri longy naraz
 (`0x632c`) — to je dopad. Na zemi `0x9154` losuje DOLNI slovo `+340`,
 tedy jen zlomkovou cast rychlosti (`(rnd & 0x7fff) + 0x4000`), a drzi
 `+352` na −4096. Jeep se proto viditelne chveje na pruzinach (0 az ~4 px,
-podle losu) a **spotrebovava jedno cteni PRNG za tik**. Vzhledem k tomu,
+podle losu) a **spotrebovava jedno cteni PRNG za tik - ale jen s
+vychylenou pakou**: `0x9154` i `0x8f02` lezi ve vetvi se vstupem
+(`0x9142`/`0x8ede` bez vstupu skoci na `0x91a0`/`0x8f22`), stojici
+vozidlo se nechveje a PRNG necte. Vzhledem k tomu,
 ze `z` posouva jen stin (`0x6364`), ne sprite, je to videt jako drobne
 poskakovani stinu — a ve skoku jako jeho odpojeni az o 27 px.
 
@@ -2120,3 +2135,39 @@ nesouvisi), zapis −1 do `+84` obou hracu pri smrti INST5
 (`fp@(11260)`, `fp@(11440)`), `bset #3,fp@(12353)` (jen `g.gameEnded`),
 `fp@(-1422)` s citacem `fp@(12534)` (deti INST5 v prepisu umiraji s
 rodicem primo).
+
+### Revize JEEP (Fable, 2026-09-17)
+
+Davky 1 az 6 (`880d539`..`f77075f`) porovnany s `work/prog.txt`
+(`0x89e8`, `0x8e26`..`0x9046`, `0x9090`..`0x9358`, `0x94c2`..`0x9548`,
+`0x62d2`, `0x3dce`..`0x3e0c`, `0x70f6`..`0x716e`), sondy prehrany.
+Opraveno sest odchylek:
+
+1. **Snimek tela je smerovy** (`0x914c`/`0x8ee8` → `0xa27c`): jeep
+   #17..#24, lod #25..#32 podle `+358`. Prepis kreslil porad #23/#25 -
+   Opus precetl jen zrozeni (`0x9096`), ne vetev za jizdy. Tymz snimkem
+   sahaji na masku i sondy (`vehicleFrame`).
+2. **Ofset veze ze smeru jizdy** (`0x8a10` cte `+358` rodice), ne z uhlu
+   veze. Se zamcenou vezi a jizdou jinam byl zaklad vezicky na spatne
+   strane; kontrakt: jizda vpravo → strela od (1, 0), jizda dolu s vezi
+   vpravo → od (8, −7).
+3. **Vychozi `+358` jeepu je 192** (`0x90f6`, `0x8e8e`), prepis mel 0.
+   Vez si na stredu paky bere uhel rodice, takze se v prvnim tiku bez
+   vstupu otocila doprava. Plati i pro respawn a prepnuti tvaru.
+4. **Chveni losuje jen za jizdy** (`0x9154`/`0x8f02` jsou ve vetvi se
+   vstupem). Prepis losoval kazdy tik - jiny tok PRNG ve dvou hracich.
+5. **Dopad pri cele nule** (`0x926e`/`0x900c` testuji horni slovo
+   `+328`), ne pri podteceni: skok z klidu 57 tiku, vrchol 25,375 px.
+   Lod skace 1024 (`0x8fac`), ne 896, a pri dopadu pousti brazdu
+   (`0x903a`). Citac `+282` se ubira NA ZACATKU tiku (`0x9136`) a sonda
+   `0x91b4` jede i pri nulove rychlosti; stopa jeepu vznika pri podteceni
+   `+280` (`bpl`), ne pri nule.
+6. **Respawn je vzdy jeep** (`0x7156` vybira jen podle `+56`) s nulovou
+   vyskou a citaci ze zrozeni; prepis nechaval tvar lodi, rozskakany
+   skok i stare citace.
+
+Neopraveno, vedeno v GAPS: `+106` (`0x92a0`..`0x92d2`) drzi 500 tiku
+ochranu se zaloznym childem `0x98f2` - patri k pickupum slotu 2.
+Blokovani BOBy (`0x3dd4` proti obrazovce) zustava terenni aproximaci,
+takze automaticky skok pres vozidlo se neprojevi.
+

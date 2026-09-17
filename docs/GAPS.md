@@ -1131,10 +1131,15 @@ original objekty, plus pripadna chyba terenu - a tu ma zarazka hlidat.
 
 ### Davka 4 (skok) — otevrene body
 
-- **Chveni na zemi cte PRNG kazdy tik** (`0x9154` -> `0x883c`). V
-  originale to znamena, ze dvouhracska hra ma JINY tok RNG nez sam
-  vrtulnik. Prepis to napodobuje, ale zadny kontrakt to nemeri -
-  compare.py bezi single-player, takze se to nikde neprojevi.
+- **Chveni na zemi cte PRNG kazdy tik S VYCHYLENOU PAKOU** (`0x9154` ->
+  `0x883c`; revize 2026-09-17: lezi ve vetvi se vstupem, stojici jeep
+  necte). V originale to znamena, ze dvouhracska hra ma JINY tok RNG
+  nez sam vrtulnik. Prepis to napodobuje, ale zadny kontrakt to nemeri
+  proti originalu - compare.py bezi single-player.
+- **`+106` = 500 tiku ochrany** (`0x92a0`..`0x92d2`: zaporne `+106`
+  zalozi child `0x98f2` a nastavi 500, kladne kazdy tik pripne `+108` na
+  100). Neni modelovano - kdo `+106` nastavuje, patri k pickupum slotu 2
+  (viz davka 6).
 - **Dvojity tap smeru** (`0x7246`) jako druha cesta ke skoku neni
   modelovany; prepis ma jen samostatnou klavesu `q` (coz odpovida
   ovladaci typu 2, `0x71ac`).
@@ -1150,8 +1155,10 @@ original objekty, plus pripadna chyba terenu - a tu ma zarazka hlidat.
   radek, takze vozidlo se promeni, i kdyz je na opacne strane obrazovky
   nez plosina. Je to tak v kodu; predpoklad je, ze v techto mistech mapa
   prechazi z pevniny na vodu po cele sirce. Neovereno na originale.
-- **Lod se po prepnuti nikdy nevraci na snimek `#31`.** `0x8ee8` nastavi
-  `#25` za jizdy a zadna vetev ho nevraci zpet; prepis to kopiruje.
+- ~~Lod se po prepnuti nikdy nevraci na snimek `#31`~~ - byl to omyl
+  cteni: `0x8ee8` jde pres `0xa27c`, ktery pricita smer, takze #25..#32
+  jsou smerove snimky a #31 = 25 + 6 je proste "nahoru" (revize
+  2026-09-17).
 - **Grafika plosin** je v prepisu staticka `SWAP.LIN#0/#1`. Jestli maji
   vlastni animaci pri predani, nebylo zkoumano.
 - **`0xa252`** (vyber snimku dekalu podle uhlu) je modelovan stejnym

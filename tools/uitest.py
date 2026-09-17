@@ -6301,6 +6301,25 @@ def main():
               r.nahoru = salva(["u"], 1);
               r.vpravoSalva = salva(["r"], 1);
               r.dolu2 = salva(["d"], 2);
+              // 0x8a10: ofset veze se bere z +358 RODICE (smer jizdy),
+              // uhel veze rozhoduje jen o snimku a smeru strely. Palba
+              // se drzi, aby vez stala, a jede se jinam.
+              const ofset = () => {
+                j.x = 160; j.y = 150; j.vx = 0; j.vy = 0; step(g);
+                j.weapon = 1; j.mode = 0; j.cool = 0; g.bullets.length = 0;
+                g.keys2.f = true; step(g);
+                return g.bullets.map(b => [Math.round(b.x - b.vx - j.x),
+                                           Math.round(b.y - b.vy - j.y)]);
+              };
+              otoc(["r"]);                     // jizda i vez doprava
+              g.keys2.f = true;                // od ted vez stoji
+              r.ofsetA = ofset();
+              g.keys2.d = true;
+              for (let i = 0; i < 3; i++) step(g);
+              g.keys2.d = false;               // jizda dolu, vez vpravo
+              r.ofsetB = ofset();
+              g.keys2.f = false;
+              r.uhlyB = [j.ang, j.turret];
               return r;
             }""")
             expect(vez["start"] == 192, "vychozi uhel veze: %r" % (vez["start"],))
@@ -6315,6 +6334,15 @@ def main():
                    "salva vpravo: %r" % (vez["vpravoSalva"],))
             expect(vez["dolu2"] == [[-2, -3, 0, 9, 10], [2, -3, 0, 9, 10]],
                    "salva dolu pri sile 2: %r" % (vez["dolu2"],))
+            # Tabulka 0x8a80: jizda vpravo -> vez (-7, 0), jizda dolu ->
+            # vez (0, -7); usti vpravo je k tomu (+8, 0). Pred revizi
+            # byly obe salvy stejne (ofset se bral z uhlu veze).
+            expect(vez["uhlyB"] == [64, 0],
+                   "smer jizdy / vez po jizde dolu s palbou: %r" %
+                   (vez["uhlyB"],))
+            expect(vez["ofsetA"] == [[1, 0]] and vez["ofsetB"] == [[8, -7]],
+                   "ofset veze nesleduje smer jizdy (0x8a10): %r / %r" %
+                   (vez["ofsetA"], vez["ofsetB"]))
 
             # ---- +522: kolizni trida bit 2 zabiji jeep ---------------
             trida = page.evaluate("""() => {
@@ -6386,11 +6414,22 @@ def main():
               g.keys2.f = true; step(g); g.keys2.f = false;
               const j = g.player2;
               j.inv = 0;
-              // Na zemi drzi 0x9154 jeep na malem chveni z PRNG.
-              const zem = [];
-              for (let i = 0; i < 40; i++) { step(g); j.inv = 0; zem.push(j.z); }
-              const r = { zemMax: +Math.max(...zem).toFixed(2),
-                          zemMin: +Math.min(...zem).toFixed(2) };
+              // 0x9154 lezi ve vetvi S VYCHYLENOU pakou (0x9142 skoci bez
+              // vstupu na 0x91a0): stojici jeep se nechveje a PRNG necte.
+              const stoji = [];
+              for (let i = 0; i < 40; i++) { step(g); j.inv = 0; stoji.push(j.z); }
+              // Za jizdy chveni z PRNG; tam a zpet, aby skoncil, kde zacal.
+              const jede = [];
+              g.keys2.r = true;
+              for (let i = 0; i < 10; i++) { step(g); j.inv = 0; jede.push(j.z); }
+              g.keys2.r = false; g.keys2.l = true;
+              for (let i = 0; i < 10; i++) { step(g); j.inv = 0; jede.push(j.z); }
+              g.keys2.l = false;
+              for (let i = 0; i < 40; i++) { step(g); j.inv = 0; }   // dojezd
+              const r = { stojiMax: Math.max(...stoji),
+                          zemMax: +Math.max(...jede).toFixed(2),
+                          zemMin: +Math.min(...jede).toFixed(2),
+                          predSkokem: j.z };
               // Skok: 0x9214 vz, 0x921c gravitace -> pevna delka i vrchol.
               g.keys2.j = true; step(g); g.keys2.j = false;
               r.vzletl = j.airborne;
@@ -6400,8 +6439,9 @@ def main():
                 step(g); j.inv = 0; vysky.push(j.z); n++;
               }
               r.tiku = n;
-              r.vrchol = +Math.max(...vysky).toFixed(2);
-              r.poDopadu = { airborne: j.airborne, z: j.z, jumpT: j.jumpT };
+              r.vrchol = +Math.max(...vysky).toFixed(3);
+              r.poDopadu = { airborne: j.airborne, z: j.z, jumpT: j.jumpT,
+                             zije: j.alive };
               // 0x91ee: ve vzduchu jeep pozemni objekt NEzabije.
               let zemni = null;
               for (let i = 0; i < 3000 && !zemni; i++) {
@@ -6421,16 +6461,23 @@ def main():
               return r;
             }""")
             expect(skok["vzletl"], "bit 6 vstupu jeep nevyskocil")
-            # +340 = 0x1d000, +352 = -4096 -> 58 tiku a vrchol ~27,3 px
-            expect(skok["tiku"] == 58,
-                   "delka skoku %r tiku misto 58" % (skok["tiku"],))
-            expect(27.0 < skok["vrchol"] < 27.6,
+            # +340 = 0x1d000, +352 = -4096. 0x926e: dopad, jakmile je HORNI
+            # slovo +328 nula (z < 1 px), ne az pri podteceni. Z klidu je
+            # to 57 tiku vcetne startovniho a vrchol 25,375 px v 29. tiku;
+            # drivejsich 58 a ~27,3 px bylo z chvejiciho se startu.
+            expect(skok["tiku"] == 56,
+                   "delka skoku %r tiku misto 56" % (skok["tiku"],))
+            expect(skok["vrchol"] == 25.375,
                    "vrchol skoku %r px" % (skok["vrchol"],))
             expect(skok["poDopadu"]["airborne"] is False and
                    skok["poDopadu"]["z"] == 0 and
-                   skok["poDopadu"]["jumpT"] == 15,
+                   skok["poDopadu"]["jumpT"] == 15 and
+                   skok["poDopadu"]["zije"],
                    "stav po dopadu: %r" % (skok["poDopadu"],))
-            # 0x9154: chveni na zemi je male a nikdy nejde pod nulu
+            expect(skok["stojiMax"] == 0 and skok["predSkokem"] == 0,
+                   "stojici jeep se chveje (0x9154 je jen ve vetvi s "
+                   "pakou): %r" % (skok,))
+            # 0x9154: chveni za jizdy je male a nikdy nejde pod nulu
             expect(skok["zemMin"] == 0 and 0 < skok["zemMax"] < 6,
                    "chveni na zemi %r..%r px" %
                    (skok["zemMin"], skok["zemMax"]))
@@ -6507,7 +6554,18 @@ def main():
               zmer();
               step(g);
               const jeepStoji = j.vx;
-              return { jeepRychlost, lodRychlost, lodDojizdi, jeepStoji };
+              // 0x8fac: lod ve skoku 1024 = 4 px/t (jeep 0x920e: 896).
+              j.form = "boat"; j.x = 160; j.y = 150; j.vx = 0; j.vy = 0;
+              j.ang = 192; j.z = 0; j.vz = 0; j.az = 0;
+              step(g);
+              g.keys2.j = true; step(g); g.keys2.j = false;
+              const x0 = j.x;
+              g.keys2.r = true;
+              for (let i = 0; i < 4; i++) step(g);
+              g.keys2.r = false;
+              const lodVzduch = +((j.x - x0) / 4).toFixed(3);
+              return { jeepRychlost, lodRychlost, lodDojizdi, jeepStoji,
+                       lodVzduch };
             }""")
             # +356: jeep 640 = 2,5 px/t, lod 768 = 3 px/t
             expect(lod["jeepRychlost"] == 2.5 and lod["lodRychlost"] == 3.0,
@@ -6515,6 +6573,9 @@ def main():
                    (lod["jeepRychlost"], lod["lodRychlost"]))
             expect(0 < lod["lodDojizdi"] < 3.0 and lod["jeepStoji"] == 0,
                    "0x8f22: lod ma dojizdet, jeep stat: %r" % (lod,))
+            expect(lod["lodVzduch"] == 4.0,
+                   "lod ve skoku neni 1024/256 px/t (0x8fac): %r" %
+                   (lod["lodVzduch"],))
 
             # ---- 0xa36a: skore, zivoty a zavreni slotu 2 -------------
             skore = page.evaluate("""() => {

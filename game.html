@@ -580,14 +580,22 @@ const MONITOR_MODES = {
    `state.monitorMode = ...` a stranka padala na "Cannot access 'state'
    before initialization"). */
 let MONITOR_MODE = "puvodni", MONITOR_REZIM = null;
+/* Vsech 4096 dvanactibitovych slov predpocitanych pro zvolenou volbu.
+   `rgb4()` se vola na KAZDY pixel terenu (81 920x za snimek) a s
+   `Math.pow` v `monitorRgb` stal snimek v rezimu "crt" trojnasobek:
+   zmereno 4,90 -> 14,78 ms (original) a 6,43 -> 20,71 ms (vylepseno).
+   Trojice jsou SDILENE - volajici je cte, nikdy nemeni. */
+const RGB4_LUT = new Array(4096);
 function setMonitorMode(rezim) {
   const m = MONITOR_MODES[rezim] || null;
   MONITOR_MODE = m ? rezim : "puvodni";
   for (let i = 0; i < 16; i++) RGB4[i] = i * 17;   // zaklad je hardware
   MONITOR_REZIM = m;
+  for (let w = 0; w < 4096; w++)
+    RGB4_LUT[w] = monitorRgb(RGB4[(w >> 8) & 15], RGB4[(w >> 4) & 15],
+                             RGB4[w & 15]);
   try { localStorage.setItem("swivMonitor", MONITOR_MODE); } catch (e) {}
 }
-setMonitorMode("puvodni");
 
 /* Trojice RGB (0..255) upravena podle volby monitoru. Pri `puvodni`
    vraci vstup beze zmeny, takze kontrakty plati dal. */
@@ -602,9 +610,9 @@ function monitorRgb(r, g, b) {
   return [uprav(r, m.bily[0]), uprav(g, m.bily[1]), uprav(b, m.bily[2])];
 }
 function rgb4(word) {
-  return monitorRgb(RGB4[(word >> 8) & 15], RGB4[(word >> 4) & 15],
-                    RGB4[word & 15]);
+  return RGB4_LUT[word & 0xfff];
 }
+setMonitorMode("puvodni");
 
 function capturedRgb12(word) {
   return rgb4(word);
@@ -2370,22 +2378,23 @@ function composeTownBobs(g, top) {
     // JEEPHELI#9..16 patri jeepu/lodi 0x89e8, nikoli vrtulniku 0x9410.
   }
 
-  // 0x9096: jeep je jediny snimek JEEPHELI#23, bez animatoru. `0x9046`
-  // nechava `+328` nulove a jeep si z nej nic nenastavi (vrtulnik ma
-  // 0x941a z = 32), takze jeep jezdi po zemi.
+  // 0x914c/0x8ee8 -> 0xa27c: telo ma osm smerovych snimku (viz
+  // `vehicleFrame`), bez animatoru. `0x9046` nechava `+328` nulove a
+  // jeep si z nej nic nenastavi (vrtulnik ma 0x941a z = 32), takze
+  // jeep jezdi po zemi.
   const jp = g.player2;
   if (jp && jp.alive) {
-    const telo = jp.form === "boat"
-      ? (jp.boatFrame ?? BOAT_BASE_FRAME) : JEEP_FRAME;
-    bob("player2", "JEEPHELI.LIN", telo, jp.x, jp.y, jp.z | 0, {
+    bob("player2", "JEEPHELI.LIN", vehicleFrame(jp), jp.x, jp.y, jp.z | 0, {
       ordinal: jp.bobOrdinal,
       primaryOp: (jp.inv & 8) ? BOB_FILL_INDEX9 : null,
     });
     // 0x89e8: vazane dite se stejnou polohou plus pevny ofset; bit 0
     // v +367 mu bere vlastni stin, bit 2 mu dava blikani rodice.
-    const dir = fireDirection(jp.turret);
-    const [tx, ty] = JEEP_TURRET_OFFSET[dir];
-    bob("jeep-turret", "JEEPHELI.LIN", JEEP_TURRET_FRAME + dir,
+    // 0x8a10: ofset ze smeru jizdy (+358 rodice), snimek z uhlu veze
+    // (0x8a52 z vlastniho +358).
+    const [tx, ty] = JEEP_TURRET_OFFSET[fireDirection(jp.ang)];
+    bob("jeep-turret", "JEEPHELI.LIN",
+        JEEP_TURRET_FRAME + fireDirection(jp.turret),
         jp.x + tx, jp.y + ty, jp.z | 0, {
           ordinal: jp.turretOrdinal,
           castShadow: false,
@@ -8842,7 +8851,12 @@ function a2c6Class(o) {
 function classKillsJeep(o) { return (a2c6Class(o) & 4) !== 0; }
 function classIsAirborne(o) { return (a2c6Class(o) & 2) !== 0; }
 
-const JEEP_FRAME = 23;          // 0x9096: gfx 0x2e00 = JEEPHELI#23
+/* Snimek tela je SMEROVY: `0x914c` da do d0 slovo `0x2200` (#17) a
+   `0xa27c` k nemu pricte `((+358 + 16) & 224) << 4`, tedy smer * 512 =
+   smer snimku. Jeep ma proto snimky #17..#24 podle smeru jizdy; `0x9096`
+   nastavuje pri zrozeni #23 = 17 + 6, coz je smer 192 (nahoru) z
+   `0x90f6`. Drive se kreslil porad #23 - Opus precetl jen zrozeni. */
+const JEEP_FRAME = 17;          // 0x914c: gfx 0x2200 = JEEPHELI#17 + smer
 const JEEP_SPEED = 640;         // 0x9118: +356 (vrtulnik ma 768)
 /* 0x8a80: ofset veze vuci jeepu podle smeru. Miri OPACNE nez hlaven -
    zaklad vezicky sedi vzadu a hlaven pres nej prechazi dopredu, coz sedi
@@ -8864,8 +8878,14 @@ const JEEP_JUMP_HOLD = 15;        // 0x91e8/0x91c4: +282
 /* 0x8e26: druha podoba vozidla - lod. SWAP plosiny mezi nimi prepinaji
    (`0x94c2` z jeepu na lod pri plosine B, `0x94d0` zpatky pri A), takze
    to nejsou dva objekty, ale dva tvary teze hracske ulohy. */
-const BOAT_BASE_FRAME = 31;       // 0x8e2c: gfx 0x3e00 = JEEPHELI#31
-const BOAT_MOVE_FRAME = 25;       // 0x8ee8: gfx 0x3200 = JEEPHELI#25
+const BOAT_FRAME = 25;            // 0x8ee8: gfx 0x3200 = JEEPHELI#25 + smer
+                                  // (0x8e2c: pri zrozeni #31 = 25 + 6)
+const BOAT_JUMP_SPEED = 1024;     // 0x8fac: lod ve skoku 4 px/t (jeep 896)
+/* Aktualni snimek tela; tymz snimkem sahaji na masku i sondy 0x3dd4. */
+function vehicleFrame(p) {
+  return (p.form === "boat" ? BOAT_FRAME : JEEP_FRAME) +
+         fireDirection(p.ang);
+}
 const BOAT_SPEED = 768;           // 0x8eb4: +356 (3 px/t, rychlejsi nez jeep)
 const BOAT_GRAVITY = -3072 / 65536;  // 0x8f18: lod se houpe vic nez jeep
 const SWAP_REACH = 64;            // 0x94dc: `y - 64 <= plosina`
@@ -8896,14 +8916,14 @@ function clampJeep(g, p) {
    `heliBobBlocked`. Davka 1 zapojuje jen terenni polovinu; blokovani
    BOBy nepratel je otevrene (viz docs/GAPS.md). */
 function jeepBlockedAhead(g, p, vx, vy) {
-  return heliTerrainBlocked(g, p.x + 2 * vx, p.y + 2 * vy, JEEP_FRAME);
+  return heliTerrainBlocked(g, p.x + 2 * vx, p.y + 2 * vy, vehicleFrame(p));
 }
 
 /* 0x9314: rozmacknuti. `0x94f0` po clampu sahne na `0x3dd4` i `0x3dce`;
    `0x3dce` je tataz sonda proti terennimu pasu, takze konjunkce je
    dominovana terenem a modelujeme ji jim. */
 function jeepCrushed(g, p) {
-  return heliTerrainBlocked(g, p.x, p.y, JEEP_FRAME);
+  return heliTerrainBlocked(g, p.x, p.y, vehicleFrame(p));
 }
 
 /* 0x7156 pro slot 2. Pripojeni stoji kredit stejne jako continue
@@ -8918,8 +8938,11 @@ function tryJoinJeep(g) {
   g.jeepNextLife = 10000;                      // +84
   const pos = findPlayerRespawn(g, null);      // 0x9046, spolecny s heli
   const p = {
-    x: pos.x, y: pos.y, ang: 0, alive: true,
-    turret: 192,                               // 0x90f6 / 0x89e8
+    // 0x90f6: +358 JEEPU = 192 (nahoru). Vez si pri stredu paky bere
+    // uhel rodice (0x8a3e), takze s `ang: 0` se otocila doprava hned
+    // v prvnim tiku bez vstupu.
+    x: pos.x, y: pos.y, ang: 192, alive: true,
+    turret: 192,                               // 0x8a3e z rodice
     z: 0, vz: 0, az: 0,                        // 0x9046 nuluje +328
     airborne: false, jumpT: 15,                // 0x90c4: +282 = 15
     form: "jeep", padT: 1, vx: 0, vy: 0,       // +280 = 1 (0x90be)
@@ -8960,7 +8983,7 @@ function swapVehicleForm(g, p) {
     p.x = vlastni.x; p.y = vlastni.y - scrollTop(g);
     g.padHandoff = true;                       // 0x90ba / 0x8e52
   }
-  p.ang = 0; p.turret = 192;                   // 0x8e8e / 0x90f6
+  p.ang = 192; p.turret = 192;                 // 0x8e8e / 0x90f6
   p.z = 0; p.vz = 0; p.az = 0;
   p.airborne = false; p.jumpT = JEEP_JUMP_HOLD;
   p.padT = 1;                                  // +280
@@ -8980,14 +9003,19 @@ function stepJeep(g) {
   const ja = JOY_ANGLE[nib];                   // 0x958a, tabulka 0x959e
 
   // 0x912e: bit 6 vstupu (druhe tlacitko / dvojity tap 0x7246) skoci
-  // hned. 0x9136: jinak se kazdy tik ubira z `+282` a pri podteceni
-  // skoci taky - citac ale `0x91c4` drzi na 15, dokud jeep NENI
-  // zablokovany. Tlacenim do prekazky tedy jeep po patnacti ticich
-  // sam vyskoci a prehoupne se pres ni.
-  if (!p.airborne && (g.keys2.j || (p.jumpT | 0) < 0)) startJeepJump(g, p);
+  // hned. 0x9136: jinak se KAZDY tik na zemi nejdriv ubere z `+282`
+  // a pri podteceni skoci taky - citac ale dole drzi `0x91c4` na 15,
+  // dokud jeep NENI zablokovany (a `0x91a8` na 5 bez vstupu).
+  // Tlacenim do prekazky tedy jeep po patnacti ticich sam vyskoci.
+  // Poradi je zavazne: uber, test, teprve pak vstup - drive se ubiralo
+  // az dole a skok prisel o tik pozdeji.
+  if (!p.airborne) {
+    p.jumpT = (p.jumpT | 0) - 1;               // 0x9136 / 0x8ed2
+    if (g.keys2.j || p.jumpT < 0) startJeepJump(g, p);
+  }
 
   const boat = p.form === "boat";
-  const speed = p.airborne ? JEEP_JUMP_SPEED
+  const speed = p.airborne ? (boat ? BOAT_JUMP_SPEED : JEEP_JUMP_SPEED)
                            : (boat ? BOAT_SPEED : JEEP_SPEED);
   let blocked = false;
   if (ja >= 0) {
@@ -8997,7 +9025,7 @@ function stepJeep(g) {
     if (!p.airborne) p.ang = ja;
     [p.vx, p.vy] = playerMoveVelocity(ja, speed);   // 0x65f2
     // 0x8ef0: lod za jizdy kazdy ctvrty tik pousti brazdu 0x9358.
-    if (boat) p.boatFrame = BOAT_MOVE_FRAME;   // 0x8ee8 -> 0xa27c
+    // (snimek tela 0x8ee8/0x914c: viz `vehicleFrame`)
     if (boat && !p.airborne && --p.padT <= 0) {
       p.padT += 3;
       spawnFishSplash(g, { x: p.x, y: p.y + scrollTop(g) });
@@ -9012,30 +9040,32 @@ function stepJeep(g) {
       spawnFishSplash(g, { x: p.x, y: p.y + scrollTop(g) });
   } else {
     p.vx = 0; p.vy = 0;                        // 0x91a0
+    if (!p.airborne) p.jumpT = 5;              // 0x91a8 / 0x8f46
   }
-  if (p.vx || p.vy) {
-    blocked = jeepBlockedAhead(g, p, p.vx, p.vy);
-    if (blocked) { p.vx = 0; p.vy = 0; }       // 0x9254 -> 0x9260
-    else { p.x += p.vx; p.y += p.vy; }
-  }
-  if (!p.airborne) {
-    p.jumpT = blocked ? (p.jumpT | 0) - 1
-                      : (ja >= 0 ? JEEP_JUMP_HOLD : 5);   // 0x91c4 / 0x91a0
-  }
+  // 0x91b4 / 0x9254: sonda jede VZDY, i pri nulove rychlosti (pak
+  // sahne na aktualni polohu). Ve vzduchu se v originale musi shodnout
+  // obe sondy (0x9328 i 0x9322); obe modelujeme terenem.
+  blocked = jeepBlockedAhead(g, p, p.vx, p.vy);
+  if (blocked) { p.vx = 0; p.vy = 0; }         // 0x91ba / 0x9260
+  else { p.x += p.vx; p.y += p.vy; }
+  if (!p.airborne && !blocked) p.jumpT = JEEP_JUMP_HOLD;   // 0x91c4
   // 0x9172 -> 0xad78: uvnitr pasma znacky (0xad30) nechava jeep stopu
   // 0xad98 - tentyz dekal JEEPHELI#40..#43 podle uhlu jako vez tanku,
-  // jen mnohem hustsi (`+280` po jednom misto po dvaceti).
-  if (!boat && !p.airborne) {
+  // jen mnohem hustsi (`+280` po jednom misto po dvaceti). Lezi ve
+  // vetvi S VSTUPEM (0x9144..0x919e), stojici jeep stopu nedela;
+  // `bpl` = dekal az pri podteceni pod nulu.
+  if (!boat && !p.airborne && ja >= 0) {
     const zone = g.trackZone, wy = p.y + scrollTop(g);
-    if (zone && wy <= zone.lo && wy >= zone.hi && --p.padT <= 0) {
+    if (zone && wy <= zone.lo && wy >= zone.hi && --p.padT < 0) {
       p.padT += 3;                             // 0x9192: addq #3
       const sector = ((((p.ang | 0) + 16) & 0xE0) >> 5) & 3;
       addDecal(g, "JEEPHELI.LIN", 40 + sector, p.x, wy);
     }
   }
-  stepJeepAltitude(g, p);
+  stepJeepAltitude(g, p, ja >= 0);
   if (p.inv > 0) p.inv = Math.max(0, p.inv - 1);   // 0x92a0
-  if (!p.airborne && jeepCrushed(g, p)) { killJeep(g); return; }
+  // 0x953a: rozmacknuti testuje clamp v obou smyckach, i ve vzduchu.
+  if (jeepCrushed(g, p)) { killJeep(g); return; }
   stepJeepTurret(g, p, nib);
   p.weaponX = p.x; p.weaponY = p.y;
 }
@@ -9060,10 +9090,17 @@ function startJeepJump(g, p) {
    Na zemi `0x9154` losuje DOLNI slovo `+340`, tedy jen zlomkovou cast
    rychlosti (`(rnd & 0x7fff) + 0x4000`), a drzi `+352` na −4096. Jeep se
    proto viditelne chveje na pruzinach a spotrebovava jedno cteni PRNG
-   za tik. Nas prepis ma jeepa jen ve dvou hracich, takze se to na
-   single-player kontraktech neprojevi. */
-function stepJeepAltitude(g, p) {
-  if (!p.airborne && (p.z || 0) === 0) {       // 0x9154 / 0x8f02
+   za tik - ale JEN ZA JIZDY: `0x9154` i `0x8f02` lezi ve vetvi
+   s vychylenou pakou (`0x9142`/`0x8ede` skoci bez vstupu rovnou na
+   `0x91a0`/`0x8f22`). Stojici jeep se nechveje a PRNG necte. Nas prepis
+   ma jeepa jen ve dvou hracich, takze se to na single-player
+   kontraktech neprojevi.
+
+   Dopad ve skoku: `0x926e`/`0x900c` testuje HORNI slovo `+328`, tedy
+   pristane, jakmile je cela cast vysky nula - ne az pri podteceni.
+   Lod pri dopadu pousti brazdu (`0x903a`). */
+function stepJeepAltitude(g, p, jede) {
+  if (!p.airborne && jede && (p.z || 0) === 0) {   // 0x9154 / 0x8f02
     // Lod ma vetsi zlomek (0x8000 misto 0x4000) i mensi gravitaci
     // (-3072 proti -4096), takze se houpe vyrazneji nez jeep.
     const boat = p.form === "boat";
@@ -9073,13 +9110,13 @@ function stepJeepAltitude(g, p) {
   }
   p.vz = (p.vz || 0) + (p.az || 0);            // 0x630c: rychlost += zrychleni
   p.z = (p.z || 0) + p.vz;                     // 0x6312: poloha += rychlost
-  if (p.z < 0) {                               // 0x632a: podteceni = dopad
-    p.z = 0; p.vz = 0; p.az = 0;
-    if (p.airborne) {                          // 0x9274..0x9284
-      p.airborne = false;
-      p.vz = JEEP_LAND_VZ; p.az = JEEP_GRAVITY;
-      p.jumpT = JEEP_JUMP_HOLD;
-    }
+  if (p.z < 0) { p.z = 0; p.vz = 0; p.az = 0; }   // 0x632a: podteceni
+  if (p.airborne && (p.z | 0) === 0) {         // 0x926e / 0x900c: dopad
+    p.airborne = false;                        // 0x9274..0x9284
+    p.z = 0;
+    p.vz = JEEP_LAND_VZ; p.az = JEEP_GRAVITY;
+    if (p.form === "boat")                     // 0x903a
+      spawnFishSplash(g, { x: p.x, y: p.y + scrollTop(g) });
   }
 }
 
@@ -9104,7 +9141,9 @@ function stepJeepTurret(g, p, nib) {
   if (fireHeld && p.cool <= 0) {
     p.cool = cad;
     p.volley = (p.volley || 0) + 1;
-    const [tx, ty] = JEEP_TURRET_OFFSET[fireDirection(p.turret)];
+    // 0x8a10: ofset se bere z +358 RODICE (a5@(308)), tedy ze smeru
+    // jizdy jeepu; uhel veze rozhoduje jen o snimku a smeru strely.
+    const [tx, ty] = JEEP_TURRET_OFFSET[fireDirection(p.ang)];
     // 0x8aa0 cte polohu DITETE, tedy jeep + ofset veze.
     firePlayerWeapon(g, p, p.turret, p.x + tx, p.y + ty);
   }
@@ -9127,11 +9166,19 @@ function killJeep(g) {
   g.players = 1;
   g.jeepLives = 1;                             // HUD zase ukaze JEEP 0
 }
+/* Slot 2 se po smrti rodi VZDY jako jeep: `0x7156` vybira jen podle
+   `+56` mezi vrtulnikem `0x9410` a jeepem `0x9090`, lod `0x8e26` vznika
+   jen prepnutim na plosine. Novy task zacina s nulovym `+328` (0x9046),
+   `+280` = 1, `+282` = 15 a `+358` = 192. */
 function respawnJeep(g) {
   const p = g.player2;
   if (!p) return;
+  p.form = "jeep";
   const pos = findPlayerRespawn(g, p);
-  p.x = pos.x; p.y = pos.y; p.ang = 0; p.turret = 192;
+  p.x = pos.x; p.y = pos.y; p.ang = 192; p.turret = 192;   // 0x90f6
+  p.vx = 0; p.vy = 0;
+  p.z = 0; p.vz = 0; p.az = 0; p.airborne = false;      // 0x9046
+  p.jumpT = JEEP_JUMP_HOLD; p.padT = 1;                 // 0x90c4 / 0x90be
   p.weaponX = p.x; p.weaponY = p.y;
   p.alive = true; p.inv = 200; p.cool = 0; p.respawnT = 0;
   applyWeaponTable(p);
@@ -11807,29 +11854,51 @@ function updateVehicleTracks(g) {
    si kazde takove platno drzelo jeste svou zvetseninu, sypaly by se do
    pameti dve platna na maskovany sprite a snimek - pri dlouhem behu to
    vyslo na 425 ms na snimek misto jedne milisekundy. */
-/* Zvetsena platna se pamatuji - ale az od DRUHEHO vyskytu tehoz platna.
-   Maskovane sprity, ktere se hybou, maji kazdy snimek nove platno; kdyby
-   se cachovala hned, zakladalo by se pro ne kazdy snimek nove zvetsene
-   platno a to uz jednou stalo 425 ms na snimek. Pri prvnim vyskytu se
-   proto porad kresli do sdileneho scratche, teprve opakovany vyskyt
-   dostane vlastni. Zmereno: 50,00 -> 41,24 ms na snimek, obraz BITOVE
-   stejny (0 rozdilnych bodu z 2 048 000). */
-const UPSCALE_CACHE = new WeakMap();
+/* Zvetsena platna se pamatuji, ale OMEZENE a az od TRETIHO vyskytu
+   tehoz platna. Duvody, oba zmerene:
+
+   - Maskovane sprity, ktere se hybou, maji kazdy snimek nove platno;
+     kdyby se cachovala hned, zakladalo by se pro ne kazdy snimek nove
+     zvetsene platno a to uz jednou stalo 425 ms na snimek.
+   - Prvni verze (od druheho vyskytu, bez meze) sezrala 256 MB: pres
+     fade na startu urovne pri zvetseni 6 vzniklo 2 171 zvetsenych
+     platen, protoze klic maleho platna nese celou paletu radku a kazdy
+     krok fadu je nova varianta. Kazda z nich byla pouzita dvakrat
+     (dva snimky na tik) a hned zapomenuta.
+
+   Prah tri vyskytu prechodne varianty vynecha a mez `UPSCALE_MAX`
+   drzi pamet pod ~15 MB (64 platen po ~230 kB pri zvetseni 5).
+   Vyhozene platno zacina pocitat znovu, takze se stridajici sada
+   nad mez nemuze roztocit alokaci na kazdy snimek. */
+const UPSCALE_CACHE = new WeakMap();      // cv -> { S, n }
+const UPSCALE_LRU = new Map();            // cv -> zvetsenina, poradi = stari
+const UPSCALE_MAX = 64;
 function upscaledSprite(cv, S) {
   if (S === 1) return cv;
   const w = cv.width * S, h = cv.height * S;
-  const zaz = UPSCALE_CACHE.get(cv);
-  if (zaz && zaz.S === S) {
-    if (zaz.big) return zaz.big;
+  let zaz = UPSCALE_CACHE.get(cv);
+  if (!zaz || zaz.S !== S) { zaz = { S: S, n: 0 }; UPSCALE_CACHE.set(cv, zaz); }
+  zaz.n++;
+  const hotove = UPSCALE_LRU.get(cv);
+  if (hotove) {
+    UPSCALE_LRU.delete(cv); UPSCALE_LRU.set(cv, hotove);   // obnovit stari
+    return hotove;
+  }
+  if (zaz.n >= 3) {
     const vlastni = document.createElement("canvas");
     vlastni.width = w; vlastni.height = h;
     const cx = vlastni.getContext("2d");
     cx.imageSmoothingEnabled = false;
     cx.drawImage(cv, 0, 0, w, h);
-    zaz.big = vlastni;
+    UPSCALE_LRU.set(cv, vlastni);
+    if (UPSCALE_LRU.size > UPSCALE_MAX) {
+      const nejstarsi = UPSCALE_LRU.keys().next().value;
+      UPSCALE_LRU.delete(nejstarsi);
+      const z = UPSCALE_CACHE.get(nejstarsi);
+      if (z) z.n = 0;
+    }
     return vlastni;
   }
-  UPSCALE_CACHE.set(cv, { S: S, big: null });
   let big = state.spriteScratch;
   if (!big) big = state.spriteScratch = document.createElement("canvas");
   if (big.width < w || big.height < h) {

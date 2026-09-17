@@ -1253,3 +1253,73 @@ Treti past byla v samotnem kontraktu: `S` se cetlo z `cv.width` JESTE
 PRED prvnim `frame()`, jenze zvetseni se na platno propise az v nem.
 `S` vyslo 1, vyrez byl kus pozadi a kontrakt hlasil 0 rozdilnych bodu -
 tedy "volba je bez ucinku" na kod, ktery byl v poradku.
+
+## Revize renderu po Opusovi (Fable, 2026-09-17)
+
+Prohlednuto 92 commitu od posledni revize (`14a69fb`); do hloubky
+teren/vrstvy, paleta, ovladace, hrany spritu a JEEP (ten je v
+`docs/BEHAVIORS.md`, "Revize JEEP"). Tri veci se musely opravit hned,
+vsechny tri zmerene.
+
+### Cache zvetsenin sezrala 256 MB
+
+Vcerejsi cache (`UPSCALE_CACHE`, promoce od druheho vyskytu, bez meze)
+zmerena pres fade na startu urovne pri zvetseni 6, 900 tiku, dva snimky
+na tik: **2 171 zvetsenych platen, 256,1 MB** (malych platen 4 348).
+Klic maleho platna nese celou paletu radku, takze kazdy krok fadu je
+nova varianta, kazda se pouzije dvakrat a uz nikdy.
+
+Oprava: promoce az od TRETIHO vyskytu (prechodne varianty ji nedosahnou)
+a mez 64 platen v LRU (`UPSCALE_LRU`); vyhozene platno pocita znovu od
+nuly, takze stridajici sada nad mez nemuze roztocit alokaci na kazdy
+snimek. Zmereno tymz skriptem po oprave: **64 platen, maximum 10,0 MB**
+(na konci 8,3 MB), 256 MB -> 10 MB.
+
+### Paleta "dobovy monitor" stala trojnasobek snimku
+
+`rgb4()` se vola na kazdy pixel terenu (81 920x za snimek) a s
+`Math.pow` uvnitr `monitorRgb` to bylo: original 4,90 -> 14,78 ms,
+vylepseno 6,43 -> 20,71 ms. Ted je 4 096 slov predpocitanych v
+`RGB4_LUT` pri volbe rezimu; trojice jsou sdilene (volajici je nemeni -
+proverena vsech 10 mist). Po oprave: original 4,75 / 5,02 ms, vylepseno
+5,50 / 5,43 ms (puvodni / crt).
+
+### Podpixelova cesta "bez" spadla ze 42 na 6 ms - a neni jasne proc
+
+Tabulka A/B (frac 0,37, S = 5, uroven 3, 1 000 tiku napred, prumer
+z 20 snimku, headless):
+
+| varianta | bez | Scale2x | vyhlazeno |
+|---|---|---|---|
+| pred revizi `cf2a273` | 42,29 | 53,55 | 9,74 |
+| jen tabulka palety (stara cache) | 43,25 | 50,36 | 7,47 |
+| jen omezena LRU (paleta s `pow`) | 7,70 | 40,12 | 7,51 |
+| obe (ted) | 5,71 | 31,20 | 5,69 |
+
+Na cele poloze (frac 0) je vsechno 1,5 ms. Ze omezena LRU pomohla
+o rad, kdyz ta stara po promoci vracela totez vlastni platno, neumim
+vysvetlit bez dalsiho mereni - je to ukol D v `docs/ZADANI-RENDER.md`.
+Scale2x zustava drahe (31 ms): pri S = 5 je zbytek 2,5, predzvetseni
+je jen 2x a 1,25x dotahuje bilinearka z velkeho zdroje - ukol B.
+
+### Co jsem zkontroloval a nemenil
+
+- **Vrstvy** (`+397` bit 0, 28 mist; `0x371e andiw #511` a `0x63c8
+  tstb fp@(155)` v dumpu sedi). Model "ostra nerovnost vrstev" je
+  priznany proxy, dokumentace to rika. Bez zmeny.
+- **Ovladace**: ridke pole, hat na ose 9, volba slotu a jeji ulozeni -
+  cteni kodu bez nalezu. Nestandardni mapovani bere za palbu jakekoli
+  tlacitko pod 12, takze "skok" (1/3/6) zaroven strili; vedome.
+- **Vlnky**: cte i pise jen uvnitr masky `_LAKE`; render-only (`g.tick`
+  jen cte). Bez zmeny.
+- **compare.py**: rohatka je na `whole` - ukol C v zadani.
+- **Nepodivane do hloubky**: zvuky mimo TOWN (`766facb`), post-game
+  statistika (`110bdba`), harness vAmiga (`8df90f1`), aktivacni marze
+  (`8936c5d`), MEDTANK/armed/nacteni pozice (`083e7bc`, `da15e55`,
+  `63c888c`). Kontrakty jsou zelene, ale cisla proti dumpu jsem
+  neprechazel.
+
+### Uklid
+
+Do `cf2a273` se omylem dostaly dva PNG z pokusu (`nn_*.png`, 1,9 MB) -
+`git add -A` v korenu. Odstraneny; pravidlo je v zadani (sekce 2, bod 8).
