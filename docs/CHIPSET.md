@@ -1424,3 +1424,49 @@ cteni starsich cisel: "sprity bez DOF blur" davaly 0 rozdilnych bodu, a
 presto usetrily 12,8 ms - filtrova vrstva se plati i tam, kde Skia blur
 zahodi. (Vizualni DOF terenu delá hlavne `imageSmoothingEnabled`, tedy
 bilinearni zvetseni, ne ten blur.)
+
+### B. Scale2x na podpixelove poloze - NENI CO OPRAVOVAT
+
+Zadani vychazelo z cisla "31,2 ms proti 5,7 ms", ktere vzniklo spatnym
+protokolem (18 kroku simulace na snimek, bez flushe). Spravne zmereno
+(RIVER, alfa 0,37, 17 stinu, po oprave stinu):
+
+| zvetseni | bez | Scale2x | vyhlazeno |
+|---|---:|---:|---:|
+| 4 | 24,61 ms | 23,71 ms | 23,59 ms |
+| 5 | 37,40 ms | 37,90 ms | 37,99 ms |
+| 6 | 77,53 ms | **56,31 ms** | 59,28 ms |
+| 8 | 121,82 ms | 122,26 ms | 114,46 ms |
+
+Scale2x je vsude stejny nebo levnejsi; pri zvetseni 6 dokonce o tretinu
+(zbytek po predzvetseni je 3 misto 6, takze se dotahuje mensi obraz).
+Kod se nemenil. Kontrakt v `uitest.py` ted meri POMER v temze behu:
+zadny rezim nesmi stat vic nez dvojnasobek rezimu "bez".
+
+### C. `compare.py`: zarazka na terenu; FINAL zbyva
+
+Zarazka byla na `whole`, ktere nese i objekty a HUD - tedy sum toho, co
+se zrovna hybe. Ted stoji na `terrain` (bez HUD a HELI), `whole` se
+vypisuje jen diagnosticky. Prahy jsou tesne pod zmerenymi hodnotami:
+
+| checkpoint | terrain | zarazka |
+|---|---:|---:|
+| start / wave / death / respawn | 99,9 / 99,0 / 98,2 / 99,9 | 99,8 / 98,9 / 98,1 / 99,8 |
+| t26 / t28 / t30 | 94,0 / 96,7 / 94,8 | 93,9 / 96,6 / 94,7 |
+| grass / river / ice / scifi | 92,9 / 93,3 / 88,9 / 95,3 | 92,8 / 93,2 / 88,8 / 95,2 |
+| desert | 95,7 | 95,6 |
+
+V hlavicce `compare.py` i v `docs/GAPS.md` je ted veta, co procento je
+(podil bodu shodnych na +-8 urovni v JEDNOM snimku) a co neni (mira
+vernosti prepisu).
+
+**Checkpoint FINAL se nepodarilo poridit.** Zjistilo se, kde vubec lezi:
+`FINAL.PAM` ma jen 384 radku a v retezu od urovne 5 zacina na radku 5600
+z 5984, takze v mapovych pozicich je to uzke okno **35543..35191**
+(odvozeno z checkpointu `scifi`: pozice 37000 = radek 4175). Drivejsi
+pokus s pozici 32188 mířil UZ ZA konec retezu - proto tehdy original
+dojel na pozici 0 a snimek ukazoval zaviraci obrazovku.
+
+Snimek ale porizuje emulator a ten potrebuje Kickstart v `~/Documents`,
+kam proces nesmi (`Operation not permitted`). Prikazy jsou pripravene
+v komentari u `CHECKPOINTS` v `compare.py`.

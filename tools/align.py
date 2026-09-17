@@ -232,7 +232,10 @@ def main():
                 best = (pct, item["ticks"], item["row"])
         pct, ticks, row = best
         floor = round(max(0.0, round(pct - 0.05, 1) - 0.1), 1)
-        print(f'    "t{t}": {{"t": {t}, "row": {row}, "floor": {floor},')
+        # Zarazka compare.py stoji na TERENU; tady se meri cely snimek,
+        # takze je to horni odhad - po vlozeni checkpointu si hodnotu
+        # oprav podle radku `terrain` z `compare.py`.
+        print(f'    "t{t}": {{"t": {t}, "row": {row}, "terrainFloor": {floor},')
         print(f'             "ticks": {ticks}, "vblBase": {VBL_BASE},')
         fodder = "[" + ", ".join(
             '{"x": %g, "vx": %g}' % (f["x"], f["vx"]) for f in FODDER) + "]"

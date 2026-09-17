@@ -1184,6 +1184,14 @@ original objekty, plus pripadna chyba terenu - a tu ma zarazka hlidat.
 - **`+80` (nejlepsi skore slotu)** se drzi, ale nikde se nezobrazuje ani
   nezapisuje do tabulky - `0x70b0` ho plni, dalsi pouziti nezkoumano.
 
+### Co procento v compare.py znamena (2026-09-17)
+
+Je to podil bodu, ktere se v dane masce shoduji s originalem na +-8 urovni
+na kanal, v JEDNOM snimku jedne sceny - **ne mira vernosti prepisu**.
+`whole` nese i objekty a HUD, takze kolisa s tim, co se zrovna hybe a kde
+je hrac. Zarazka proto od 2026-09-17 stoji na `terrain` (teren bez HUD a
+HELI), `whole` se vypisuje jen diagnosticky.
+
 ### Zarovnani zonoveho snimku potrebuje CLENITY teren (2026-09-11)
 
 Prvni pokus vzal peti pozic rovnomerne po retezu. Vysly z toho dva dobre

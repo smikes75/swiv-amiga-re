@@ -6,10 +6,16 @@ prepis se pro kazdy checkpoint postavi na PRESNE zmereny radek mapy, aby
 porovnani nezaviselo na casu startu. Surove snimky originalu se cachuji
 v build/baseline/ (gitignore) - prvni beh je stahne z emulatoru.
 
-Prah celeho snimku je zamerne zarazka (ratchet): lezi tesne pod aktualne
-zmerenou hodnotou a smi se jen zvedat. Vedle nej skript diagnosticky vypise
-shodu samotneho terenu, HUD a HELI. Masky HUD/HELI se odvozuji ze stejneho
-renderu s vypnutymi vrstvami; terrain proto nezahrnuje ani jejich pixely.
+CO PROCENTO JE: podil bodu, ktere se v dane masce shoduji s originalem na
++-8 urovni na kanal, v JEDNOM snimku jedne sceny. CO NENI: mira vernosti
+prepisu - `whole` nese i objekty a HUD, tedy sum toho, co se zrovna hybe
+a kde presne je hrac, takze kolisa i kdyz se na vykreslovani nic nezmenilo.
+
+Zarazka (ratchet) proto stoji na TERENU (`terrainFloor`): teren je ta cast,
+ktera ma sedet, a nezavisi na tom, co zrovna leti kolem. Lezi tesne pod
+zmerenou hodnotou a smi se jen zvedat. `whole`, `HUD` a `HELI` se vypisuji
+jen diagnosticky. Masky HUD/HELI se odvozuji ze stejneho renderu s vypnutymi
+vrstvami; terrain proto nezahrnuje ani jejich pixely.
 
 Zname zbyvajici zdroje rozdilu: sumova textura terenu (nas LCG neni
 generator hry), zbytky profilu/capture (kryje tolerance) a faze animaci
@@ -56,7 +62,7 @@ def to_vamiga(image):
     return out
 
 # name: cas snimku originalu v sekundach po fire, zmereny radek mapy
-# v img souradnicich prepisu a minimalni whole-frame shoda v %.
+# v img souradnicich prepisu a minimalni shoda TERENU v %.
 CHECKPOINTS = {
     # Kazdy checkpoint je SIMULACE: startGame(0) a `ticks` kroku step()
     # bez vstupu (baseline drzi joystick v klidu). Radek `row` je zmereny
@@ -68,18 +74,18 @@ CHECKPOINTS = {
     # T17 = 83: radek 3228 dovoluje 81..84 (word = 3249 - ceil(T/4)),
     # rotor JEEPHELI#0 vyzaduje liche T (index (T+3)&7 sudy); odstup
     # k t19 (T=184) je tedy 101 - vAmiga `wait` ma jitter jednoho snimku.
-    "start": {"t": 17, "row": 3228, "floor": 99.0, "ticks": 83,
+    "start": {"t": 17, "row": 3228, "terrainFloor": 99.8, "ticks": 83,
               "vblBase": 186},
     # Prvni FODDERA vlna: RNG originalu nezname, x0/vx clenu jsou zmerene
     # z t18/t19 (257, -13/16). Clen 0 umira kontaktem s hracem: kolizni
     # box FODDERA#2 = 10/20 z hlavicky .LIN a uzel z resume (0x6430) davaji
     # EXPL1#8 na (157,175) proti originalu (157,176).
-    "wave": {"t": 19, "row": 3203, "floor": 98.5, "ticks": 184,
+    "wave": {"t": 19, "row": 3203, "terrainFloor": 98.9, "ticks": 184,
              "vblBase": 186, "fodder": [{"x": 257, "vx": -0.8125}]},
     # Smrt hrace: clen 2 prvni vlny jej zasahne po vyprseni ochrany (+108
     # = 200), spirala 0x88fc (16x EXPL1 po 2 ticich, uhel dedi +358 = 0,
     # cekani 0x5f22 rychlost neintegruje). Radek 3191 => T 229..232.
-    "death": {"t": 20, "row": 3191, "floor": 98.0, "ticks": 232,
+    "death": {"t": 20, "row": 3191, "terrainFloor": 98.1, "ticks": 232,
               "vblBase": 186, "fodder": [{"x": 257, "vx": -0.8125}]},
     # Respawn: novy 0x9410 v D+102 (viz killPlayer), ochrana blika po 8
     # VBL (0x92e4, bila silueta = JEEPHELI#3 v t23). Druha vlna jde v
@@ -87,7 +93,7 @@ CHECKPOINTS = {
     # `fodder` je seznam podle poradi volani 0x813a (map reader zaklada
     # prvnich sest formaci uz v tiku 1, posledni polozka se opakuje).
     # Radek 3151 => T 389..392.
-    "respawn": {"t": 23, "row": 3151, "floor": 99.5, "ticks": 390,
+    "respawn": {"t": 23, "row": 3151, "terrainFloor": 99.8, "ticks": 390,
                 "vblBase": 186,
                 "fodder": [{"x": 257, "vx": -0.8125}, {"x": 195, "vx": 0.7}]},
     # Dalsi tri okamziky TOWN. `ticks` a `row` nasel `tools/align.py`
@@ -96,13 +102,13 @@ CHECKPOINTS = {
     # Shoda je nizsi nez u prvnich ctyr, protoze RNG originalu nezname a
     # `fodder` popisuje jen prvni dve vlny - vsechno dalsi, co se rodi
     # losovanim, lezi jinde. Zarazka proto hlida hlavne teren a HUD.
-    "t26": {"t": 26, "row": 3118, "floor": 93.9, "ticks": 521,
+    "t26": {"t": 26, "row": 3118, "terrainFloor": 93.9, "ticks": 521,
             "vblBase": 186,
             "fodder": [{"x": 257, "vx": -0.8125}, {"x": 195, "vx": 0.7}]},
-    "t28": {"t": 28, "row": 3092, "floor": 96.6, "ticks": 627,
+    "t28": {"t": 28, "row": 3092, "terrainFloor": 96.6, "ticks": 627,
             "vblBase": 186,
             "fodder": [{"x": 257, "vx": -0.8125}, {"x": 195, "vx": 0.7}]},
-    "t30": {"t": 30, "row": 3066, "floor": 94.7, "ticks": 729,
+    "t30": {"t": 30, "row": 3066, "terrainFloor": 94.7, "ticks": 729,
             "vblBase": 186,
             "fodder": [{"x": 257, "vx": -0.8125}, {"x": 195, "vx": 0.7}]},
     # PRVNI CHECKPOINT MIMO TOWN. Do DESERTu se baseline dostane jen
@@ -132,18 +138,34 @@ CHECKPOINTS = {
     # dane urovne, scroll na nalezeny radek a ZADNE objekty (korutiny se
     # nespousti). Rozdil je tedy presne tam, kde original nejake objekty ma,
     # plus pripadna chyba terenu - a prave tu ma zarazka hlidat.
-    "grass": {"prefix": "zone", "pos": 48788, "floor": 92.7,
+    "grass": {"prefix": "zone", "pos": 48788, "terrainFloor": 92.8,
               "level": 2, "row": 15963, "onlyTerrain": True},
-    "river": {"prefix": "zone", "pos": 45488, "floor": 92.1,
+    "river": {"prefix": "zone", "pos": 45488, "terrainFloor": 93.2,
               "level": 3, "row": 12663, "onlyTerrain": True},
     # ICE i SCIFI musely dostat jinou pozici nez prvni pokus: 40688 padlo
     # do otevrene vody mezi SWAP plosinami, kde vypada kazdy radek stejne,
     # a 35488 do opakujicich se sestiuhelniku. Viz docs/GAPS.md.
-    "ice": {"prefix": "zone", "pos": 42000, "floor": 88.3,
+    "ice": {"prefix": "zone", "pos": 42000, "terrainFloor": 88.8,
             "level": 4, "row": 9176, "onlyTerrain": True},
-    "scifi": {"prefix": "zone", "pos": 37000, "floor": 95.0,
+    "scifi": {"prefix": "zone", "pos": 37000, "terrainFloor": 95.2,
               "level": 5, "row": 4175, "onlyTerrain": True},
-    "desert": {"t": 900, "prefix": "deep", "floor": 95.4,
+    # FINAL (uroven 6) checkpoint NEMA a ceka na snimek originalu.
+    # Zona je uzka: `FINAL.PAM` ma 384 radku a v retezu od urovne 5 zacina
+    # na radku 5600 z 5984, takze v mapovych pozicich lezi zhruba
+    # 35543..35191 (odvozeno z checkpointu `scifi`: pozice 37000 = radek
+    # 4175). Drivejsi pokus s pozici 32188 byl UZ ZA koncem retezu, proto
+    # original dojel az na pozici 0 a snimek ukazuje zaviraci obrazovku
+    # (viz docs/GAPS.md).
+    #
+    # Snimek se porizuje emulatorem, ktery potrebuje Kickstart v
+    # ~/Documents - tam proces v sandboxu nesmi (Operation not permitted),
+    # takze to musi spustit clovek:
+    #
+    #   python3 tools/survey/zoneshot.py 35450 35350 35250 --out build/zone/z
+    #   python3 tools/align.py --snimek build/zone/z_p35450.raw --uroven 6
+    #
+    # a vysledek vlozit sem jako dalsi zaznam s "prefix": "zone".
+    "desert": {"t": 900, "prefix": "deep", "terrainFloor": 95.6,
                "env": {"SWIV_BASELINE_UNLIMITED_LIVES": "1",
                        "SWIV_BASELINE_HOLD_FIRE": "1"},
                "level": 1, "untilLock": True, "extraTicks": 300,
@@ -383,8 +405,8 @@ def main():
         diff_rel = os.path.join("build", "baseline", f"diff_{name}.png")
         diff_image(original, frames["whole"], os.path.join(ROOT, diff_rel))
 
-        floor = checkpoint["floor"]
-        ok = floor is None or scores["whole"] >= floor
+        floor = checkpoint["terrainFloor"]
+        ok = floor is None or scores["terrain"] >= floor
         status = "OK" if ok else "POD PRAHEM"
         if checkpoint.get("onlyTerrain"):
             print(f"{name}: uroven {checkpoint['level']}, original na mapove "
@@ -397,10 +419,11 @@ def main():
         else:
             print(f"{name}: t={checkpoint['t']}, row={checkpoint['row']}, "
                   f"ticks={checkpoint['ticks']}")
-        print(f"  whole:   {scores['whole']:6.1f} %  "
-              f"ratchet >= {floor}  [{status}]")
         print(f"  terrain: {scores['terrain']:6.1f} %  "
+              f"ratchet >= {floor}  [{status}]  "
               f"({len(masks['terrain'])} px; bez HUD/HELI)")
+        print(f"  whole:   {scores['whole']:6.1f} %  (jen diagnosticky - "
+              f"nese i objekty a HUD)")
         print(f"  HUD:     {scores['HUD']:6.1f} %  ({len(masks['HUD'])} px)")
         print(f"  HELI:    {scores['HELI']:6.1f} %  "
               f"({len(masks['HELI'])} px; telo+stin)")
