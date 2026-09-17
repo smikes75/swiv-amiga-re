@@ -1323,3 +1323,104 @@ je jen 2x a 1,25x dotahuje bilinearka z velkeho zdroje - ukol B.
 
 Do `cf2a273` se omylem dostaly dva PNG z pokusu (`nn_*.png`, 1,9 MB) -
 `git add -A` v korenu. Odstraneny; pravidlo je v zadani (sekce 2, bod 8).
+
+## Vykon vylepseneho rezimu (Opus, 2026-09-17)
+
+Zadani `docs/ZADANI-RENDER.md`. Prvni nalez je ale v samotnem MERENI,
+takze cisla ze zadani neplati.
+
+### Past c. 1: `g.frac = 0.37` neni podpixelovy snimek, ale 18 kroku
+
+`g.frac` je v SEKUNDACH a `TICK = 0,02`. `frame()` ma `while (g.frac >=
+TICK) { g.frac -= TICK; step(g); }`, takze `g.frac = 0.37` odsimuluje
+**18 tiku na snimek** - a protoze `bobPrev` se plni jen pri `stepped ===
+1`, je to navic snimek BEZ interpolace. Vsechna dosavadni cisla "frac
+0,37" merila simulaci a vicekrokovy snimek, ne podpixelovy render.
+
+Spravne: `g.frac = alfa * TICK` a pred tim jeden snimek s `g.frac =
+TICK` (aby vznikl `bobPrev`). Kontrola: `g.tick` se behem mereni nesmi
+zmenit a `g.bobPrev` musi existovat.
+
+### Past c. 2: bez vynuceneho flushe se rasterizace vubec nemeri
+
+Chromium kreslici prikazy do platna jen ZAZNAMENAVA a rastruje je az
+pri flushi. `performance.now()` kolem `frame()` proto meri jen JS.
+Zmereno v teze scene:
+
+| | bez flushe | s `getImageData(0,0,1,1)` |
+|---|---:|---:|
+| stiny vyp | 1,43 ms | 33,58 ms |
+| stiny zap | 1,44 ms | 243,77 ms |
+
+### Skutecna cena (RIVER, zvetseni 5, 1 000 tiku, prumer z 20 snimku)
+
+Softwarovy raster (headless), 17 stinu a 18 letcu na scene:
+
+| varianta | alfa 0 | alfa 0,37 |
+|---|---:|---:|
+| stiny vyp, hrany "bez" | 24,27 ms | 33,37 ms |
+| stiny vyp, Scale2x | 24,20 ms | 32,91 ms |
+| stiny vyp, vyhlazeno | 24,97 ms | 34,05 ms |
+| stiny vyp, hloubka ostrosti vyp | 4,56 ms | 8,65 ms |
+| **stiny zap** | **234,67 ms** | **255,11 ms** |
+
+Tedy: **Scale2x neni drahy** (ukol B zadani stal na spatnem mereni),
+zato **hloubka ostrosti stoji 20 az 25 ms** a mekke stiny 210 ms.
+
+### A. Predrozostrene stiny - HOTOVO
+
+Rozostreni `min(6, z/6)` i zvetseni `1 + min(0,35, z/120)` zavisi jen na
+`z`, takze se pocitaji jednou do vlastniho platna (klic: platno stinu,
+ktere uz nese paletu radku, + `z` + zvetseni) a kresli se hotove.
+Rezerva `3 * blur` na kazde strane, jinak by se mekky okraj orezal.
+Mez je v BAJTECH (12 MB), ne v poctu polozek.
+
+| | alfa 0 | alfa 0,37 |
+|---|---:|---:|
+| stiny vyp | 25,20 ms | 33,58 ms |
+| stiny zap, stara cesta | 237,78 ms | 248,44 ms |
+| **stiny zap, predrozostrene** | **26,35 ms** | **36,92 ms** |
+
+Stiny tedy stoji 3,3 ms misto 215 ms; cil zadani byl "pod 40 ms".
+
+Pamet (900 tiku pres fade na startu urovne, zvetseni 6, dva snimky na
+tik): cache stinu 12,0 MB / 47 platen (drzi se na strope), zvetseniny
+9,5 MB / 64. Fade cache neboli: klic nese paletu radku, takze pri zmene
+palety se stin prerozostri - zmereno ale, ze to nevadi (start urovne
+24,47 ms, ustalene 22,95 az 36,56 ms, bily zablesk 37,25 ms).
+
+**Shoda obrazu.** Zadani chtelo max 2 urovne na bod; to nejde, protoze
+hotovy stin se na zlomkovou polohu dotahuje bilinearne, kdezto driv se
+rasterizoval primo. Zmereno (RIVER, 17 stinu): lisi se 4,5 az 5,2 %
+bodu, nad dve urovne 0,02 az 0,12 %, max 5 (GPU raster) az 6
+(softwarovy).
+
+Nekolik desitek bodu se lisi vic a ty jdou za STAROU cestou: `ctx.filter`
+na zlomkove poloze ve skalovanem kontextu nechava v Chromiu na jednom
+radku svetly pruh. Zmereno na radku 1058: stara cesta 113 106 95 103,
+nova 28 17 0 12 - a teren tam ma presne 28 17 0 12. Artefakt tedy mizi.
+
+### A2. Opraven zdvojnaseny stin pri Scale2x
+
+Platno stinu prochazi Scale2x stejne jako telo (stin nema masku `fore`),
+takze pri volbe Scale2x nebo vyhlazeno je dvakrat vetsi - a kresba brala
+`cv.width` rovnou jako herni pixely. Zmereno: sprite 32x32, platno
+64x64, stin se kreslil dvojnasobny. Regrese z `cf2a273` (vcerejsi volba
+hran spritu). Ted se deli `cv._k`.
+
+### Blur pod ~0,75 px je v softwarovem rasteru NIC, na GPU ne
+
+Zmereno na cisté scene (cerny ctverec na bile):
+
+| blur | headless shell (software) | nove headless + GPU raster |
+|---|---|---|
+| 0,5 px | beze zmeny | rozostreno |
+| 0,7 px | beze zmeny | rozostreno |
+| 0,8 px | rozostreno | rozostreno |
+
+Plyne z toho, ze `DOF_BLUR = 0,7` na spritech a `DOF_BLUR / S = 0,14` na
+terenu se v NASICH merenich neprojevi, u hrace na GPU ano. Pozor pri
+cteni starsich cisel: "sprity bez DOF blur" davaly 0 rozdilnych bodu, a
+presto usetrily 12,8 ms - filtrova vrstva se plati i tam, kde Skia blur
+zahodi. (Vizualni DOF terenu delá hlavne `imageSmoothingEnabled`, tedy
+bilinearni zvetseni, ne ten blur.)

@@ -1091,7 +1091,7 @@ const $ = s => document.querySelector(s);
 /* Vychozi hodnota volby hran spritu. Bez ni byla `undefined` a podminka
    `!== "bez"` zapinala Scale2x i v rezimu, kde ma byt vypnuty - kontrakt
    naklonu to chytil jako ztratovy rozklad (8 bodu misto 0). */
-const state = { spriteScale: "bez" };
+const state = { spriteScale: "bez", shadowCache: true };
 const TICK = 1 / 50;                 // herni logika na 50 Hz jako original
 const SCROLL = 12.5;                 // 0x1da6: $4000 16.16 = .25 px/VBL
 /* fp@(3542): cela cast scroll citace (word). Vsechny screen-y odvozene
@@ -11911,6 +11911,60 @@ function upscaledSprite(cv, S) {
   return big;
 }
 
+/* ---- Predrozostrene stiny (ukol A) ---------------------------------
+   `ctx.filter` se volal na KAZDY stin pri kazdem kresleni a to je
+   nejdrazsi vec v obraze: zmereno 33,4 ms bez stinu proti 255,1 ms se
+   stiny (17 stinu, RIVER, zvetseni 5), tedy ~13 ms na jeden stin.
+
+   Rozostreni i zvetseni stinu zavisi JEN na vysce `z` (cele slovo) a na
+   snimku, takze se da spocitat jednou a kreslit hotove. Klic je platno
+   stinu (nese uz paletu radku) + `z` + zvetseni.
+
+   Mez je v BAJTECH, ne v poctu: platno stinu ma pri zvetseni 6 kolem
+   350 kB a cache bez meze uz jednou sezrala 256 MB (viz "Revize renderu
+   po Opusovi"). */
+const SHADOW_MAX_BYTES = 12 << 20;              // 12 MB
+const SHADOW_CACHE = new Map();                 // klic -> zaznam, poradi = stari
+let SHADOW_BYTES = 0, SHADOW_SEQ = 0;
+function shadowSourceId(cv) {
+  return cv.__stinId || (cv.__stinId = ++SHADOW_SEQ);
+}
+function blurredShadow(cv, z, S, blur, grow) {
+  const klic = shadowSourceId(cv) + ":" + z + ":" + S;
+  const drive = SHADOW_CACHE.get(klic);
+  if (drive) {                                  // obnovit stari
+    SHADOW_CACHE.delete(klic); SHADOW_CACHE.set(klic, drive);
+    return drive;
+  }
+  // Platno uz muze byt zvetsene Scale2x, kreslime ale v hernich pixelech.
+  const k = cv._k || 1;
+  const w = (cv.width / k) * S * grow, h = (cv.height / k) * S * grow;
+  // Gaussovo jadro je prakticky nulove za 3 sigma; bez teto rezervy by
+  // se mekky okraj stinu orezal.
+  const pad = Math.ceil(3 * blur) + 1;
+  // Obdelnik uvnitr cache se zarovnava na CELE body displeje: se zlomkovou
+  // sirkou zustal na okraji castecne pokryty bod, ktery se po bilinearnim
+  // posunu lisil az o 95 urovni (37 bodu na jednom radku). Zvetseni se tim
+  // meni o nejvys pul bodu z ~260, tedy 0,2 %.
+  const wI = Math.max(1, Math.round(w)), hI = Math.max(1, Math.round(h));
+  const out = document.createElement("canvas");
+  out.width = wI + 2 * pad;
+  out.height = hI + 2 * pad;
+  const c = out.getContext("2d");
+  c.imageSmoothingEnabled = false;              // stejne jako pri kresleni
+  c.filter = "blur(" + blur.toFixed(2) + "px)";
+  c.drawImage(cv, pad, pad, wI, hI);
+  const zaz = { cv: out, pad, w, h, bytes: out.width * out.height * 4 };
+  SHADOW_CACHE.set(klic, zaz);
+  SHADOW_BYTES += zaz.bytes;
+  while (SHADOW_BYTES > SHADOW_MAX_BYTES && SHADOW_CACHE.size > 1) {
+    const nej = SHADOW_CACHE.keys().next().value;
+    SHADOW_BYTES -= SHADOW_CACHE.get(nej).bytes;
+    SHADOW_CACHE.delete(nej);
+  }
+  return zaz;
+}
+
 /* Sprite v souradnicich DISPLEJE. Tim se da polozit na zlomkovou polohu
    a jet po stejne jemne mrizce jako pozadi; bez toho sprity skacou po
    celych bodech displeje, zatimco teren s prolnutim klouze plynule -
@@ -12210,9 +12264,13 @@ function renderSmoothField(ctx, g, S, composed, hudCv) {
       const z = Math.abs(r.z | 0);
       const blur = Math.min(6, z / 6);
       const grow = 1 + Math.min(0.35, z / 120);
+      // Naklonene telo vrtulniku se sklada ze dvou casti a kresli se
+      // vlastni cestou, takze se predrozostrit neda - zustava mu filtr.
+      const zCache = blur > 0.4 && state.shadowCache !== false &&
+                     !(heliFrame && r.id === "player-shadow");
       ctx.save();
       ctx.globalAlpha = Math.max(0.25, 0.75 - z / 90);
-      if (blur > 0.4) ctx.filter = "blur(" + blur.toFixed(2) + "px)";
+      if (blur > 0.4 && !zCache) ctx.filter = "blur(" + blur.toFixed(2) + "px)";
       if (heliFrame && r.id === "player-shadow") {    // uz uvnitr stinu
         ctx.translate(dx + r.spr.w / 2, dy + r.spr.h / 2);
         ctx.scale(grow, grow);
@@ -12224,8 +12282,26 @@ function renderSmoothField(ctx, g, S, composed, hudCv) {
         ctx.restore();
         continue;
       }
-      const w = cv.width * grow, h = cv.height * grow;
-      ctx.drawImage(cv, dx - (w - cv.width) / 2, dy - (h - cv.height) / 2, w, h);
+      // Sirka v HERNICH pixelech: platno stinu prochazi Scale2x stejne
+      // jako telo (stin nema masku `fore`), takze pri volbe Scale2x nebo
+      // vyhlazeno je dvakrat vetsi. Drive se `cv.width` bralo rovnou a
+      // stin se kreslil dvojnasobny - zmereno: platno 64x64 proti spritu
+      // 32x32.
+      const k = cv._k || 1;
+      const sw = cv.width / k, sh = cv.height / k;
+      const w = sw * grow, h = sh * grow;
+      if (zCache) {
+        // Hotovy rozostreny stin do souradnic displeje; zlomkovou polohu
+        // dotahne bilinearka, coz je na rozostrenem obrazu neznatelne.
+        const zaz = blurredShadow(cv, z, S, blur, grow);
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.imageSmoothingEnabled = true;
+        ctx.drawImage(zaz.cv, (dx - (w - sw) / 2) * S - zaz.pad,
+                              (dy - (h - sh) / 2) * S - zaz.pad);
+        ctx.restore();
+        continue;
+      }
+      ctx.drawImage(cv, dx - (w - sw) / 2, dy - (h - sh) / 2, w, h);
       ctx.restore();
       continue;
     }

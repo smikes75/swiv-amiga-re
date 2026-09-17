@@ -7113,6 +7113,102 @@ def main():
                        "%d z %d bodu - volba je bez ucinku"
                        % (dvojice, hrany[dvojice], hrany["bodu"]))
 
+            # ---- mekke stiny: predrozostrena platna -------------------
+            # `ctx.filter` na kazdy stin pri kazdem kresleni je nejdrazsi
+            # vec v obraze (zmereno: 33,4 ms bez stinu proti 255,1 ms se
+            # stiny, 17 stinu). Rozostreni i zvetseni zavisi jen na `z`,
+            # takze se pocitaji jednou dopredu.
+            #
+            # POZOR na protokol: `g.frac` je v SEKUNDACH a TICK = 0,02,
+            # takze `g.frac = 0.37` znamena 18 KROKU simulace na snimek.
+            # Podpixelovy snimek je `alfa * TICK` a musi mu predchazet
+            # snimek s jednim krokem, jinak neni `bobPrev` a neinterpoluje
+            # se.
+            stiny = page.evaluate("""() => {
+              startGame(3);
+              const g = state.g;
+              state.zoom = 5; state.smooth = true; state.blendBg = true;
+              state.subpixelSprites = true; state.depthOfField = true;
+              state.softShadows = true; state.heliTilt = false;
+              state.vehicleTracks = false; state.waterWaves = false;
+              for (let i = 0; i < 1000; i++) {
+                step(g); g.lives = 99999; g.player.inv = 0;
+              }
+              const cv = document.querySelector('#game');
+              const ctx = cv.getContext('2d');
+              // Krokuje se JEN tady: kazdy `frame` s frac = TICK je krok
+              // simulace, takze kdyby krokovalo `sejmi`, kazda varianta by
+              // byla z jineho tiku (zmereno: rozdil 255 urovni).
+              g.frac = 0; g.last = 0; frame(0);            // vznikne bobCur
+              g.frac = TICK; g.last = 0; frame(0);         // krok -> bobPrev
+              const tikSnimku = g.tick;
+              const sejmi = prep => {
+                Object.assign(state, prep);
+                if (state.indexedFrameCache)
+                  for (const spr of state.indexedFrameCache.values())
+                    if (spr) { spr.smoothCache = null;
+                               if (spr._sc2) spr._sc2.smoothCache = null; }
+                g.frac = 0.37 * TICK; g.last = 0; frame(0);
+                return ctx.getImageData(0, 0, cv.width, cv.height).data;
+              };
+              const bezCache = sejmi({ shadowCache: false, spriteScale: "bez" });
+              const sCache = sejmi({ shadowCache: true, spriteScale: "bez" });
+              const bezStinu = sejmi({ softShadows: false, spriteScale: "bez" });
+              const sc2 = sejmi({ softShadows: true, spriteScale: "scale2x" });
+              const bez = sejmi({ softShadows: true, spriteScale: "bez" });
+              const bezStinu2 = sejmi({ softShadows: false, spriteScale: "scale2x" });
+              let lisi = 0, nad2 = 0, nad8 = 0, max = 0;
+              for (let i = 0; i < bezCache.length; i += 4) {
+                const d = Math.max(Math.abs(bezCache[i] - sCache[i]),
+                                   Math.abs(bezCache[i+1] - sCache[i+1]),
+                                   Math.abs(bezCache[i+2] - sCache[i+2]));
+                if (d) lisi++;
+                if (d > 2) nad2++;
+                if (d > 8) nad8++;
+                if (d > max) max = d;
+              }
+              // Plocha stinu = body, ktere se lisi od snimku BEZ stinu.
+              const plocha = (a, b) => { let n = 0;
+                for (let i = 0; i < a.length; i += 4)
+                  if (a[i] !== b[i] || a[i+1] !== b[i+1] || a[i+2] !== b[i+2]) n++;
+                return n; };
+              return { bodu: bezCache.length / 4, lisi, nad2, nad8, max,
+                       tikySnimku: g.tick - tikSnimku,
+                       plochaBez: plocha(bez, bezStinu),
+                       plochaSc2: plocha(sc2, bezStinu2),
+                       velikostCache: SHADOW_CACHE.size };
+            }""")
+            expect(stiny["tikySnimku"] == 0,
+                   "snimky variant nejsou z teze sceny: %d tiku rozdil" %
+                   (stiny["tikySnimku"],))
+            # Rozdil je z bilinearniho posunu uz rasterizovaneho stinu proti
+            # rasterizaci na zlomkove poloze: v celku pod 0,2 % bodu nad dve
+            # urovne (zadani cekalo max 2 urovne na kazdem bodu, to nejde).
+            #
+            # Nekolik desitek bodu se lisi vic a ty jdou za STAROU cestou:
+            # `ctx.filter` na zlomkove poloze ve skalovanem kontextu nechava
+            # v Chromiu na jednom radku svetly pruh. Zmereno na radku 1058
+            # (RIVER, zvetseni 5): bez cache 113 106 95 103, s cache
+            # 28 17 0 12 - a teren tam ma presne 28 17 0 12, takze artefakt
+            # je ve stare ceste, ne v cache.
+            expect(stiny["nad2"] < stiny["bodu"] // 500,
+                   "predrozostreny stin: %d z %d bodu nad 2 urovne" %
+                   (stiny["nad2"], stiny["bodu"]))
+            expect(stiny["nad8"] <= 64,
+                   "predrozostreny stin: %d bodu nad 8 urovni (artefaktu "
+                   "stare cesty bylo 37)" % (stiny["nad8"],))
+            expect(stiny["velikostCache"] > 0, "cache stinu zustala prazdna")
+            # Platno stinu prochazi Scale2x stejne jako telo (stin nema
+            # masku `fore`), takze `cv.width` je v tom rezimu dvojnasobne.
+            # Drive se bralo rovnou a stin se kreslil 2x vetsi: plocha
+            # vyjde nekolikanasobna.
+            expect(stiny["plochaBez"] > 1000 and stiny["plochaSc2"] > 1000,
+                   "stiny nejsou v obraze videt: %r" % (stiny,))
+            pomer = stiny["plochaSc2"] / stiny["plochaBez"]
+            expect(0.8 < pomer < 1.25,
+                   "plocha stinu zavisi na volbe hran spritu (%.2fx) - "
+                   "Scale2x zdvojnasobuje platno stinu: %r" % (pomer, stiny))
+
             # ---- ovladace na Windows: ridke pole, hat, cizi mapovani --
             # `navigator.getGamepads()` vraci RIDKE pole, kde index je
             # slot ovladace, ne poradi pripojeni. Na Windows ovladac bezne
