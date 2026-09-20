@@ -4,8 +4,11 @@
 *.DMS
 *.dms
 
-# Kickstart do repa taky nepatri - hleda se v korenu jako kick13.rom
-# (nebo pres SWIV_KICKSTART), viz tools/survey/vacmp.py.
+# Kickstart do repa taky nepatri. Sbirka `Kickstarts/` v projektu se
+# vylucuje CELA - jsou v ni i .bin a soubory bez pripony, ktere by
+# `git add -A` jinak pribalil. Harness si v ni najde 1.3 sam podle
+# OBSAHU (viz tools/survey/vacmp.py), nebo se ukaze SWIV_KICKSTART.
+Kickstarts/
 *.rom
 *.ROM
 

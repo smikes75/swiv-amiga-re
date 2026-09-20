@@ -31,13 +31,41 @@ import threading
 from playwright.sync_api import sync_playwright
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+def je_kick13(cesta):
+    """256 kB, hlavicka 0x11114EF9 a verze 34 revize 5 na offsetu 12.
+
+    Ve sbirce lezi vedle sebe overeny dump `[!]`, spatne `[b]`, overdumpy
+    `[o]` (512 kB) i zasifrovane varianty, ktere by emulator nenabootoval.
+    Kontroluje se proto obsah, ne jmeno."""
+    try:
+        with open(cesta, "rb") as f:
+            d = f.read(16)
+        if len(d) < 16 or d[:4] != b"\x11\x11\x4e\xf9":
+            return False
+        if int.from_bytes(d[12:14], "big") != 34:       # verze 1.3
+            return False
+        return os.path.getsize(cesta) == 262144
+    except OSError:
+        return False
+
+
 def _najdi_rom():
-    """Kickstart 1.3. Hleda se v korenu projektu vedle diskety, protoze do
-    ~/Documents proces v sandboxu nesmi (`Operation not permitted`) - a ROM
-    do repa nepatri stejne jako disketa (`.gitignore`)."""
+    """Kickstart 1.3. Hleda se UVNITR projektu, protoze do ~/Documents
+    proces v sandboxu nesmi (`Operation not permitted`) - a ROM do repa
+    nepatri stejne jako disketa (`.gitignore`)."""
     env = os.environ.get("SWIV_KICKSTART")
     if env:
         return env
+    # Sbirka `Kickstarts/` v projektu: vezmi overeny dump, jinak kterykoli
+    # soubor, ktery projde kontrolou obsahu.
+    sbirka = os.path.join(ROOT, "Kickstarts")
+    if os.path.isdir(sbirka):
+        jmena = sorted(os.listdir(sbirka))
+        prednost = [j for j in jmena if "1.3" in j and "A500" in j and "[!]" in j]
+        for j in prednost + jmena:
+            cesta = os.path.join(sbirka, j)
+            if je_kick13(cesta):
+                return cesta
     kandidati = ["kick13.rom", "KICK13.ROM", "kickstart13.rom",
                  "Kickstart v1.3 rev 34.5 (1987)(Commodore)"
                  "(A500-A1000-A2000-CDTV)[!].rom"]
