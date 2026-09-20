@@ -1204,6 +1204,7 @@ checkpointy a tri nepouzitelne, a duvod je poucny:
 | 40688 | ICE | 51,8 % | 52,5 % | **plocho** - otevrene more |
 | 35488 | SCIFI | 31,8 % | 58,4 % | slaba spicka - opakujici se sestiuhelniky |
 | 32188 | FINAL | — | — | dojelo az na pozici 0, tedy konec retezu |
+| **32950** | **FINAL** | **65,9 %** | **71,9 %** | **pouzitelne, radek 126 (2026-09-20)** |
 
 Posledni radka tabulky stoji za zminku sama o sobe: se zhasnutym bitem 3
 projel original **cely retez az na konec** a snimek v cili uz ukazuje
@@ -1215,6 +1216,14 @@ Otevrena voda vypada na kazdem radku stejne, takze mrizkove porovnani
 dava vsude ~52 % a zadny radek nevyhraje. Ze spravne urovne jde tenhle
 pripad poznat: tentyz snimek dal proti urovni 3 jen 6,7 % a proti 5 jen
 5,3 %, takze uroven 4 je jista - jen v ni neni co zaostrit.
+
+**Mapova pozice a radek v retezu (doplneno 2026-09-20).** Vztah je
+`radek = pozice - 32825` a sedi na vsech peti zonovych checkpointech.
+Pozor na smer: `g.scroll` v prepisu **klesa** (zmereno 5888 -> 5638 za
+1000 tiku), takze posledni zona lezi u NEJNIZSICH radku a u nejnizsich
+pozic. Prvni odhad pro FINAL (35543..35191) vysel z opacne domnenky
+a snimky z nej ukazovaly SCIFI - `align.py` to pozna hned: proti urovni
+5 daly 94,8 %, proti urovni 6 jen 3 %.
 
 **Pravidlo: zonovy checkpoint patri tam, kde ma mapa clenity a
 neopakujici se teren, a kde original zrovna nema plnou obrazovku

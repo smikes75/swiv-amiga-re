@@ -1460,7 +1460,20 @@ V hlavicce `compare.py` i v `docs/GAPS.md` je ted veta, co procento je
 (podil bodu shodnych na +-8 urovni v JEDNOM snimku) a co neni (mira
 vernosti prepisu).
 
-**Checkpoint FINAL se nepodarilo poridit.** Zjistilo se, kde vubec lezi:
+**Checkpoint FINAL doplnen 2026-09-20** (pozice 32950, radek 126,
+teren 71,7 %, zarazka 71,6). Tim ma pokryti **vsech sedm zon**. Shoda je
+nizsi nez jinde a jsou to OBJEKTY, ne teren: v arene ma original telo
+bosse (13 kruhu INST5#17 jako dekaly), nepratele i vybuchy, kdezto
+prepis se do zony stavi bez objektu. V diffu je videt, ze arena i velky
+prstenec sedi.
+
+Cesta k tomu vedla pres dva omyly, oba zapsane v `docs/GAPS.md`: ROM se
+hledal v `~/Documents` (sandbox nepusti, a `os.path.exists` tam lze -
+musi se zkouset cteni), a mapova pozice se prepocitavala spatnym smerem.
+Plati `radek = pozice - 32825` a `g.scroll` v prepisu KLESA, takze
+posledni zona je u nejnizsich pozic.
+
+Puvodni zaznam o tom, proc to dlouho nebylo: Zjistilo se, kde vubec lezi:
 `FINAL.PAM` ma jen 384 radku a v retezu od urovne 5 zacina na radku 5600
 z 5984, takze v mapovych pozicich je to uzke okno **35543..35191**
 (odvozeno z checkpointu `scifi`: pozice 37000 = radek 4175). Drivejsi

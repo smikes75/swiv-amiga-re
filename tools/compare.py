@@ -149,7 +149,16 @@ CHECKPOINTS = {
             "level": 4, "row": 9176, "onlyTerrain": True},
     "scifi": {"prefix": "zone", "pos": 37000, "terrainFloor": 95.2,
               "level": 5, "row": 4175, "onlyTerrain": True},
-    # FINAL (uroven 6) checkpoint NEMA a ceka na snimek originalu.
+    # FINAL: bossova arena. Radek nasel `tools/align.py --snimek --uroven 6`
+    # (65,9 % hrube -> 71,9 % po zjemneni; tataz sonda dala proti urovni 5
+    # jen 3 %, takze uroven je jista). Shoda je nizsi nez v ostatnich zonach
+    # a je to OBJEKTY, ne teren: original ma v arene telo bosse (13 kruhu
+    # INST5#17 jako dekaly), nepratele i vybuchy, kdezto prepis se sem stavi
+    # bez objektu. Zarazka tedy hlida, ze se nerozbije dekodovani mapy,
+    # palety a dlazdic FINALu - ne chovani.
+    "final": {"prefix": "zone", "pos": 32950, "terrainFloor": 71.6,
+              "level": 6, "row": 126, "onlyTerrain": True},
+    # Puvodni poznamka, proc to dlouho nebylo (plati jako varovani):
     # Zona je uzka: `FINAL.PAM` ma 384 radku a v retezu od urovne 5 zacina
     # na radku 5600 z 5984, takze v mapovych pozicich lezi zhruba
     # 35543..35191 (odvozeno z checkpointu `scifi`: pozice 37000 = radek
@@ -157,14 +166,15 @@ CHECKPOINTS = {
     # original dojel az na pozici 0 a snimek ukazuje zaviraci obrazovku
     # (viz docs/GAPS.md).
     #
-    # Snimek se porizuje emulatorem, ktery potrebuje Kickstart v
-    # ~/Documents - tam proces v sandboxu nesmi (Operation not permitted),
-    # takze to musi spustit clovek:
+    # Prvni odhad pozic (35543..35191) byl SPATNE: vysel z domnenky, ze
+    # mapova pozice roste s radkem v retezu. Je to naopak - `g.scroll`
+    # v prepisu KLESA (zmereno: 5888 -> 5638 za 1000 tiku) a plati
     #
-    #   python3 tools/survey/zoneshot.py 35450 35350 35250 --out build/zone/z
-    #   python3 tools/align.py --snimek build/zone/z_p35450.raw --uroven 6
+    #     radek v retezu = mapova pozice - 32825
     #
-    # a vysledek vlozit sem jako dalsi zaznam s "prefix": "zone".
+    # (sedi na vsech ctyrech zonovych checkpointech). Snimky z 35450 az
+    # 35250 proto ukazovaly SCIFI (94,8 % proti urovni 5) a jeste drivejsi
+    # pokus s 32188 byl uz ZA koncem retezu.
     "desert": {"t": 900, "prefix": "deep", "terrainFloor": 95.6,
                "env": {"SWIV_BASELINE_UNLIMITED_LIVES": "1",
                        "SWIV_BASELINE_HOLD_FIRE": "1"},
