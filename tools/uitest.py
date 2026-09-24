@@ -7210,6 +7210,19 @@ def main():
               const sc2 = sejmi({ softShadows: true, spriteScale: "scale2x" });
               const bez = sejmi({ softShadows: true, spriteScale: "bez" });
               const bezStinu2 = sejmi({ softShadows: false, spriteScale: "scale2x" });
+              // Hloubka ostrosti: predrozostreni proti filtru pri kresleni.
+              const dofFiltr = sejmi({ softShadows: true, spriteScale: "bez",
+                                       dofCache: false });
+              const dofCache = sejmi({ dofCache: true });
+              let dLisi = 0, dNad2 = 0, dNad8 = 0;
+              for (let i = 0; i < dofFiltr.length; i += 4) {
+                const d = Math.max(Math.abs(dofFiltr[i] - dofCache[i]),
+                                   Math.abs(dofFiltr[i+1] - dofCache[i+1]),
+                                   Math.abs(dofFiltr[i+2] - dofCache[i+2]));
+                if (d) dLisi++;
+                if (d > 2) dNad2++;
+                if (d > 8) dNad8++;
+              }
               let lisi = 0, nad2 = 0, nad8 = 0, max = 0;
               for (let i = 0; i < bezCache.length; i += 4) {
                 const d = Math.max(Math.abs(bezCache[i] - sCache[i]),
@@ -7229,7 +7242,8 @@ def main():
                        tikySnimku: g.tick - tikSnimku,
                        plochaBez: plocha(bez, bezStinu),
                        plochaSc2: plocha(sc2, bezStinu2),
-                       velikostCache: BLUR_CACHE.size };
+                       velikostCache: BLUR_CACHE.size,
+                       dofLisi: dLisi, dofNad2: dNad2, dofNad8: dNad8 };
             }""")
             expect(stiny["tikySnimku"] == 0,
                    "snimky variant nejsou z teze sceny: %d tiku rozdil" %
@@ -7254,6 +7268,21 @@ def main():
                    "predrozostreny stin: %d bodu nad 8 urovni z %d" %
                    (stiny["nad8"], stiny["bodu"]))
             expect(stiny["velikostCache"] > 0, "cache stinu zustala prazdna")
+            # Hloubka ostrosti pres tutez cache (`preBlurred`). Zmereno
+            # (RIVER, zvetseni 5): lisi se 491 bodu (softwarovy raster) resp.
+            # 10 249 (GPU raster), nad 8 urovni 428 resp. 380, tedy 0,02 %.
+            # Nejhorsi body lezi na HRANACH spritu: stara cesta tam ma tvrdy
+            # prechod 0 -> 84, nova pulbod 42 - hotovy obraz se na zlomkovou
+            # polohu dotahuje bilinearne, vrstva filtru hranu prichyti.
+            expect(stiny["dofLisi"] > 0,
+                   "predrozostreni hloubky ostrosti se neprojevilo vubec - "
+                   "vetev se asi nepouziva")
+            expect(stiny["dofNad2"] < stiny["bodu"] // 500,
+                   "hloubka ostrosti: %d z %d bodu nad 2 urovne" %
+                   (stiny["dofNad2"], stiny["bodu"]))
+            expect(stiny["dofNad8"] < stiny["bodu"] // 2000,
+                   "hloubka ostrosti: %d z %d bodu nad 8 urovni" %
+                   (stiny["dofNad8"], stiny["bodu"]))
             # Platno stinu prochazi Scale2x stejne jako telo (stin nema
             # masku `fore`), takze `cv.width` je v tom rezimu dvojnasobne.
             # Drive se bralo rovnou a stin se kreslil 2x vetsi: plocha

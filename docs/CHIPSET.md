@@ -1373,7 +1373,8 @@ Rozostreni `min(6, z/6)` i zvetseni `1 + min(0,35, z/120)` zavisi jen na
 `z`, takze se pocitaji jednou do vlastniho platna (klic: platno stinu,
 ktere uz nese paletu radku, + `z` + zvetseni) a kresli se hotove.
 Rezerva `3 * blur` na kazde strane, jinak by se mekky okraj orezal.
-Mez je v BAJTECH (12 MB), ne v poctu polozek.
+Mez je v BAJTECH (puvodne 12 MB, po zobecneni na `preBlurred` v ukolu D
+16 MB), ne v poctu polozek.
 
 | | alfa 0 | alfa 0,37 |
 |---|---:|---:|
@@ -1516,16 +1517,12 @@ tedy zustava hlavne kvuli PAMETI** (drivejsi neomezena verze sezrala
 256 MB), ne kvuli rychlosti; prah tri vyskytu proti jednomu je take
 v sumu, drzi se kvuli prechodnym variantam pri fade.
 
-### Co se nepovedlo: predrozostrit i hloubku ostrosti
+### ~~Co se nepovedlo: predrozostrit i hloubku ostrosti~~ - OMYL, viz nize
 
-`ctx.filter` se vola i na kazdy rozostreny sprite a stoji to 12,8 ms na
-snimek (35,35 proti 22,55 ms) za CTYRI pozemni objekty. Zkusil jsem na
-ne tutez cache jako na stiny - a je to **HORSI**: 88,9 ms proti 35,4 ms.
-Neni to rozostrenim (varianta, ktera do cache kreslila BEZ filtru, dala
-85,8 ms) ani mijenim cache (9 polozek, 1,24 MB, stabilne) ani lenivou
-rasterizaci (vynucene cteni po stavbe nepomohlo). Drahe je samo kresleni
-z tech ctyr platen: 4 volani a 68 500 bodu displeje na snimek. Proc, to
-nevim - zustava to otevrene a filtr se u spritu kresli dal.
+Tady puvodne stalo, ze predrozostreni hloubky ostrosti je horsi (88,9
+proti 35,4 ms) a ze "drahe je samo kresleni z tech ctyr platen". **To byl
+omyl v pokusu, ne vlastnost Chromia** - rozebrano v sekci "Revize po
+Opusovi 5.5 (2026-09-24)" dole.
 
 ### Kde cas konci dnes (RIVER, zvetseni 5, alfa 0,37)
 
@@ -1539,3 +1536,90 @@ nevim - zustava to otevrene a filtr se u spritu kresli dal.
 Po oprave stinu je nejdrazsi vec v obraze **hloubka ostrosti** (asi 26
 z 35 ms). Cisla jsou z emulovaneho rasteru, takze absolutni hodnoty pro
 hrace neplati - drzi jen pomery.
+
+## Revize po Opusovi 5.5 (2026-09-24)
+
+Prohlednuto sest commitu od posledni revize (`851f613`..`2fd597a`). Tri
+nalezy, vsechny zmerene.
+
+### 1. Predrozostreni hloubky ostrosti FUNGUJE - puvodni pokus byl chybny
+
+V ukolu D se pokusna vetev pro hloubku ostrosti vlozila do
+`drawSpriteDevice` AZ ZA `ctx.save()` a `ctx.filter = blur(...)`. Kreslila
+tedy se stale aktivnim filtrem (rozostrovala podruhe, a to vetsi platno
+s okrajem) a koncila `return` s vlastnim `save/restore` - vnejsi `save()`
+se nikdy nevratil a filtr prosakoval do vsech dalsich kreseb snimku.
+Proto 88,9 ms, a proto i varianta "bez filtru v cache" 85,8 ms.
+
+Vetev PRED `save()`, spravnym protokolem (`tools/perf.py`):
+
+| | filtr pri kresleni | predrozostreno |
+|---|---:|---:|
+| RIVER, stojici scena | 40,46 ms | 27,05 ms |
+| TOWN, za behu (krok + podpixel) | 29,34 ms | 21,93 ms |
+| RIVER, za behu | 43,16 ms | 24,98 ms |
+| DESERT, stojici | 38,08 ms | 23,60 ms |
+| GRASS, stojici | 28,39 ms | 22,10 ms |
+
+"Za behu" znamena, ze se pohyblive maskovane objekty (tanky) opravdu
+hybou a jejich platna se meni - cache tedy mijeji, a presto je to vyhra.
+Pamet (900 tiku pres fade, zvetseni 6): spolecna cache `preBlurred` drzi
+strop 16 MB / 62 platen.
+
+Obraz: v RIVERu se lisi 491 bodu (softwarovy raster) resp. 10 249 (GPU
+raster), nad 8 urovni 428 resp. 380 - 0,02 %. Nejhorsi body lezi na
+HRANACH spritu: stara cesta ma tvrdy prechod 0 -> 84, nova pulbod 42
+(hotovy obraz se na zlomkovou polohu dotahuje bilinearne, vrstva filtru
+hranu prichyti). Overeno na pixelech, ne predpokladano.
+
+Pouceni pro dalsi pokusy: vetev s `return` uprostred funkce, ktera uz
+udelala `ctx.save()`, je past. Kontrakt v `uitest.py` teto chybe ted
+branit neumi, ale negativni kontrola (vetev vypnuta -> kontrakt pada)
+je overena.
+
+### 2. Renderer nebyl deterministicky: tentyz snimek podle stavu cache
+
+Dva snimky se STEJNYM nastavenim se po vycisteni cache spritu lisily
+o 84 az 204 bodu. Pricina ve zvetseninach (`upscaledSprite`):
+
+- sdileny scratch se mazal jen v obdelniku aktualniho spritu, takze
+  bilinearka pri vzorkovani u okraje sahla o bod vedle - do zbytku
+  PREDCHOZIHO, vetsiho spritu;
+- vlastni platno (po promoci v LRU) melo na okraji "clamp" (opakoval se
+  krajni bod), scratch vzorkoval do pruhledna - a vlevo nahore zase
+  clamp, protoze sprite lezel v rohu.
+
+Tentyz sprite se tedy kreslil jinak podle toho, jestli uz byl v cache.
+Zvetsenina ted ma 1px pruhledny ramecek v obou cestach a kresli se
+z vyrezu posunuteho o 1. Zmereno: 204 -> 0 a 84 -> 0 bodu.
+
+Na tohle narazil kontrakt hloubky ostrosti: negativni kontrola (vetev
+vypnuta) PROCHAZELA, protoze se snimky lisily i bez ni. Nejspis to je
+i duvod, proc pocet bodu nad 8 urovni v kontraktu stinu kolisal (37
+a 90 podle toho, co bezelo pred tim).
+
+### 3. Merici skript byl ve scratchpadu a zmizel
+
+Zadani (pravidlo 1) odkazovalo na `scratchpad/sprperf2.py`, ktery mezi
+sezenimi zmizel. Protokol je ted v repu: `tools/perf.py` (spravne
+`alfa * TICK`, flush pres `getImageData`, kazda varianta v nove zalozce,
+kontrola `g.tick` a `bobPrev`, rezim `--hra` pro mereni za behu).
+
+### Kde cas konci po teto revizi (RIVER, zvetseni 5, za behu)
+
+`python3 tools/perf.py --hra`, 49 spritu, 16 stinu, 29 letcu:
+
+| | ms na snimek |
+|---|---:|
+| vse zapnute | 27,83 |
+| mekke stiny vyp | 24,69 |
+| hloubka ostrosti vyp | 10,84 |
+| hrany Scale2x | 24,93 |
+| hrany vyhlazeno | 24,55 |
+
+Hloubka ostrosti porad stoji ~17 ms, ale uz ne za sprity: zbyva pruchod
+TERENU (`ctx.filter = blur(DOF_BLUR / S)` = 0,14 px pres cely obraz plus
+bilinearni zvetseni). Blur 0,14 px je v softwarovem rasteru pod prahem,
+presto vrstva filtru obraz meni (drive zmereno 51 483 bodu, max 15
+urovni) - jeji odstraneni je tedy zmena VZHLEDU a patri hraci, ne revizi.
+

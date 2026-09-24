@@ -1091,7 +1091,7 @@ const $ = s => document.querySelector(s);
 /* Vychozi hodnota volby hran spritu. Bez ni byla `undefined` a podminka
    `!== "bez"` zapinala Scale2x i v rezimu, kde ma byt vypnuty - kontrakt
    naklonu to chytil jako ztratovy rozklad (8 bodu misto 0). */
-const state = { spriteScale: "bez", shadowCache: true };
+const state = { spriteScale: "bez", shadowCache: true, dofCache: true };
 const TICK = 1 / 50;                 // herni logika na 50 Hz jako original
 const SCROLL = 12.5;                 // 0x1da6: $4000 16.16 = .25 px/VBL
 /* fp@(3542): cela cast scroll citace (word). Vsechny screen-y odvozene
@@ -11873,9 +11873,20 @@ function updateVehicleTracks(g) {
 const UPSCALE_CACHE = new WeakMap();      // cv -> { S, n }
 const UPSCALE_LRU = new Map();            // cv -> zvetsenina, poradi = stari
 const UPSCALE_MAX = 64;
+/* Vraceny obraz ma 1px PRUHLEDNY RAMECEK: obsah zacina na (1, 1) a volajici
+   kresli z vyrezu (UPSCALE_OFS, UPSCALE_OFS, w, h). Duvod je zmereny:
+   bilinearka pri vzorkovani u okraje sahne o bod za vyrez. U vlastniho
+   platna tam byl "clamp" (opakoval se krajni bod), u sdileneho scratche
+   zbytek PREDCHOZIHO, vetsiho spritu (mazal se jen obdelnik aktualniho) -
+   a vlevo nahore zase clamp, protoze sprite lezel v rohu. Tentyz sprite se
+   tedy kreslil jinak podle toho, jestli uz byl v cache: dva snimky se
+   STEJNYM nastavenim se lisily o 84 az 204 bodu. S rameckem vzorkuji obe
+   cesty do pruhledna, stejne. */
+const UPSCALE_OFS = 1;
 function upscaledSprite(cv, S) {
   if (S === 1) return cv;
   const w = cv.width * S, h = cv.height * S;
+  const W2 = w + 2 * UPSCALE_OFS, H2 = h + 2 * UPSCALE_OFS;
   let zaz = UPSCALE_CACHE.get(cv);
   if (!zaz || zaz.S !== S) { zaz = { S: S, n: 0 }; UPSCALE_CACHE.set(cv, zaz); }
   zaz.n++;
@@ -11886,10 +11897,10 @@ function upscaledSprite(cv, S) {
   }
   if (zaz.n >= 3) {
     const vlastni = document.createElement("canvas");
-    vlastni.width = w; vlastni.height = h;
+    vlastni.width = W2; vlastni.height = H2;
     const cx = vlastni.getContext("2d");
     cx.imageSmoothingEnabled = false;
-    cx.drawImage(cv, 0, 0, w, h);
+    cx.drawImage(cv, UPSCALE_OFS, UPSCALE_OFS, w, h);
     UPSCALE_LRU.set(cv, vlastni);
     if (UPSCALE_LRU.size > UPSCALE_MAX) {
       const nejstarsi = UPSCALE_LRU.keys().next().value;
@@ -11901,13 +11912,13 @@ function upscaledSprite(cv, S) {
   }
   let big = state.spriteScratch;
   if (!big) big = state.spriteScratch = document.createElement("canvas");
-  if (big.width < w || big.height < h) {
-    big.width = Math.max(big.width, w); big.height = Math.max(big.height, h);
+  if (big.width < W2 || big.height < H2) {
+    big.width = Math.max(big.width, W2); big.height = Math.max(big.height, H2);
   }
   const x = big.getContext("2d");
-  x.clearRect(0, 0, w, h);
+  x.clearRect(0, 0, W2, H2);                    // i ramecek, viz vyse
   x.imageSmoothingEnabled = false;
-  x.drawImage(cv, 0, 0, w, h);
+  x.drawImage(cv, UPSCALE_OFS, UPSCALE_OFS, w, h);
   return big;
 }
 
@@ -11987,6 +11998,28 @@ function drawSpriteDevice(ctx, cv, dx, dy, S, blurDev, sx, sy, cx, cy) {
   const naBodu = cele && !hladce &&
                  Math.abs(px - Math.round(px)) < 0.01 &&
                  Math.abs(py - Math.round(py)) < 0.01;
+  /* Hloubka ostrosti je tataz past jako mekke stiny: `ctx.filter` na
+     kazdy rozostreny sprite pri kazdem kresleni. Rozostreni zavisi jen na
+     vysce, takze se spocita jednou (`preBlurred`); zaokrouhluje se na
+     setiny, aby letci s plynule se menici vyskou neplodili variantu na
+     kazdy tik. Zmereno za behu (krok + podpixelovy snimek, zvetseni 5):
+     TOWN 29,34 -> 21,93 ms, RIVER 43,16 -> 24,98 ms.
+
+     POZOR: tahle vetev musi byt PRED `ctx.save()` a nastavenim filtru.
+     Prvni pokus ji mel az za nimi - kreslil tedy se stale aktivnim
+     filtrem a `return` nechal vnejsi `save()` bez `restore()`, takze
+     filtr prosakoval do vsech dalsich kreseb snimku. Namereno 88,9 ms
+     a mylny zaver, ze predrozostreni je drazsi (opraveno 2026-09-24). */
+  if (blurDev > 0.02 && cele && state.dofCache !== false) {
+    const zaz = preBlurred(cv, cv.width * zbytek, cv.height * zbytek,
+                           Math.round(blurDev * 100) / 100);
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(zaz.cv, px - zaz.pad, py - zaz.pad);
+    ctx.restore();
+    return;
+  }
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   if (blurDev > 0.02) ctx.filter = "blur(" + blurDev.toFixed(3) + "px)";
@@ -11994,23 +12027,18 @@ function drawSpriteDevice(ctx, cv, dx, dy, S, blurDev, sx, sy, cx, cy) {
   // umisteni. V rezimu "vyhlazeno" se VYNECHAVA: jinak se na displej
   // dotahuje uz zvetsena mrizka v pomeru 1:1 a bilinearka nema co michat
   // - zmereno, vysledek byl BITOVE shodny s "bez" (0 rozdilnych bodu).
-  /* Hloubka ostrosti vypada jako tataz past jako mekke stiny: `ctx.filter`
-     se vola na kazdy rozostreny sprite pri kazdem kresleni a stoji to
-     12,8 ms na snimek (35,35 proti 22,55 ms) za CTYRI pozemni objekty.
-     Predrozostrit je ale ZKOUSENO A JE TO HORSI: tataz scena stoupla na
-     88,9 ms. Neni to rozostrenim - varianta, ktera do cache kreslila BEZ
-     filtru, dala 85,8 ms; drahe je samo kresleni z tech platen (4 volani,
-     68 500 bodu na snimek). Zustava tedy filtr pri kresleni. */
   const predzvetsit = !hladce && zbytek >= 2;
   const big = predzvetsit ? upscaledSprite(cv, Math.floor(zbytek)) : cv;
   const bw = predzvetsit ? cv.width * Math.floor(zbytek) : cv.width;
   const bh = predzvetsit ? cv.height * Math.floor(zbytek) : cv.height;
+  // Zvetsenina ma 1px ramecek (viz `upscaledSprite`), male platno ne.
+  const bo = predzvetsit && big !== cv ? UPSCALE_OFS : 0;
   if (naBodu && !(blurDev > 0.02)) {
     ctx.imageSmoothingEnabled = false;       // presne na bodu: zadne michani
-    ctx.drawImage(big, 0, 0, bw, bh, Math.round(px), Math.round(py), w, h);
+    ctx.drawImage(big, bo, bo, bw, bh, Math.round(px), Math.round(py), w, h);
   } else {
     ctx.imageSmoothingEnabled = true;
-    ctx.drawImage(big, 0, 0, bw, bh, px, py, w, h);
+    ctx.drawImage(big, bo, bo, bw, bh, px, py, w, h);
   }
   ctx.restore();
 }
