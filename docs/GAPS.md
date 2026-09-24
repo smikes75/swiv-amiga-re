@@ -37,10 +37,8 @@ ctyrmi SMART vrstvami.
 
 Otevrene zustava:
 
-- zbyvajici specialni/player-transition call-sites. Extra life potrebuje
-  presunout threshold kontrolu z okamziteho `awardScore()` na dalsi player
-  resume a napojit sestinotovy efekt `0x5600` (424/336/266/212/168/133,
-  priority120, rozestup 5 VBL);
+- ~~extra life z `awardScore()`~~ presunuto na `0x710c` (2026-09-24);
+  tabulka efektu je kompletni (docs/SOUND.md "Still open");
 - efekty specificke pro pozdejsi levely.
 
 Gameplay hudba v TOWN neni mezera: original drzi tracker modul na titulku a
@@ -438,9 +436,10 @@ Pruchod celym levelem (`TOWN-SURVEY.md`) ukazal dva systemove rozdily:
   Rozdeleni i pocet sedi, konkretni posloupnost se lisi, jakmile mezi
   zvukova IRQ zasahne herni kod. Presny prubeh potrebuje per-stav
   streamovani bufferu (nebo ScriptProcessor), coz zatim nedelame.
-- **Extra zivot `0x5600` se zatim spousti v `awardScore()`.** Nativne prah
-  vyhodnocuje az nasledujici resume ziveho hrace (`0x710c`), takze poradi
-  vuci jinym taskum ve stejnem VBL neni overene.
+- ~~Extra zivot `0x5600` se zatim spousti v `awardScore()`.~~ **Opraveno
+  2026-09-24**: prah testuje `checkExtraLife()` hned za rankem slotu, jako
+  rodicovska uloha na `0x710c` - jen dokud slot zije (`tstb +54`) a jeden
+  prah za kolo. Body ziskane po smrti daji zivot az po respawnu.
 - Scroll originalu se pricita jednou za iteraci hlavni smycky (`0x291e`),
   objekty integruji rychlost × ubehle VBL (`0x62fe`); pri zatezi A500 scroll
   zpomali (64–98 px za 8 s misto 100). Prepis bezi konstantne 50 Hz.

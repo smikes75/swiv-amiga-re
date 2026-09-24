@@ -212,9 +212,12 @@ an exact reuse pattern still needs scanline DMA-slot phase.
 
 ## Still open
 
-- The extra-life chime is connected, but from inside `awardScore()`. Natively
-  the threshold is evaluated by the following live-player resume at `0x710C`,
-  so its ordering against other tasks created in the same VBL is unverified.
+- ~~The extra-life chime is connected, but from inside `awardScore()`.~~
+  Fixed 2026-09-24: the threshold now lives in `checkExtraLife()`, called by
+  each slot right after its rank tick (`0x70FA`), which is where the slot's
+  parent task evaluates it at `0x710C`. It runs only while the slot is alive
+  (`TST.B +54`, the loop leaves at `0x7140`), so score earned after death
+  pays out only after the respawn, and one threshold is tested per round.
 - Nothing in the effect table is unhooked any more; what remains open is the
   exact CIA/beam phase behind the sub-millisecond onset differences already
   listed above. `0x4DC6` was the last routine still without a runtime caller,

@@ -6688,6 +6688,51 @@ def main():
             expect(slot2["maska"].get("poResume") == 0,
                    "atribuce +506 se po resume nesmazala: %r" % (slot2["maska"],))
 
+            # ---- 0x710c: extra zivot az v kole rodice slotu ----------
+            # Prah testuje rodicovska uloha slotu za rankem, jen dokud slot
+            # zije (`tstb +54`, jinak odchod na 0x7140). Body ziskane po smrti
+            # prinesou zivot az po respawnu - drive hned v awardScore().
+            extraZivot = page.evaluate("""() => {
+              startGame(0);
+              const g = state.g;
+              for (let i = 0; i < 30; i++) step(g);
+              const p = g.player;
+              const r = {};
+              // zivy: body -> zivot az v dalsim kole
+              g.score = 9990; g.nextLife = 10000;
+              const z0 = g.lives;
+              awardScore(g, 20);
+              r.hned = g.lives - z0;
+              p.inv = 1000; step(g);
+              r.poKole = g.lives - z0;
+              r.prah = g.nextLife;
+              // mrtvy: body behem cekani na respawn -> zivot az po respawnu.
+              // Meri se posun PRAHU, ne `g.lives`: prepis odecita zivot pri
+              // respawnu, takze +1 a -1 by se v jednom kroku potkaly.
+              killPlayer(g);
+              const prah1 = g.nextLife;
+              g.score = g.nextLife - 5;
+              awardScore(g, 10);
+              let mrtvyTiku = 0, prahBehemSmrti = prah1;
+              while (!p.alive && mrtvyTiku < 400) {
+                prahBehemSmrti = g.nextLife;
+                step(g); mrtvyTiku++;
+              }
+              r.behemSmrti = prahBehemSmrti - prah1;
+              r.ozil = p.alive;
+              p.inv = 1000; step(g);
+              r.poRespawnu = g.nextLife - prah1;
+              return r;
+            }""")
+            expect(extraZivot["hned"] == 0 and extraZivot["poKole"] == 1 and
+                   extraZivot["prah"] == 40000,
+                   "extra zivot slotu 1 ma prijit az v dalsim kole: %r" %
+                   (extraZivot,))
+            expect(extraZivot["behemSmrti"] == 0 and extraZivot["ozil"] and
+                   extraZivot["poRespawnu"] == 30000,
+                   "body ziskane po smrti maji dat zivot az po respawnu: %r" %
+                   (extraZivot,))
+
             # ---- 0xa36a: skore, zivoty a zavreni slotu 2 -------------
             skore = page.evaluate("""() => {
               startGame(0);
@@ -6717,13 +6762,19 @@ def main():
                             p1: g.score - p1, p2: g.jeepScore - p2 });
               }
               // 0x710c: extra zivot slotu 2 na 10000, pak po 30000,
-              // a s nim 6000 do `+110`.
-              const rankPred = j.rank | 0, zivotyPred = g.jeepLives | 0;
+              // a s nim 6000 do `+110`. Prah testuje az rodicovska uloha
+              // slotu v dalsim kole (za rankem), ne `awardScore`.
+              j.inv = 1000; g.lives = 99;
               g.jeepScore = 0; g.jeepNextLife = 10000;
               awardScore(g, 10000, 2);
+              const hned = (g.jeepLives | 0);
+              const rankPred = j.rank | 0, zivotyPred = g.jeepLives | 0;
+              step(g);
               const extra = { zivoty: (g.jeepLives | 0) - zivotyPred,
+                              hned: hned - zivotyPred,
                               prah: g.jeepNextLife,
-                              rank: (j.rank | 0) - rankPred };
+                              // +1 je bezny rank za kolo (0x70fa)
+                              rank: (j.rank | 0) - rankPred - 1 };
               // Vycerpani zasoby zavre slot; HUD se vrati k promptu.
               g.jeepLives = 1; j.inv = 0; j.alive = true;
               g.jeepScore = 4321;
@@ -6750,9 +6801,10 @@ def main():
                    "strela slotu 1 pripsana spatne: %r" % (p1,))
             expect(p2 == {"majitel": 2, "body": 12, "p1": 0, "p2": 12},
                    "strela slotu 2 pripsana spatne: %r" % (p2,))
-            expect(skore["extra"] == {"zivoty": 1, "prah": 40000,
+            expect(skore["extra"] == {"zivoty": 1, "hned": 0, "prah": 40000,
                                       "rank": 6000},
-                   "extra zivot slotu 2: %r" % (skore["extra"],))
+                   "extra zivot slotu 2 (az v dalsim kole, 0x710c): %r" %
+                   (skore["extra"],))
             expect(skore["zavreno"]["player2"] is False and
                    skore["zavreno"]["players"] == 1 and
                    skore["zavreno"]["best"] == 4321 and

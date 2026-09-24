@@ -4862,23 +4862,41 @@ function updateDifficulty(g) {                  // 0x1cd4..0x1d02
    a `+68` zasobu; `0x710c` pri prekroceni prahu prida 30000, ubere jeden
    zivot z `+68` a pricte 6000 do `+110` (obtiznost). */
 function awardScore(g, points, slot = 1) {
+  // 0xa38c pouze pricte `+362` do `+76` zaznamu slotu. Prah extra zivota
+  // vyhodnocuje az rodicovska uloha slotu (`checkExtraLife`, 0x710c).
   if (slot === 2) {
     if (!g.player2) return;
     g.jeepScore = (g.jeepScore | 0) + points;
-    if (!Number.isFinite(g.jeepNextLife)) g.jeepNextLife = 10000;
-    if (g.jeepScore >= g.jeepNextLife) {
-      g.jeepLives = (g.jeepLives | 0) + 1;
-      g.jeepNextLife += 30000;
-      g.player2.rank = signedWord((g.player2.rank || 0) + 6000);
-      sfxExtraLife(g, g.jeepScore);
-    }
     return;
   }
   g.score += points;
+}
+/* 0x710c: prah extra zivota NENI v okamziku pripsani bodu. Kontroluje ho
+   rodicovska uloha slotu jednou za kolo, hned po ranku (0x70fa) a HUD
+   (0x737e), a jen dokud slot zije - smycka 0x70f6..0x713e se pri
+   `tstb +54` = 0 opusti (0x7140). Body ziskane po smrti (dobihajici
+   strely) tedy prinesou zivot az po respawnu, a zvuk 0x5600 startuje
+   v kole po pripsani, v poradi uloh na miste rodice slotu.
+
+   Pri jednom kole se testuje jen JEDEN prah (`cmpl`, ne smycka), takze
+   skok pres dva prahy da druhy zivot o kolo pozdeji. */
+function checkExtraLife(g, slot) {
+  if (slot === 2) {
+    if (!g.player2) return;
+    if (!Number.isFinite(g.jeepNextLife)) g.jeepNextLife = 10000;
+    if ((g.jeepScore | 0) >= g.jeepNextLife) {
+      g.jeepNextLife += 30000;                              // 0x7116
+      g.jeepLives = (g.jeepLives | 0) + 1;                  // 0x711e
+      g.player2.rank = signedWord((g.player2.rank || 0) + 6000); // 0x7122
+      sfxExtraLife(g, g.jeepScore);                         // 0x7128
+    }
+    return;
+  }
   if (g.score >= g.nextLife) {
-    g.lives++; g.nextLife += 30000;
+    g.nextLife += 30000;                                    // 0x7116
+    g.lives++;                                              // 0x711e
     if (g.player)
-      g.player.rank = signedWord((g.player.rank || 0) + 6000);// 0x7116
+      g.player.rank = signedWord((g.player.rank || 0) + 6000);// 0x7122
     sfxExtraLife(g, g.score);                               // 0x7128
   }
 }
@@ -9040,6 +9058,7 @@ function stepJeep(g) {
   const p = g.player2;
   if (!p || !p.alive) return;
   incrementPlayerRank(p);                      // 0x70f6 pres 0x7090
+  checkExtraLife(g, 2);                        // 0x710c, za rankem
   if (swapVehicleForm(g, p)) return;           // 0x94c2 / 0x94d0
   clampJeep(g, p);                             // 0x94f0 pred vstupem
   const nib = (g.keys2.u ? 1 : 0) | (g.keys2.d ? 2 : 0) |
@@ -9307,6 +9326,7 @@ function step(g) {
 
   if (p.alive) {
     incrementPlayerRank(p);                    // player task pred enemy tasky
+    checkExtraLife(g, 1);                      // 0x710c, za rankem
     // 0x947c vola 0x954c pred nactenim vstupu a pred 0x92a0/0x62d2.
     // Kardinalni pohyb proto muze na jeden publikovany frame dojit az na
     // x=1/319 a y=1/255; dalsi resume jej nejdriv vrati na 4..316/252.
