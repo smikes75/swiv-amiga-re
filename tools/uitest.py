@@ -6577,6 +6577,117 @@ def main():
                    "lod ve skoku neni 1024/256 px/t (0x8fac): %r" %
                    (lod["lodVzduch"],))
 
+            # ---- slot 2: pickupy, stit a vlastni pool strel ----------
+            # `0x97d6`/`0x98c4`: TOKEN i jadro MINY zapisuji do zaznamu slotu
+            # podle `+506` (bit 6 = slot 1, jinak slot 2). Trida jeepu je
+            # `0x0090` (bit 4 pozemni dotek + bit 7), handler dotyku tokenu
+            # a jadra je pro bity 3 i 4 (`0x6564`). Drive jeep nesebral nic.
+            # `0x6042` alokuje DVA pooly strel po 30 (`fp@(11288)`,
+            # `fp@(11468)`) a `+506` se maze po kazdem resume (`0x6538`),
+            # coz plati i pro bity atribuce.
+            slot2 = page.evaluate("""() => {
+              const r = {};
+              const pripoj = () => {
+                startGame(0);
+                const g = state.g;
+                for (let i = 0; i < 60; i++) step(g);
+                g.keys2.f = true; step(g); g.keys2.f = false;
+                const j = g.player2;
+                j.inv = 0; g.lives = 99;
+                g.player.x = 40; g.player.y = 60;      // vrtulnik stranou
+                j.x = 200; j.y = 200;
+                return [g, j];
+              };
+              const token = (g, j, typ) => ({ x: j.x, y: j.y + scrollTop(g),
+                vx: 0, vy: 0, typ, cycles: 12, blink: false, hitCooldown: -1,
+                phase: 'active', interactive: true, activeHalf: 0,
+                dead: false, cost: 5, budgeted: true, bobOrdinal: 900000 });
+              const drz = (g, j, o, n) => {        // drz objekt na jeepu
+                for (let i = 0; i < n && !o.dead && !o.consumed; i++) {
+                  o.x = j.x; o.y = j.y + scrollTop(g);
+                  g.player.x = 40; g.player.y = 60; step(g);
+                }
+              };
+              // TOKEN typ 3 (ochrana + 500 bodu) pod jeepem
+              {
+                const [g, j] = pripoj();
+                const k = token(g, j, 3);
+                g.tokens.push(k);
+                const heliPred = g.player.tokenCount | 0, skorePred = g.jeepScore | 0;
+                drz(g, j, k, 8);
+                r.token = { sebran: !!k.dead, jeep: j.tokenCount | 0,
+                            heli: (g.player.tokenCount | 0) - heliPred,
+                            jeepSkore: (g.jeepScore | 0) - skorePred,
+                            jeepInv: j.inv | 0 };
+              }
+              // Jadro MINY pod jeepem -> stit `+106` slotu 2
+              {
+                const [g, j] = pripoj();
+                spawnMineCore(g, { x: j.x, y: j.y + scrollTop(g) });
+                const h = g.hazards[g.hazards.length - 1];
+                h.vy = 0;
+                drz(g, j, h, 8);
+                const hned = j.bubbleTimer | 0;
+                for (let i = 0; i < 20; i++) {
+                  g.player.x = 40; g.player.y = 60; step(g);
+                }
+                r.jadro = { sebrano: !!h.consumed || !!h.dead, hned,
+                            po20: j.bubbleTimer | 0, inv: j.inv | 0,
+                            bublina: !!(j.bubbleBound && j.bubbleBound.started),
+                            heliStit: g.player.bubbleTimer | 0 };
+              }
+              // Dva pooly strel: plny pool slotu 1 neblokuje jeep
+              {
+                const [g] = pripoj();
+                g.bullets = [];
+                for (let i = 0; i < 30; i++)
+                  spawnPlayerBullet(g, { x: 0, y: 0, vx: 0, vy: 0, frame: 14, owner: 1 });
+                r.pool = {
+                  heli31: spawnPlayerBullet(g, { x: 0, y: 0, vx: 0, vy: 0, frame: 14, owner: 1 }),
+                  jeep1: spawnPlayerBullet(g, { x: 0, y: 0, vx: 0, vy: 0, frame: 14, owner: 2 }),
+                  slotJeepu: g.bullets[g.bullets.length - 1].poolSlot };
+              }
+              // Atribuce se maze s `+506`: stary dotyk vrtulniku nesmi vydrzet
+              {
+                const [g] = pripoj();
+                let cil = null;
+                for (let i = 0; i < 3000 && !cil; i++) {
+                  step(g); g.lives = 99;
+                  cil = g.spawns.find(s => s.born && s.alive && s.hp > 0);
+                }
+                if (cil) {
+                  cil.creditMask = 1;                // dotyk vrtulniku kdysi drive
+                  step(g);
+                  r.maska = { poResume: cil.creditMask | 0 };
+                } else r.maska = { nenasel: true };
+              }
+              return r;
+            }""")
+            expect(slot2["token"]["sebran"] and slot2["token"]["jeep"] == 1 and
+                   slot2["token"]["heli"] == 0,
+                   "TOKEN prejety jeepem nesel slotu 2: %r" % (slot2["token"],))
+            expect(slot2["token"]["jeepSkore"] == 500 and
+                   slot2["token"]["jeepInv"] >= 490,
+                   "TOKEN typ3 nedal jeepu 500 bodu a ochranu (0x983e): %r" %
+                   (slot2["token"],))
+            # Hned po sebrani je `+106 = -1` (pozadavek, `0x98dc`); dalsi krok
+            # jeepu z nej udela 500 a zalozi bublinu, pak ubiha po tiku:
+            # po 20 krocich 500 - 19 = 481.
+            expect(slot2["jadro"]["sebrano"] and slot2["jadro"]["hned"] == -1 and
+                   slot2["jadro"]["bublina"] and slot2["jadro"]["inv"] >= 99 and
+                   slot2["jadro"]["heliStit"] == 0,
+                   "jadro MINY: stit +106 slotu 2 (0x92a0) nevznikl: %r" %
+                   (slot2["jadro"],))
+            expect(slot2["jadro"]["po20"] == 481,
+                   "stit jeepu neubiha po tiku (cekano 481): %r" %
+                   (slot2["jadro"],))
+            expect(slot2["pool"]["heli31"] is False and slot2["pool"]["jeep1"] and
+                   slot2["pool"]["slotJeepu"] == 0,
+                   "pooly strel nejsou oddelene (0x6042 dva po 30): %r" %
+                   (slot2["pool"],))
+            expect(slot2["maska"].get("poResume") == 0,
+                   "atribuce +506 se po resume nesmazala: %r" % (slot2["maska"],))
+
             # ---- 0xa36a: skore, zivoty a zavreni slotu 2 -------------
             skore = page.evaluate("""() => {
               startGame(0);

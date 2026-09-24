@@ -1240,17 +1240,29 @@ original objekty, plus pripadna chyba terenu - a tu ma zarazka hlidat.
 
 ### Davka 6 (skore obou slotu) — otevrene body
 
+- **Opraveno 2026-09-24: atribuce se nesmazala s `+506`.** `creditMask`
+  (bity 6/7) se v prepisu scital po cely zivot objektu, v originalu je
+  soucasti `+506`, ktery `0x6538` maze po kazdem resume. Kdyz vrtulnik cil
+  jednou skrabl a jeep ho pozdeji znicil, body dostal vrtulnik.
 - **Nulova maska `+506` pripada slotu 1, ne nikomu.** `0xa36a` pri
   nenastavenem bitu 6 ani 7 skore nepripise. Prepis v tom pripade
   pripisuje slotu 1, aby se jednohracska hra nehnula (HUD je dal 100 %
   na vsech osmi checkpointech). Rozlisit to znamena projit vsechny cesty,
   ktere `killSpawnCredited` volaji mimo sweep, a u kazde overit, jestli
   original opravdu nedava nic.
-- **Sdileny pool strel.** Nativne ma kazdy slot vlastnich 30 slotu
-  (`0x6028`); prepis je sdili, takze intenzivni palba jednoho hrace muze
-  druhemu ubrat sloty. Pri sile 5 a dvou hracich je to 10 strel z 30.
-- **TOKENy sbira jen slot 1.** Bonus typu 3 (`0x983e`, 500 bodu) i
-  ostatni pickupy jsou v prepisu navazane na `g.player`.
+- ~~Sdileny pool strel~~ **opraveno 2026-09-24**: `0x6042` vola alokaci
+  `0x6050` (1440 B = 30 x 48) dvakrat a ulozi pooly do `fp@(11288)`
+  a `fp@(11468)`; prepis ma ted pool na slot a updatery slotu 1 bezi pred
+  slotem 2.
+- ~~TOKENy sbira jen slot 1~~ **opraveno 2026-09-24**: trida jeepu je
+  `0x0090` (bit 4 pozemni dotek + bit 7, `0x90e2`), ve skoku bit 3 misto 4.
+  TOKEN i jadro MINY maji handler dotyku pro bity 3 i 4 (`0x6564`) a
+  `0x97d6`/`0x98c4` vybiraji zaznam slotu `btst #6` nad `+506`. Jeep ted
+  sbira tokeny (efekty do sveho zaznamu, typ 3 = 500 bodu slotu 2) i jadro
+  MINY - a jeho smycka (`0x92a0`) zpracuje stit `+106` stejne jako
+  vrtulnik: -1 -> 500 a svazana bublina `0x98f2`, pak `+108` pripnute na
+  100. Nulova maska jde pri pickupu slotu 1 (original by zvolil slot 2;
+  ve hre nenastava, dotek vzdy nese bit 6 nebo 7).
 - **Continue okno je jen pro slot 1.** Slot 2 se po vycerpani zavre a
   hrac ho koupi znovu pres PRESS FIRE; nativni interakce dvou slotu ve
   fazi `continue`/`closing` nebyla zkoumana.

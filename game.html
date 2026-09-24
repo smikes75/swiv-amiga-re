@@ -2388,6 +2388,13 @@ function composeTownBobs(g, top) {
       ordinal: jp.bobOrdinal,
       primaryOp: (jp.inv & 8) ? BOB_FILL_INDEX9 : null,
     });
+    // Svazana bublina MINE (`0x98f2`) - tataz jako u vrtulniku, jen nad
+    // jeepem; z nesmi pod zem (`0x632a` zaporne z nuluje).
+    const jb = jp.bubbleBound;
+    if (jb && jb.visible)
+      bob("jeep-bubble", "MINE.LIN", jb.frame, jp.x, jp.y,
+          Math.max(0, (jp.z | 0) + jb.z),
+          { ordinal: jb.bobOrdinal, castShadow: false, objectFlags: 1 });
     // 0x89e8: vazane dite se stejnou polohou plus pevny ofset; bit 0
     // v +367 mu bere vlastni stin, bit 2 mu dava blikani rodice.
     // 0x8a10: ofset ze smeru jizdy (+358 rodice), snimek z uhlu veze
@@ -3577,11 +3584,12 @@ function townHwCandidates(g) {
 
   normalizePlayerBulletSlots(g);
   const bullets = (g.bullets || []).filter(b => b.poolSlot >= 0)
-    .slice().sort((a, b) => a.poolSlot - b.poolSlot);
+    .slice().sort((a, b) => bulletPoolOrder(a) - bulletPoolOrder(b));
   for (const b of bullets) {
     const r = hwSpriteCandidate(g, b, "player-bolt", "BULLET.LIN",
                                 b.frame ?? 14);
-    if (r) { r.serial = serial++; r.poolSlot = b.poolSlot; out.push(r); }
+    // Klic pro parovani musi rozlisit pooly obou slotu (viz hwSmoothKey).
+    if (r) { r.serial = serial++; r.poolSlot = bulletPoolOrder(b); out.push(r); }
   }
   return out;
 }
@@ -3956,18 +3964,26 @@ function assignBobOrdinal(g, o) {
   }
   return o.bobOrdinal;
 }
-/* P1 resident HW projectile pool 0x6028 ma presne 30 slotu. Pool slot
-   urcuje poradi updateru na priorite 0xfffe a neni priority100 ordinal. */
-function firstFreePlayerBulletSlot(g) {
+/* Resident HW projectile pool 0x6028 ma presne 30 slotu - a kazdy SLOT HRACE
+   ma VLASTNI: `0x6042` vola alokaci `0x6050` (1440 B = 30 x 48) dvakrat
+   a ulozi je do `fp@(11288)` (slot 1) a `fp@(11468)` (slot 2). Drive byl
+   pool jeden spolecny, takze pri sile 5 mohl jeden hrac druhemu ubrat
+   sloty. Pool slot urcuje poradi updateru na priorite 0xfffe a neni
+   priority100 ordinal; pool slotu 1 je zalozen prvni, jeho updatery tedy
+   bezi pred updatery slotu 2 (`bulletPoolOrder`). */
+const bulletOwner = b => (b.owner === 2 ? 2 : 1);
+const bulletPoolOrder = b => (bulletOwner(b) === 2 ? 30 : 0) + b.poolSlot;
+function firstFreePlayerBulletSlot(g, owner = 1) {
   const used = new Uint8Array(30);
   for (const b of g.bullets || [])
-    if (Number.isInteger(b.poolSlot) && b.poolSlot >= 0 && b.poolSlot < 30)
+    if (bulletOwner(b) === owner &&
+        Number.isInteger(b.poolSlot) && b.poolSlot >= 0 && b.poolSlot < 30)
       used[b.poolSlot] = 1;
   for (let slot = 0; slot < 30; slot++) if (!used[slot]) return slot;
   return -1;
 }
 function spawnPlayerBullet(g, spec) {
-  const slot = firstFreePlayerBulletSlot(g);
+  const slot = firstFreePlayerBulletSlot(g, bulletOwner(spec));
   if (slot < 0) return false;
   g.shotsFired = (g.shotsFired | 0) + 1;       // 0x6014, az po nalezeni slotu
   spec.poolSlot = slot;
@@ -3977,17 +3993,19 @@ function spawnPlayerBullet(g, spec) {
 /* Stare save/izolovane fixtures slot nemaji. Produkcni spawn jej vzdy ma;
    pri renderu legacy stavu jej doplnime stejnym first-free pravidlem. */
 function normalizePlayerBulletSlots(g) {
-  const used = new Uint8Array(30), pending = [];
+  const used = { 1: new Uint8Array(30), 2: new Uint8Array(30) }, pending = [];
   for (const b of g.bullets || []) {
+    const u = used[bulletOwner(b)];
     if (Number.isInteger(b.poolSlot) && b.poolSlot >= 0 && b.poolSlot < 30 &&
-        !used[b.poolSlot]) used[b.poolSlot] = 1;
+        !u[b.poolSlot]) u[b.poolSlot] = 1;
     else pending.push(b);
   }
   for (const b of pending) {
+    const u = used[bulletOwner(b)];
     let slot = -1;
-    for (let i = 0; i < 30; i++) if (!used[i]) { slot = i; break; }
+    for (let i = 0; i < 30; i++) if (!u[i]) { slot = i; break; }
     b.poolSlot = slot;
-    if (slot >= 0) used[slot] = 1;
+    if (slot >= 0) u[slot] = 1;
   }
 }
 function spawnPlop(g, x, y, parentVx = 0, parentVy = 0) {
@@ -4586,18 +4604,36 @@ function shootToken(g, k) {
 
 /* 0x97c6 (callback +514, instalovany 0x6564): SEBRANI. Hracska pole podle
    zapisu v teto rutine - +100 sila zbrane, +102 HUD citac tokenu,
-   +104 rezim, +98 prodleva palby, +108 doba ochrany, +76 skore. */
+   +104 rezim, +98 prodleva palby, +108 doba ochrany, +76 skore.
+
+   Vsechno se pise do zaznamu SLOTU, ktery token sebral: `0x97d6` vezme
+   `+506` a pri bitu 6 zvoli `fp@(11176)` (slot 1), jinak `fp@(11356)`
+   (slot 2). Drive sel pickup vzdy slotu 1, i kdyz token prejel jeep.
+
+   Nulova maska: original by zvolil slot 2, prepis slot 1 - stejne jako
+   `creditedSlot(o) || 1` u skore. Ve hre nenastava (dotek vzdy nese bit 6
+   nebo 7, sweep ted nastavuje oba); jen testovaci fixtury volaji pickup
+   primo bez atribuce a znamenaji tim vrtulnik. */
+function pickupSlot(o) {
+  const m = o.creditMask | 0;
+  return ((m & 1) || !(m & 2)) ? 1 : 2;          // btst #6 -> slot 1
+}
+const tokenSlot = pickupSlot;
 function pickupToken(g, k) {
-  const p = g.player;
+  const slot = tokenSlot(k);
+  const p = slot === 1 ? g.player : g.player2;
   g.tokensPickedUp = (g.tokensPickedUp || 0) + 1; // fp@(0x30ca)
   sfxTokenPickup(g, k.x);                       // 0x97ce -> 0x5614/0x5672
+  // Neaktivni slot 2: original zapise do jeho zaznamu, ktery pri pripojeni
+  // zase vynuluje `tryJoinJeep` - v obraze se nestane nic.
+  if (!p) { releaseToken(g, k); return; }
   // 0x97e4: kazdy typ nejdriv inkrementuje +102, ale 20 se vrati na 19.
   p.tokenCount = Math.min(19, (p.tokenCount || 0) + 1);
   if (k.typ === 2) {                             // 0x982a: rychlejsi palba
     p.reload = Math.max(8, (p.reload ?? 11) - 3);
   } else if (k.typ === 3) {                      // 0x983e: OCHRANA + body
     p.inv = ((p.inv || 0) + 500) & 0xFFFF;      // ADDI.W: scita se, 16bit wrap
-    awardScore(g, 500);                          // +76 += 500 (slot 1)
+    awardScore(g, 500, slot);                    // +76 += 500 (slot sberace)
   } else if (k.typ === 4) {                      // 0x984e: plna sila
     p.weapon = 6; p.reload = 8;
     startWhiteFlash(g);                         // 0x8852: 256, potom -4/VBL
@@ -6131,7 +6167,9 @@ function spawnMineCore(g, s) {                 // 0x9860: MINE#9/#10
 }
 function pickupMineCore(g, h) {                // 0x98c4
   if (!h.alive || h.consumed) return;
-  const p = g.player;
+  // 0x98c4: tentyz vyber slotu jako TOKEN (`btst #6` v `+506`).
+  const p = pickupSlot(h) === 1 ? g.player : g.player2;
+  if (!p) { h.consumed = 10; h.consumedTick = g.tick | 0; return; }
   if (!(p.bubbleTimer | 0)) {
     // -1 necha hracskou korutinu 0x92a0 zalozit svazany MINE#9/#10 BOB.
     p.bubbleTimer = -1;
@@ -7481,6 +7519,11 @@ function resumeTownObjectHousekeeping(g, task) {
 
   o.collisionEventWord = 0;                    // 0x6538 CLR.W +506
   o.collisionPlayerCredit = false;
+  // Bity 6/7 (kdo zasahl) jsou v TEMZE slove `+506`, takze se mazou s nim.
+  // Drive se `creditMask` scital po cely zivot objektu: kdyz vrtulnik cil
+  // jednou skrabl a jeep ho pozdeji znicil, body dostal vrtulnik (bit 6 ma
+  // v `0xa36a` prednost).
+  o.creditMask = 0;
   o.townResumeActive = false;
   if (o.townResumeInvalidated) o.retireAfterField = true;
   delete o.townResumeInvalidated;
@@ -8949,6 +8992,7 @@ function tryJoinJeep(g) {
     inv: 200,                                  // 0x90ce: +108 = 200
     cool: 0, rank: 0, volley: 0,
     weapon: 1, tokenCount: 0, mode: 0, reload: 12,
+    bubbleTimer: 0, bubbleBound: null,         // +106 slotu 2
     respawnT: 0, weaponX: pos.x, weaponY: pos.y,
     collisionEventWord: 0, collisionLethal: false,
   };
@@ -9063,7 +9107,19 @@ function stepJeep(g) {
     }
   }
   stepJeepAltitude(g, p, ja >= 0);
-  if (p.inv > 0) p.inv = Math.max(0, p.inv - 1);   // 0x92a0
+  // 0x92a0 cte `+106` ZAZNAMU SLOTU, stejne jako vrtulnik: -1 (nastavi ho
+  // jadro MINY, `0x98dc`) zalozi svazanou bublinu `0x98f2` a da 500, kladne
+  // pak kazdy tik pripne `+108` na 100. Drive jeep stit nemel vubec.
+  if ((p.bubbleTimer | 0) < 0) {
+    p.bubbleTimer = 500;
+    p.bubbleBound = { started: false, visible: false, budgeted: false };
+    assignBobOrdinal(g, p.bubbleBound);
+  } else if ((p.bubbleTimer | 0) > 0) {
+    p.inv = 100;
+    p.bubbleTimer--;
+  }
+  stepPlayerBubbleChild(g, p);                 // scheduler: jeep -> child
+  if (p.inv > 0) p.inv = Math.max(0, p.inv - 1);   // 0x92d2
   // 0x953a: rozmacknuti testuje clamp v obou smyckach, i ve vzduchu.
   if (jeepCrushed(g, p)) { killJeep(g); return; }
   stepJeepTurret(g, p, nib);
@@ -9154,6 +9210,9 @@ function stepJeepTurret(g, p, nib) {
 function killJeep(g) {
   const p = g.player2;
   if (!p || !p.alive || p.inv > 0) return;
+  // Bublina je svazane dite: se smrti vozidla konci (jako u vrtulniku).
+  if (p.bubbleBound) releaseCost(g, p.bubbleBound);
+  p.bubbleTimer = 0; p.bubbleBound = null;
   spawnPlayerBurst(g, p.x, p.y);               // 0x88fc
   p.alive = false;
   g.jeepLives = Math.max(0, (g.jeepLives | 0) - 1);
@@ -11340,6 +11399,12 @@ function step(g) {
   }
 
   const pn = nodePos(g, p, p.x, p.y);            // uzel hrace z resume N
+  // Uzel jeepu (slot 2). Jeho trida je `0x0090` = bit 4 (pozemni dotek)
+  // + bit 7 (atribuce slotu 2), ve skoku bit 4 -> bit 3 (`0x90e2`, `0x91ee`).
+  // TOKEN i jadro MINY maji handler dotyku pro bity 3 I 4 (`0x6564`), takze
+  // je jeep sebere na zemi i ve vzduchu a `btst #6` pak vybere slot 2.
+  const jp2 = g.player2;
+  const jn2 = jp2 && jp2.alive ? nodePos(g, jp2, jp2.x, jp2.y) : null;
   const tokenShotEvents = new Set(), tokenPickupEvents = new Set();
   for (const k of g.tokens) {
     if (k.dead) continue;
@@ -11350,8 +11415,13 @@ function step(g) {
     if (creditTarget(k, collectBulletEvent(kn.x, kn.y, tokenNode)))
       tokenShotEvents.add(k);
     if (p.alive && k.interactive &&
-        nodesTouch(PLAYER_NODE, pn.x, pn.y, tokenNode, kn.x, kn.y))
-      tokenPickupEvents.add(k);
+        nodesTouch(PLAYER_NODE, pn.x, pn.y, tokenNode, kn.x, kn.y)) {
+      tokenPickupEvents.add(k); creditTarget(k, 1);
+    }
+    if (jn2 && k.interactive &&
+        nodesTouch(PLAYER_NODE, jn2.x, jn2.y, tokenNode, kn.x, kn.y)) {
+      tokenPickupEvents.add(k); creditTarget(k, 2);
+    }
   }
 
   const spawnShotEvents = new Set(), bossShotEvents = new Set();
@@ -11493,6 +11563,17 @@ function step(g) {
         contactFrag.add(h); lethalContact = true; lethalSources.push(h.kind);
       } else if (h.kind === "minecore" && !h.consumed && overlap) {
         contactCore.add(h);
+      }
+    }
+  }
+
+  // Jadro MINY sebrane jeepem (stit `+106` slotu 2, viz `pickupMineCore`).
+  if (jn2) {
+    for (const h of g.hazards) {
+      if (!h.alive || h.kind !== "minecore" || h.consumed) continue;
+      const hn = nodePos(g, h, h.x, h.y - scrollTop(g));
+      if (nodesTouch(PLAYER_NODE, jn2.x, jn2.y, nodeExtent(h), hn.x, hn.y)) {
+        contactCore.add(h); creditTarget(h, 2);
       }
     }
   }
