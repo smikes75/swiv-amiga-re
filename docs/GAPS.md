@@ -444,14 +444,87 @@ Pruchod celym levelem (`TOWN-SURVEY.md`) ukazal dva systemove rozdily:
 - Scroll originalu se pricita jednou za iteraci hlavni smycky (`0x291e`),
   objekty integruji rychlost × ubehle VBL (`0x62fe`); pri zatezi A500 scroll
   zpomali (64–98 px za 8 s misto 100). Prepis bezi konstantne 50 Hz.
-  Rozhodnuti o modelovani zatim otevrene; porovnavani snimku se zarovnava
-  podle radku mapy, ne casu.
+  **Zmereno 2026-09-24: kolo planovace trva 2 az 5 VBL, original kresli
+  22,2 snimku za sekundu a 15 chovani ma kvuli tomu spatne casovani** -
+  viz sekce "Kadence planovace" nize.
 
 Dilci: TRAIN v t145 (neprukazne); MEDTANK sedi (1s zabery). GOOSE
 kontaktni HP drain je vyresen sondou respawnu proti BOBum (`0x3dd4` kresli
 do obrazovky `fp@(256)`, viz BEHAVIORS); zustava nemodelovane zpozdeni
 respawnu pri plne pameti (`0x6162` ceka na 546 B z loaderoveho alokatoru
 `fp@(-1502)`, jehoz heap neni v AMPROG).
+
+## Kadence planovace: original bezi na ~22 snimku za sekundu (zmereno 2026-09-24)
+
+**Nejvetsi rozdil mezi originalem a prepisem, jaky zatim zname.** Zmereno
+v harnessu vAmiga (TOWN, 4 000 VBL po uvolneni zamku scrollu, bez palby):
+
+| | pocet |
+|---|---:|
+| VBL mezi prohozenim bufferu obrazu (`0x291e`, `exg` nad `fp@(256)`) = 2 | 1 406 |
+| = 3 | 303 |
+| = 4 | 55 |
+| = 5 | 11 |
+| **snimku obrazu za sekundu** | **22,2** |
+
+Tataz cisla dava `fp@(-76)` (ubehle VBL od minuleho kola; pise ho
+planovac v knihovne zavadece, AMPROG.OBJ ho jen cte): 2 (2 509x), 3 (837x),
+1 (389x), 4 (213x), 5 (52x). A `tools/trajdiff.py` na 2 400 px TOWN: poloha
+objektu se v originalu meni po 2 VBL 16 025x, po 3 8 334x, po 4 2 239x -
+a po jednom VBL jen 32x.
+
+Tedy: **jedno kolo planovace (vsechny ulohy + vykresleni BOBu) trva na A500
+dva a vic snimku.** Scroll bezi zvlast a plynule (kamera se meni presne po
+4 VBL; na 2 400 px je jen 4 % zpozdeni - 9 986 VBL misto 9 600). Prepis
+naopak dela jedno kolo za tik, tedy 50 kol za sekundu.
+
+### Co se tim NEMENI
+
+Pohyb: `0x62fe` integruje rychlost x ubehle VBL, takze prumerny pohyb je
+stejny. `tools/trajdiff.py` na 2 400 px TOWN: tanky 15 z 16, plamen, vlak,
+mina, mlyn - vsechny drahy sedi v okamzicich, kdy se original obnovi (mezi
+nimi je jeho poloha zastarala). Stejne cekani `0x629c(N)` a `0x5f22(N)`:
+cekaji, az VBL citac (`fp@(-66)` resp. `fp@(-68)`) poskoci o N, tedy N
+snimku REALNEHO casu. Tech je 169 volani a jsou spravne.
+
+### Co se tim MENI - 15 chovani ma casovani spatne
+
+Cokoli, co se pocita na KOLA, ne na VBL, bezi v originalu zhruba 2,2x
+pomaleji nez v prepisu:
+
+- `0x62b8(N)` a `0x5f38(N)`: N+1x zavolaji probuzeni (`0x62d2`/`0x5f0a`),
+  tedy cekaji N+1 KOL. 14 volani: airmine `0x75ea`, mama `0x7c1a`, ski
+  `0x9ebc`, destrain `0xa210`/`0xa22c`, seaplane `0xb5fe`/`0xb680`/`0xb6c2`,
+  factory `0xb944`, inst2 `0xbad8`, inst5 `0xc10c`, GOOSE `0xcb10`/`0xcb72`
+  a `0x27d0` mimo mapove objekty.
+- Smycky, ktere krokuji pres jedno probuzeni a posouvaji nebo toci o PEVNOU
+  hodnotu za kolo: tap `0x9a0e` (uhel `+358` za kolo), train `0x9bec`,
+  plat `0xa40e`/`0xa436` (x +-1 za kolo), camogun `0xac56` (y +1 za kolo),
+  piston `0xb772`/`0xb790`, veze pevnosti `0xbf6c`/`0xbf9c` (y +-2 za
+  kolo), inst5 `0xc60a`, GOOSE `0xcb52` (uhel za kolo). (`0xc956` je
+  integritni smycka GOOSE a `0x96aa` podrutina mimo mapove objekty.)
+
+Overeno na CAMOGUN (`0xac12`): po `0x629c(100)` (spravne, 100 VBL)
+vystreli, poskoci o 8 px nahoru a vraci se smyckou `addqw #1,+324; bsrw
+0x62d2; subqw #1,+276; bnes` - tedy 1 px za KOLO. V originalu to trva
+~18 VBL, v prepisu 8 tiku; vsech pet CAMOGUN v TOWN se proto rozejde
+presne v tiku 105 az 107. U zataceni (tap, GOOSE) je navic polomer oblouku
+v originalu ~2,2x vetsi.
+
+### Rozhodnuti, ktere to chce
+
+Verny model je simulovat delku kola: kazde kolo trva 2 az 5 VBL podle
+zateze, `fp@(-76)` nese skutecny pocet, a probuzeni korutin, kresleni BOBu
+i kolizni sweep se dejou jen jednou za kolo. To meni vsechno od kolizi
+po pocet cteni PRNG (a tim i `lockstep` a `nettest`), takze se to nedela
+mimochodem. Mezikroky: (a) pevne kolo 2 VBL (nejcastejsi hodnota, 70 %
+kol v TOWN); (b) model zateze nafitovany z harnessu (pocet uloh a BOBu ->
+delka kola); (c) nechat 50 Hz a opravit jen 27 mist vyse nasobkem 2,2.
+Varianta (c) je nejmensi zasah, ale je to odhad, ne model.
+
+`tools/trajdiff.py` je pro to nastroj: porovnava drahy objektu snimek po
+snimku proti originalu, v okamzicich obnovy originalu, s casovym posunem
+pro kazdy par (original objekt "ukaze" az pri prvni obnove po a2c6).
 
 ## Co uz je vedomo jinde
 
