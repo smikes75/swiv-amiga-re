@@ -1623,3 +1623,11 @@ bilinearni zvetseni). Blur 0,14 px je v softwarovem rasteru pod prahem,
 presto vrstva filtru obraz meni (drive zmereno 51 483 bodu, max 15
 urovni) - jeji odstraneni je tedy zmena VZHLEDU a patri hraci, ne revizi.
 
+### Rozhodnuti "vyhodit predzvetseni u rezimu bez" odpada
+
+Stalo na cisle 50,00 -> 8,46 ms z protokolu s `g.frac = 0.37` (18 kroku
+na snimek, bez flushe). Spravne zmereno (`tools/perf.py --hra`, RIVER,
+zvetseni 5): s predzvetsenim 23,47 ms, bez nej (vzdy nejblizsi soused)
+21,87 ms. Predzvetseni tedy stoji ~1,6 ms a kupuje vyhlazeny okraj
+spritovych pixelu pri podpixelove poloze - zustava.
+
