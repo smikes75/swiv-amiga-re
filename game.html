@@ -1690,15 +1690,18 @@ function introCopperEvents(scene) {
     .sort((a, b) => a.line - b.line || a.serial - b.serial);
 }
 
-function colorizeAttractRaw(raw, palette, black, events, out) {
+function colorizeAttractRaw(raw, palette, black, events, out, white = 0) {
   const current = Array.from(palette), rgb = new Array(16);
   let eventIndex = 0;
   for (let y = 0; y < raw.h; y++) {
     while (eventIndex < events.length && events[eventIndex].line <= y) {
       const event = events[eventIndex++]; current[event.color] = event.word;
     }
+    // 0x5e58/0x5e68: copperove barvy dostanou tutez cernou i bilou jako
+    // paleta, v poradi nejdriv cerna, pak bila.
     for (let i = 0; i < 16; i++)
-      rgb[i] = capturedRgb12(fadeRgb12Black(current[i], black));
+      rgb[i] = capturedRgb12(white ? fadeRgb12(current[i], black, white)
+                                   : fadeRgb12Black(current[i], black));
     for (let x = 0; x < raw.w; x++) {
       const i = y * raw.w + x, c = rgb[raw.pixels[i]], o = i * 4;
       out[o] = c[0]; out[o + 1] = c[1]; out[o + 2] = c[2]; out[o + 3] = 255;
@@ -7213,111 +7216,237 @@ function renderStatsScreen(ctx, g) {
 /* ---- 0x0f42..0x1042: zaverecna sekvence po dohrani hry --------------
    Vola se z attract dispatcheru na 0xd90, tedy JESTE PRED statistikou
    0x0da2, a jen kdyz je nastaven bit 3 fp@(12353) (hra dohrana).
+   Prepsano podle disassembly 2026-09-24 (drivejsi verze drzela pevne delky
+   a castice/raketa se hybaly odhadem):
 
-   Nativni tok:
-     0xf50  nacte CONGRAT2.RAW, paleta 0x2abc
-     0xf80  dva tasky: 0x13ea (staticky dil) a 0x134e (emitor 20 deti
-            0x1412 s rozestupem 6, pak raketa 0x12d2)
-     0xf90  fade z cerne, 0xf94 zvuk 0x51d4
-     0xf98  ceka na fp@(12352), coz nastavi raketa na 0x1346
-     0xfaa  bily zablesk: fp@(11166) = 256, paleta 0x2adc, emitory 0x125e,
-            task 0x122a (trese mapovou pozici), wait 200, pak fp@(11166)
-            klesa z 8 po 16 zpet na 256
-     0xff4  CONGRAT1.RAW, paleta 0x2abc, text 0x1058, kruhy 0x11d4
-     0x1014 fp@(11136) = 818, fp@(11168) = -16, wait 1000, pak -4
-     0x103a uvolni CONGRAT2.RAW
+     0xf50  CONGRAT2.RAW, paleta 0x2abc, zamek grafiky REACTOR (0x1c55)
+     0xf80  ulohy 0x13ea (staticky dil #13 na 102,126) a 0x134e (emitor)
+     0xf90  0x2868 = roztmeni; hlavni tok CEKA, az dobehne (fp@(142))
+     0xf94  teprve pak zvuk 0x51d4
+     0xf98  ceka na fp@(12352) - nastavi ho raketa na konci animace (0x1346)
+     0xfa2  2x 0x1044: paleta NOT (8 longu od fp@(11134)), wait 1, NOT, wait 1
+     0xfaa  bila fp@(11166) = 256 (krok zustava -4 z 0xc9a), paleta 0x2adc,
+            0x125e: dva emitory kruhu 0x14a2 + ulohu 0x12a2 (COLOR01 k bile),
+            uloha 0x122a (tres mapove pozice), wait 200
+     0xfce  st fp@(149) zastavi emitory; krok +16 od 8, ceka na 256 (16 VBL)
+     0xfea  0x4b4a utisi vsechny ctyri hlasy, wait 50
+     0xff4  CONGRAT1.RAW, paleta 0x2abc, text 0x1058, copperove pruhy 0x11d4,
+            COLOR01 = 0x332 (818), krok -16 (z bile), wait 1000, krok -4,
+            0x2864 = ztmaveni (hlavni tok ceka), uvolneni
 
-   Prepsana je zatim struktura, obrazovky, paleta, text, zvuk a casovani.
-   REACTOR animace (tasky 0x13ea/0x134e/0x12d2/0x1412 a kruhy 0x14a2)
-   zbyva - viz docs/GAPS.md. */
+   POZOR, oprava drivejsiho popisu: 0x11d4 NEKRESLI kruhy. Vola 0x2d28, coz
+   je zapis copperovych zmen barev (tabulky 0x2C0F na radku 40 a 0x2BFF na
+   radcich 56..184). Bresenham 0x14f0 patri emitorum 0x14a2 a ty kresli
+   ROZPINAJICI SE VYPLNENE ELIPSY po vodorovnych usecich (0x423c) primo do
+   bitplanu - ty prepis zatim nema (neni jasne, odkud 0x423c bere vzor:
+   `fp@(256)@(4)`). Viz docs/GAPS.md. */
 const CONGRAT_TEXT = 0x1058;
+const CONGRAT_FADE = 16;                        // 0x2868/0x2864: 16 kroku po 16
 function congratRaw(name) {
   return cloneIntroRaw(introRaw(name));
 }
-/* REACTOR animace prvni faze. Tri ulohy z 0x0f80:
-     0x13ea  staticky dil na (102, 126), z 1, REACTOR#13
-     0x134e  emitor na (99, 130), REACTOR#14; pres 0x137c vypusti dvacet
-             deti 0x1412 s rozestupem 6 VBL, pak 0x1398 raketu
-     0x1412  castice: y -= 22, pak jedna ze tri anim sad podle 0x2d62
-             (#27-30, #31-34, #35-38) a rychlost z tehoz generatoru
-     0x12d2  raketa: x += 1, y -= 3, z 2; anim 0x012F0 (#12 dolu na #1,
-             perioda 2), pak 0x0131C (#0 nahoru na #12) a konec faze
-   Animacni sady jsou z docs/ANIMS.md (tools/animscan.py). */
-const REACTOR_PARTICLE_SETS = [[27, 28, 29, 30], [31, 32, 33, 34],
-                               [35, 36, 37, 38]];
-const REACTOR_ROCKET_DOWN = [12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1];
-const REACTOR_ROCKET_UP = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
-
-function beginCongrat(g) {
-  // 0xf50/0xf6c: CONGRAT2 s paletou 0x2abc, jeste pred fade z cerne.
-  g.congrat = { phase: "reactor", vbl: 0, raw: congratRaw("CONGRAT2.RAW"),
-                parts: [], emitted: 0, rocket: null };
-  sfxCongrat(g);                               // 0xf94 -> 0x51d4
+/* Animacni skripty REACTORu (docs/ANIMS.md). Cislo = snimek, {p: n} =
+   period(n), "ofs" = setofs(1) (ucinek neznamy, preskakuje se), "loop"
+   a "end". */
+const RX_EMIT_START = [14, "end"];                                    // 0x1362
+const RX_ROCKET_DOWN = [{ p: 2 }, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1,
+                        "ofs", "end"];                                // 0x012F0
+const RX_ROCKET_UP = [{ p: 6 }, 0, 1, 2, 3, 4, 5, 6, 7, { p: 4 },
+                      8, 9, 10, 11, 12, "ofs", 12, 12, "end"];        // 0x0131C
+const RX_EMIT_END = [{ p: 2 }, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+                     "ofs", 24, 25, 26, "end"];                       // 0x013BE
+const RX_PARTICLE = [[27, 28, 29, 30, "loop"],                        // 0x01430
+                     [31, 32, 33, 34, "loop"],                        // 0x01442
+                     [35, 36, 37, 38, "loop"]];                       // 0x01454
+/* 0x6c88: citac 1, vychozi perioda 3. 0x6cbc: citac ubira uplynule VBL; pri
+   dobehnuti se NEJDRIV nabije starou periodou (0x6cd0) a teprve pak se ctou
+   prikazy - period(n) tedy plati az od dalsiho snimku. */
+function rxAnimStart(o, script) {
+  o.anim = { script, ip: 0, counter: 1, period: 3 };
 }
-function stepReactor(g, c) {
-  // 0x137c: dvacet deti s rozestupem 6 VBL
-  if (c.emitted < 20 && c.vbl % 6 === 0) {
-    const r = random32(g);
-    c.parts.push({ x: 99 + (((r >>> 8) & 31) - 16), y: 130,
-                   vx: (((r >>> 16) & 31) - 16) / 16,
-                   set: REACTOR_PARTICLE_SETS[r % 3],
-                   pos: 0, at: 0, t: 0 });
-    c.emitted++;
+function rxAnimTick(o) {
+  const a = o.anim;
+  if (!a || --a.counter > 0) return;
+  a.counter = a.period;
+  for (let guard = 0; guard < 64; guard++) {
+    const c = a.script[a.ip++];
+    if (typeof c === "number") { o.frame = c; return; }
+    if (c === "loop") { a.ip = 0; continue; }
+    if (c === "ofs") continue;
+    if (c && c.p) { a.period = c.p; continue; }
+    o.anim = null;                              // end: +394 = 0
+    return;
   }
-  for (const p of c.parts) {
-    p.y -= 22 / 16;                            // 0x1412: y -= 22 za dobu zivota
-    p.x += p.vx;
-    if (++p.at >= 3) { p.at = 0; p.pos = (p.pos + 1) % p.set.length; }
-    p.t++;
-  }
-  c.parts = c.parts.filter(p => p.t < 70 && p.y > -8);
-  // 0x1398: raketa startuje az po vsech dvaceti
-  if (c.emitted >= 20 && !c.rocket && c.vbl > 20 * 6)
-    c.rocket = { x: 99, y: 130, seq: REACTOR_ROCKET_DOWN, pos: 0, at: 0,
-                 per: 2, up: false };
-  const k = c.rocket;
-  if (k) {
-    k.x += 1 / 16; k.y -= 3 / 16;              // 0x12d8/0x12dc
-    if (++k.at >= k.per) {
-      k.at = 0;
-      if (k.pos + 1 < k.seq.length) k.pos++;
-      else if (!k.up) { k.up = true; k.seq = REACTOR_ROCKET_UP;
-                        k.pos = 0; k.per = 6; }
+}
+/* 0x62d2: rychlost += zrychleni, poloha += rychlost, pak animator. */
+function rxIntegrate(o) {
+  o.vx += o.ax || 0; o.vy += o.ay || 0;
+  o.x += o.vx; o.y += o.vy;
+  rxAnimTick(o);
+}
+/* 0x1412: dite emitoru (kopie jeho zaznamu pres 0x6178). y -= 22, sada
+   animace podle 0x2d62 (= 0x883c): spodni slovo < 0x3333 -> #31..#34,
+   jinak dalsi los < 0x7fff -> #35..#38, jinak #27..#30. Rychlost
+   vx = (r & 0x7fff) - 0x4000, vy = (r & 0x1fff) - 0x4000 (16.16), gravitace
+   +348 = 512; zanikne, az y >= 140. */
+function rxSpawnParticle(g, c, em) {
+  const p = { x: em.x, y: em.y - 22, vx: 0, vy: 0, ax: 0, ay: 512 / 65536,
+              frame: em.frame, anim: null, born: c.vbl };
+  let set;
+  if ((random32(g) & 0xffff) < 0x3333) set = 1;
+  else if ((random32(g) & 0xffff) < 0x7fff) set = 2;
+  else set = 0;
+  rxAnimStart(p, RX_PARTICLE[set]);
+  p.vx = ((random32(g) & 0x7fff) - 0x4000) / 65536;
+  p.vy = ((random32(g) & 0x1fff) - 0x4000) / 65536;
+  c.parts.push(p);
+}
+/* 0x134e emitor, jeho 0x137c (20 deti, mezi nimi wait N) a 0x1398 (raketa,
+   pak druhych 20 deti po 2 VBL, gravitace a zaverecna animace). */
+function rxStepEmitter(g, c) {
+  const em = c.emitter;
+  if (c.vbl > 0) rxIntegrate(em);               // 0x62d2 uvnitr cekani
+  if (em.st === 0) {                            // 0x137c s +276 = 6
+    if (c.vbl >= em.next) {
+      if (em.made < 20) { rxSpawnParticle(g, c, em); em.made++; em.next = c.vbl + 6; }
+      else {
+        // 0x1398: raketa (0x12d2: x+1, y-3, z 2, bez stinu), vy = 6144
+        c.rocket = { x: em.x + 1, y: em.y - 3, vx: 0, vy: 0,
+                     frame: em.frame, anim: null, st: 0 };
+        rxAnimStart(c.rocket, RX_ROCKET_DOWN);
+        em.vy = 6144 / 65536;
+        em.st = 1; em.made = 0; em.next = c.vbl;
+      }
     }
   }
+  if (em.st === 1 && c.vbl >= em.next) {        // 0x137c s +276 = 2
+    if (em.made < 20) { rxSpawnParticle(g, c, em); em.made++; em.next = c.vbl + 2; }
+    else {
+      em.ay = 64 / 65536;                       // 0x13b2
+      rxAnimStart(em, RX_EMIT_END);
+      em.st = 2;                                // 0x13dc, pak 0x62cc
+    }
+  }
+}
+function rxStepRocket(c) {
+  const k = c.rocket;
+  if (!k) return;
+  if (k.started) rxIntegrate(k); else k.started = true;
+  if (k.anim) return;
+  if (k.st === 0) { k.st = 1; rxAnimStart(k, RX_ROCKET_UP); return; }  // 0x1312
+  c.signal = true;                               // 0x1346: st fp@(12352)
+  c.rocket = null;                               // 0x134a: konec ulohy
+}
+/* 0x4b4a: vsem ctyrem hlasum prepise ridici slovo - zvuk sceny zmlkne. */
+function sfxSilenceAll(g) {
+  const sfx = ensureTownSfx(g);
+  for (const voice of sfx.voices) {
+    sfxStopVoiceSource(voice);
+    voice.effect = null; voice.guard = 0;
+  }
+}
+function beginCongrat(g) {
+  // 0xf50/0xf6c: CONGRAT2 s paletou 0x2abc, jeste pred roztmenim.
+  g.congrat = {
+    phase: "reactor", vbl: 0, raw: congratRaw("CONGRAT2.RAW"),
+    parts: [], rocket: null, signal: false, sound: false,
+    black: 256, white: 0, whiteStep: -4,         // 0xc9a: herni krok -4
+    emitter: { x: 99, y: 130, vx: 0, vy: 0, ax: 0, ay: 0, frame: 14,
+               anim: null, st: 0, made: 0, next: 0 },
+    color1: null, invert: false, shake: 0, pulseT: null, bands: null,
+  };
+  rxAnimStart(g.congrat.emitter, RX_EMIT_START);
+}
+/* 0x28e2: bila uroven se meni jednou za kolo hlavni smycky, dokud neni 0;
+   `cmpiw #256` je bez znamenka, takze se orezava na 256. */
+function congratWhiteTick(c) {
+  if (!c.white) return;
+  c.white += c.whiteStep;
+  if (c.white < 0 || c.white > 256) c.white = 256;
 }
 function stepCongrat(g) {
   const c = g.congrat;
   if (!c || c.done) return;
   c.vbl++;
+  c.phaseVbl = (c.phaseVbl | 0) + 1;
+  congratWhiteTick(c);
+  if (c.phase === "reactor" || c.phase === "invert" || c.phase === "white") {
+    rxStepEmitter(g, c);
+    rxStepRocket(c);
+    for (const p of c.parts) rxIntegrate(p);
+    c.parts = c.parts.filter(p => p.y < 140 && p.x > -64 && p.x < 384);
+  }
   if (c.phase === "reactor") {
-    stepReactor(g, c);
-    // 0x1346: fazi ukonci raketa, az dobehne svou animaci
-    if (c.vbl >= 20 * 6 + 80) { c.phase = "white"; c.vbl = 0; }
+    if (c.black > 0) {                           // 0x2868: hlavni tok ceka
+      c.black = Math.max(0, c.black - 16);
+      if (c.black === 0) { sfxCongrat(g); c.sound = true; }   // 0xf94
+      return;
+    }
+    if (c.signal) { c.phase = "invert"; c.phaseVbl = 0; }
+  } else if (c.phase === "invert") {
+    // 0x1044 dvakrat: NOT palety, wait 1, NOT zpet, wait 1
+    c.invert = (c.phaseVbl === 1 || c.phaseVbl === 3);
+    if (c.phaseVbl >= 4) {
+      c.invert = false;
+      c.phase = "white"; c.phaseVbl = 0;
+      c.white = 256;                             // 0xfaa
+      c.pulseT = 0;                              // 0x12a2
+    }
   } else if (c.phase === "white") {
-    // 0xfaa: plna bila, pak 0xfd2..0xfe8 fp@(11166) roste o 16 z 8 na 256.
-    if (c.vbl >= 200 + 16) {
-      c.phase = "text"; c.vbl = 0;
-      c.raw = congratRaw("CONGRAT1.RAW");       // 0xff4
+    // 0x12a2: COLOR01 = 0x4a40(0x340, t), t += 9 az do 220 (25 hodnot)
+    if (c.pulseT !== null) {
+      c.color1 = fadeRgb12White(0x340, c.pulseT);
+      c.pulseT += 9;
+      if (c.pulseT >= 220) c.pulseT = null;
+    }
+    // 0x122a: wait 150, pak 10x posun mapove pozice o (0x2d62 & 3) + 1
+    // na jeden VBL a zpet na dalsi.
+    const t = c.phaseVbl - 150;
+    if (t >= 1 && t <= 20) c.shake = (t & 1) ? (random32(g) & 3) + 1 : 0;
+    else c.shake = 0;
+    if (c.phaseVbl === 200) {                    // 0xfce
+      c.whiteStep = 16; c.white = 8;
+    } else if (c.phaseVbl > 200 && c.white >= 256 && !c.silenced) {
+      sfxSilenceAll(g);                          // 0xfea: 0x4b4a
+      c.silenced = true; c.silencedAt = c.phaseVbl;
+    } else if (c.silenced && c.phaseVbl - c.silencedAt >= 50) {
+      c.phase = "text"; c.phaseVbl = 0;          // 0xff4
+      c.parts = []; c.rocket = null;
+      c.raw = congratRaw("CONGRAT1.RAW");
       drawIntroFormatted(state.prog, c.raw.pixels,
                          programCString(state.prog, CONGRAT_TEXT));
+      c.color1 = 0x332;                          // 0x1014: fp@(11136) = 818
+      c.whiteStep = -16;                         // 0x101a
+      // 0x11d4: copperove pruhy, ne kruhy (0x121a / 0x1222 -> 0x2d28)
+      const prog = state.prog, ev = [];
+      ev.push(...decodeIntroCopperTable(prog, 0x2C0F, 40));
+      for (const line of [56, 68, 80, 92, 108, 120, 132, 148, 160, 172, 184])
+        ev.push(...decodeIntroCopperTable(prog, 0x2BFF, line));
+      c.bands = ev.map((e, serial) => ({ ...e, serial }))
+        .sort((a, b) => a.line - b.line || a.serial - b.serial);
     }
   } else if (c.phase === "text") {
-    if (c.vbl >= 1000) c.done = true;           // 0x1020: wait 1000
+    if (c.phaseVbl === 1000) c.whiteStep = -4;  // 0x1028
+    if (c.phaseVbl > 1000) {                    // 0x2864: ztmaveni, tok ceka
+      c.black = Math.min(256, c.black + 16);
+      if (c.black >= 256) c.done = true;
+    }
   }
 }
 function renderCongrat(ctx, g) {
   const c = g.congrat;
   if (!c) return;
-  const white = c.phase === "white"
+  const base = c.phase === "white"
     ? ATTRACT_PALETTE_OFFSETS.congratWhite : ATTRACT_PALETTE_OFFSETS.congrat;
-  const palette = readProgramPalette(state.prog, white);
-  // 0xf90 je fade z cerne; v bile fazi je obraz naopak prosvicen.
-  const black = c.phase === "reactor" ? Math.max(0, 256 - c.vbl * 16) : 0;
+  const palette = Array.from(readProgramPalette(state.prog, base));
+  if (c.color1 !== null) palette[1] = c.color1;
+  if (c.invert) for (let i = 0; i < 16; i++) palette[i] = (~palette[i]) & 0xfff;
   if (!c.rgba) c.rgba = new Uint8ClampedArray(320 * 256 * 4);
   // REACTOR se kresli do kopie indexu, aby se predloha neposkodila
   let raw = c.raw;
-  if (c.phase === "reactor" && (c.parts.length || c.rocket)) {
+  const kreslit = c.phase !== "text" &&
+                  (c.parts.length || c.rocket || c.emitter);
+  if (kreslit) {
     if (!c.work || c.work.pixels.length !== c.raw.pixels.length)
       c.work = { pixels: new Uint8Array(c.raw.pixels.length),
                  paletteWords: c.raw.paletteWords, w: 320, h: 256 };
@@ -7325,14 +7454,27 @@ function renderCongrat(ctx, g) {
     const put = (frame, x, y) => {
       const spr = indexedFrameFor(state, "REACTOR.LIN", frame);
       if (spr) blitIndexedCookie(c.work.pixels, 320, 256,
-                                 spr, Math.round(x), Math.round(y));
+                                 spr, Math.floor(x), Math.floor(y));
     };
-    for (const p of c.parts) put(p.set[p.pos], p.x, p.y);
-    if (c.rocket) put(c.rocket.seq[c.rocket.pos], c.rocket.x, c.rocket.y);
-    put(13, 102, 126);                         // 0x13ea staticky dil
+    // z: emitor a castice 0, staticky dil 1, raketa 2
+    put(c.emitter.frame, c.emitter.x, c.emitter.y);
+    for (const p of c.parts) put(p.frame, p.x, p.y);
+    put(13, 102, 126);                           // 0x13ea
+    if (c.rocket) put(c.rocket.frame, c.rocket.x, c.rocket.y);
     raw = c.work;
   }
-  colorizeAttractRaw(raw, palette, black, [], c.rgba);
+  // 0x122a posouva mapovou pozici fp@(3530), ze ktere render 0x291e bere
+  // svisly posun obrazu. Smer (nahoru) je ODVOZENY, na originalu neovereny.
+  if (c.shake) {
+    if (!c.shaken || c.shaken.pixels.length !== raw.pixels.length)
+      c.shaken = { pixels: new Uint8Array(raw.pixels.length),
+                   paletteWords: raw.paletteWords, w: 320, h: 256 };
+    const d = c.shake * 320;
+    c.shaken.pixels.fill(0);
+    c.shaken.pixels.set(raw.pixels.subarray(d), 0);
+    raw = c.shaken;
+  }
+  colorizeAttractRaw(raw, palette, c.black, c.bands || [], c.rgba, c.white);
   ctx.putImageData(new ImageData(c.rgba, 320, 256), 0, 0);
 }
 

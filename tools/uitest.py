@@ -6166,41 +6166,84 @@ def main():
             expect(stats["ink"] > 1500,
                    "statistika nakreslila jen %d pixelu" % stats["ink"])
 
+            # ---- 0x0f42: zaverecna sekvence (prepsano 2026-09-24) -----
+            # Casova osa z disassembly: 0x2868 (roztmeni, 16 kroku) hlavni
+            # tok CEKA a teprve pak spusti zvuk 0x51d4; konec prvni faze
+            # urcuje raketa (0x1346 st fp@(12352)) - vznikne po 20 detech
+            # po 6 VBL (0x137c) a prehraje 0x012F0 a 0x0131C; 2x 0x1044
+            # (NOT palety na 1 VBL); bila faze 200 + 16 (rampa +16 od 8)
+            # + 50; text 1000 + 16 (0x2864 ztmaveni).
             congrat = page.evaluate("""() => {
               const g = state.g;
               const before = g.sfx.events.length;
               g.won = true; g.over = true; g.congrat = null;
               beginCongrat(g);
-              const zvuk = g.sfx.events.slice(before)
-                .map(e => [e.kind, e.priority, e.accepted]);
-              const faze = [];
-              for (let i = 0; i < 2000; i++) {
+              const zvukHned = g.sfx.events.length - before;
+              const faze = [], invert = [], bila = {};
+              let zvukKdy = null, zvuk = null, raketa = [null, null];
+              let tres = 0, castic = 0, color1 = null;
+              for (let i = 1; i <= 2000; i++) {
                 stepCongrat(g);
                 const c = g.congrat;
+                if (zvukKdy === null && g.sfx.events.length > before) {
+                  zvukKdy = i;
+                  zvuk = g.sfx.events.slice(before)
+                    .map(e => [e.kind, e.priority, e.accepted]);
+                }
                 if (!faze.length || faze[faze.length - 1][0] !== c.phase)
                   faze.push([c.phase, i]);
+                if (c.rocket && raketa[0] === null) raketa[0] = i;
+                if (!c.rocket && raketa[0] !== null && raketa[1] === null)
+                  raketa[1] = i;
+                if (c.invert) invert.push(i);
+                if (c.shake) tres++;
+                castic = Math.max(castic, c.parts.length);
+                if (c.phase === "white" && c.phaseVbl === 1) color1 = c.color1;
+                if (c.phase === "white")
+                  bila["w" + c.phaseVbl] = c.white;
+                if (c.phase === "text" && c.phaseVbl === 16) bila.t16 = c.white;
                 if (c.done) { faze.push(["done", i]); break; }
               }
               const text = programCString(state.prog, CONGRAT_TEXT);
               const raw = blankIntroRaw();
               drawIntroFormatted(state.prog, raw.pixels, text);
-              return { zvuk, faze,
+              return { zvukHned, zvukKdy, zvuk, faze, raketa, invert, tres,
+                       castic, color1, pruhy: (g.congrat.bands || []).length,
+                       bila: [bila.w1, bila.w64, bila.w200, bila.w216, bila.t16],
                        textZacatek: text.slice(0, 40),
                        textKonec: text.slice(-24),
                        ink: raw.pixels.reduce((n, v) => n + (v ? 1 : 0), 0),
                        palety: [ATTRACT_PALETTE_OFFSETS.congrat,
                                 ATTRACT_PALETTE_OFFSETS.congratWhite] };
             }""")
-            expect(congrat["zvuk"] == [["congrat", 127, True]] * 4,
-                   "0x51d4 nema ctyri prijate hlasy priority 127: %r" %
-                   (congrat["zvuk"],))
+            expect(congrat["zvukHned"] == 0 and congrat["zvukKdy"] == 16 and
+                   congrat["zvuk"] == [["congrat", 127, True]] * 4,
+                   "0x51d4 ma zacit az po roztmeni 0x2868 (krok 16), ctyri "
+                   "hlasy priority 127: %r" % (congrat,))
             expect([f[0] for f in congrat["faze"]] ==
-                   ["reactor", "white", "text", "done"],
+                   ["reactor", "invert", "white", "text", "done"],
                    "0xf42 poradi fazi: %r" % (congrat["faze"],))
-            expect(congrat["faze"][1][1] == 199 and
-                   congrat["faze"][2][1] == 415 and
-                   congrat["faze"][3][1] == 1415,
+            expect([f[1] for f in congrat["faze"]] == [1, 223, 227, 493, 1509],
                    "0xf42 casovani fazi: %r" % (congrat["faze"],))
+            expect(congrat["raketa"] == [121, 223],
+                   "raketa 0x12d2 (po 20 detech po 6 VBL, dve animace): %r" %
+                   (congrat["raketa"],))
+            expect(congrat["invert"] == [224, 226],
+                   "0x1044 2x NOT palety na jeden VBL: %r" % (congrat["invert"],))
+            expect(congrat["tres"] == 10,
+                   "0x122a: deset posunu mapove pozice: %r" % (congrat["tres"],))
+            expect(congrat["castic"] >= 20,
+                   "emitor 0x134e vypustil malo castic: %r" % (congrat["castic"],))
+            expect(congrat["color1"] == 0x340,
+                   "0x12a2: COLOR01 zacina na 0x340 (832): %r" %
+                   (congrat["color1"],))
+            # bila: 256 s krokem -4 (0xc9a) -> 252 v 1., 0 v 64.; rampa +16
+            # od 8 (0xfd2) -> 256 v 216.; v textu -16 -> 0 v 16.
+            expect(congrat["bila"] == [252, 0, 8, 256, 0],
+                   "bila uroven fp@(11166): %r" % (congrat["bila"],))
+            # 0x11d4: tabulka 0x2C0F na radku 40 + 11x 0x2BFF (56..184)
+            expect(congrat["pruhy"] == 60,
+                   "copperove pruhy 0x11d4: %r" % (congrat["pruhy"],))
             expect(congrat["textZacatek"].startswith("_x160_y040_a0_c15Congratulations"),
                    "0x1058 zacatek textu: %r" % (congrat["textZacatek"],))
             expect("in the post." in congrat["textKonec"],

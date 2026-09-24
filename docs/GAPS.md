@@ -756,36 +756,53 @@ protoze rodic pres `bras` preskoci hodnotu ditete.
 Test bezi bez originalu i bez emulatoru, takze se hodi jako rychly kontrakt
 vedle compare/uitest/smoothtest.
 
-## Zaverecna sekvence `0x0f42` - prepsana struktura, animace zbyva (2026-09-09)
+## Zaverecna sekvence `0x0f42` - prepsana podle disassembly (2026-09-24)
 
 Vola se z attract dispatcheru na `0xd90`, tedy **jeste pred statistikou**
 `0x0da2`, a jen kdyz je nastaven bit 3 `fp@(12353)`.
 
-Prepsano: obe obrazovky (`CONGRAT2.RAW`, pak `CONGRAT1.RAW`), palety
-`0x2abc` a `0x2adc`, fade z cerne, bila mezifaze, zaverecny text `0x1058`
-a zvuk `0x51d4` (ctyri hlasy priority 127 na periodach 400, 480, 413 a 441;
-hlasitost je `citac >> 7`, takze nabiha velmi pomalu). Tim je **posledni
-nepripojeny zvuk ve hre pripojen**.
+**2026-09-24 prepsano znovu, tentokrat podle kodu.** Drivejsi verze drzela
+pevne delky (199 / 415 / 1415 VBL) a castice i raketa se hybaly odhadem
+(`y -= 22/16` za tik, raketa plynule nahoru). Skutecny tok:
 
-**REACTOR animace prepsana 2026-09-10.** Prvni faze uz neni staticky obrazek:
-reaktor (REACTOR#13 na 102,126), emitor, ktery po 6 VBL vypousti dvacet
-castic s nahodnou sadou snimku (#27-30, #31-34, #35-38 z `docs/ANIMS.md`), a
-raketa, ktera po nich startuje z (99,130), stoupá `x += 1/16, y -= 3/16` a
-prehraje `0x012F0` (#12 dolu na #1) a `0x0131C` (#0 nahoru na #12).
+| krok | adresa | co dela |
+|---|---|---|
+| roztmeni | `0xf90` `0x2868` | hlavni tok CEKA na `fp@(142)` - zvuk `0x51d4` az potom (krok 16) |
+| emitor | `0x134e`, `0x137c` | 20 deti `0x1412` po 6 VBL, pak raketa, pak dalsich 20 po 2 VBL, `+336 = 6144`, `+348 = 64` a animace `0x013BE` |
+| castice | `0x1412` | `y -= 22` jednou; sada animace podle `0x2d62` (< `0x3333` -> #31..34, jinak < `0x7fff` -> #35..38, jinak #27..30); `vx = (r & 0x7fff) - 0x4000`, `vy = (r & 0x1fff) - 0x4000`, gravitace 512; zanikne pri `y >= 140` |
+| raketa | `0x12d2` | x+1, y-3 od emitoru, z 2; animace `0x012F0` a `0x0131C`, pak `st fp@(12352)` (`0x1346`) - to je konec faze |
+| negativ | `0xfa2` | 2x `0x1044`: NOT 16 barev (`fp@(11134)`), wait 1, NOT zpet, wait 1 |
+| bila | `0xfaa` | `fp@(11166) = 256`, krok zustava -4 (`0xc9a`) -> za 64 VBL normal; paleta `0x2adc` |
+| COLOR01 | `0x12a2` | 25 kroku `0x4a40(0x340, t)` = misen k bile, t += 9 |
+| tres | `0x122a` | wait 150, pak 10x posun `fp@(3530)` o `(0x2d62 & 3) + 1` na 1 VBL a zpet |
+| konec bile | `0xfce` | `st fp@(149)` (stop emitoru), krok +16 od 8 -> 256 za 16 VBL; `0x4b4a` utisi vsechny hlasy; wait 50 |
+| text | `0xff4` | CONGRAT1, paleta `0x2abc`, text `0x1058`, **copperove pruhy** `0x11d4`, COLOR01 = `0x332`, krok -16, wait 1000, krok -4, `0x2864` ztmaveni |
 
-Puvodni popis uloh (zustava jako reference):
-- `0x13ea` staticky dil na (102, 126), z 1, gfx `0x1a55`, `+367 |= 1`;
-- `0x134e` na (99, 130) s anim `0x1c55`, ktery pres `0x137c` vytvori dvacet
-  deti `0x1412` s rozestupem 6 VBL, pak `0x1398` vypusti raketu `0x12d2`
-  (x += 1, y -= 3, z = 2, `fp@(11164)` 4092 -> 4095, dve dlouhe anim davky).
-Druha faze pridava emitory `0x125e` (dva `0x14a2` s parametry 98/156/30 a
-98/130/44), tres mapove pozice `0x122a` a kruhy `0x11d4` (jedenact volani
-`0x1222` na polomerech 56..184, kresli je Bresenham `0x14f0`).
+Kontrakt v `tools/uitest.py` hlida fazi a jejich hranice (1, 223, 227, 493,
+1509), raketu 121..223, negativ ve 224 a 226, deset posunu, bilou uroven
+(252 / 0 / 8 / 256 / 0) a 60 copperovych zmen.
 
-Misto teto animace drzi prepis **zmerenou delku jejiho skriptu** (20x6 + 80
-VBL), takze casovani sceny sedi, ale obrazovka je staticka. Kontrakt v
-`tools/uitest.py` hlida poradi i delku fazi (199 / 415 / 1415 VBL), zvuk,
-text a palety.
+**Oprava drivejsiho popisu.** `0x11d4` NEKRESLI jedenact kruhu. Vola
+`0x121a`/`0x1222` -> `0x2d28`, coz je zapis copperovych zmen barev (tabulka
+`0x2C0F` na radku 40, `0x2BFF` na radcich 56, 68, 80, 92, 108, 120, 132,
+148, 160, 172 a 184) - tytez tabulky pouziva scena "sales". Bresenham
+`0x14f0` patri emitorum `0x14a2`.
+
+**Co zustava otevrene:**
+
+- **Emitory kruhu `0x14a2`/`0x14cc`** nejsou prepsane. Geometrie je
+  prectena: stred (98,156), polomer 30, +2 za VBL, orez y < 149; druhy
+  (98,130), polomer 44, +3 za VBL, svisle zplosteny `asr 4`, kazdy 16.
+  radek (maska 15), orez 256. Kresli VYPLNENE elipsy po vodorovnych usecich
+  (`0x423c`) primo do ctyr bitplanu zadniho bufferu - OR s maskou, kterou
+  bere z `fp@(256)@(4)`. Co je tam za data, neni jasne, a bez toho by to
+  byl odhad.
+- **Smer tresu** (`fp@(3530) += r`) je odvozeny (obraz nahoru), na originalu
+  neovereny.
+- `fp@(11164)` raketa nastavuje na 4092 a 4095, ale v AMPROG.OBJ ho nic
+  necte (asi zavadec) - vynechano.
+- Cela sekvence je overena jen proti kodu. Harness se k dohrane hre sam
+  nedostane.
 
 ## Pauza na klavesu P - zmerena, ale mimo AMPROG.OBJ (2026-09-09)
 
