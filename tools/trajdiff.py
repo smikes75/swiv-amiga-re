@@ -26,6 +26,7 @@ svetove y maji tentyz smysl a porovnavaji se primo.
     python3 tools/trajdiff.py              # TOWN, prvnich 900 px
     python3 tools/trajdiff.py 1500 --tiku 200
     python3 tools/trajdiff.py 2400 --json beh.json   # ulozit obe strany
+    python3 tools/trajdiff.py 2400 --orig beh.json   # original z ulozeneho behu
 
 Vysledek 2026-09-24 (2 400 px TOWN): tanky 15/16, plamen, vlak, mina a mlyn
 sedi; vsech 5 CAMOGUN se rozejde v tiku 105 az 107. Pricina neni v CAMOGUN,
@@ -278,10 +279,19 @@ def main():
     ulozit = None
     if "--json" in args:
         i = args.index("--json"); ulozit = args[i + 1]; del args[i:i + 2]
+    # Original se nemeni, meni se jen prepis: `--orig beh.json` vezme stranu
+    # originalu z drive ulozeneho behu (`--json`) a emulator nespousti.
+    znovu = None
+    if "--orig" in args:
+        i = args.index("--orig"); znovu = args[i + 1]; del args[i:i + 2]
     dist = int(args[0]) if args else 900
 
-    print(f"original (harness vAmiga), {dist} px ...", flush=True)
-    o = original(dist, tiku)
+    if znovu:
+        o = json.load(open(znovu))["orig"]
+        print(f"original z {znovu}", flush=True)
+    else:
+        print(f"original (harness vAmiga), {dist} px ...", flush=True)
+        o = original(dist, tiku)
     print(f"prepis, {dist} px ...", flush=True)
     r = remake(dist, tiku)
     if ulozit:

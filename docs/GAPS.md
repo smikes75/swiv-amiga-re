@@ -510,6 +510,49 @@ vystreli, poskoci o 8 px nahoru a vraci se smyckou `addqw #1,+324; bsrw
 presne v tiku 105 az 107. U zataceni (tap, GOOSE) je navic polomer oblouku
 v originalu ~2,2x vetsi.
 
+### Varianta (a), etapa 1: kolo = 2 VBL pro vse, co pocita kola (2026-09-28)
+
+Uzivatel zvolil variantu (a), pevne kolo 2 VBL. Pohyb v prepisu neni
+centralni (integrace je rozesetá v ~90 mistech uvnitr chovani), takze se
+model zavadi po etapach. Etapa 1: `ROUND_VBL = 2`, `roundDue`/`roundStart`
+a vsechna mista, ktera v originalu pocitaji KOLA:
+
+- **Oprava vyse:** `0x62b8(N)` i `0x5f38(N)` delaji **N** probuzeni, ne
+  N+1 (`subq #1; bcc`/`bpl` konci az po podteceni).
+- cekani na kola: airmine (obrat vz po 10), ski (strela po 10), seaplane
+  (bomba po 10, bomba sama 20), destrain (50 a 10; mezi homingy 0x629a =
+  1 VBL zustava), MAMA (dron po 4 - `moveq #4` lezi za inline `.word`),
+  paprsky tovarny a INST2 (smrtici 5 kol, tedy po celou 8/5-VBL animaci),
+  eskorta GOOSE (20, 10+rand&31 a sest kroku otaceni);
+- smycky pres jedno probuzeni: tap (otaceni), plat (x +-1), piston (tyc
+  +-1), veze pevnosti (y -+2, akce az po probuzeni), granat dela (snimek
+  a hloubka za kolo, zrychleni po 5 KOLECH az na 10,5), CAMOGUN (zakluz);
+- **uvolneni zamku scrollu `0xb6ba` v prepisu CHYBELO uplne**: pri nule
+  umirajici uloha jeste `0x5f38(20)` ceka a teprve pak `bclr #3,fp@(166)`.
+  Ted `g.scrollLockUntil` = 20 kol; `fp@(140)` klesa dal hned, takze drony
+  a emitory vidi nulu okamzite.
+
+Vynechano zamerne: `0x9bec` (TRAIN) a `0xc956` (GOOSE) jsou kontrolni
+soucty kodu, `0x27a8` razitko dekalu (10 kol), `inst5 0xc10c` jen "cekej do
+smrti" po 100 kolech.
+
+Overeno `tools/trajdiff.py` (2 400 px TOWN, original z ulozeneho behu
+`--orig`): **CAMOGUN 5 z 5** (predtim 0 z 5), ostatni beze zmeny. Kontrakty
+v `uitest.py` upraveny s odvozenim (zakluz -7,-7,-6,-6..., granat strida
+snimek za kolo od zrodu, zrychleni po 5 kolech).
+
+**Etapa 2 - co dalsiho z toho plyne (otevrene):**
+
+- **Animace.** Animator `0x6cbc` odecte uplynule VBL, a kdyz citac doběhne,
+  nabije ho znovu periodou (zbytek zahodi) a posune o JEDEN snimek. Za kolo
+  tedy nanejvys jeden snimek: s koly po 2 VBL bezi perioda 1 polovicni
+  rychlosti a perioda 3 trva 4 VBL. Prepis ma krokovani animaci ve 26
+  mistech, ne centralne.
+- **Kadence obrazu** klasickeho rezimu (objekty 25x za sekundu).
+- Rozhodovani, kolize a RNG jednou za kolo (etapa 3).
+- Drobnost nalezena cestou: GOOSE se v prepisu rodi o 2 px niz (ys0 286
+  proti 284) a pri naletu zastavi o ~4 px pozdeji.
+
 ### Rozhodnuti, ktere to chce
 
 Verny model je simulovat delku kola: kazde kolo trva 2 az 5 VBL podle

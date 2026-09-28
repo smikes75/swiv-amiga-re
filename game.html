@@ -1093,6 +1093,28 @@ const $ = s => document.querySelector(s);
    naklonu to chytil jako ztratovy rozklad (8 bodu misto 0). */
 const state = { spriteScale: "bez", shadowCache: true, dofCache: true };
 const TICK = 1 / 50;                 // herni logika na 50 Hz jako original
+/* Kolo planovace originalu (varianta a, 2026-09-24). Jedno kolo - vsechny
+   ulohy a kresleni BOBu - trva na A500 dva a vic snimku: zmereno v harnessu
+   2 VBL v 70 % kol (docs/GAPS.md, "Kadence planovace"). Pohyb (`0x62fe`
+   integruje rychlost x ubehle VBL) a cekani `0x629c`/`0x5f22` (porovnavaji
+   VBL citace) na delce kola nezavisi a bezi dal po tiku. Co ale pocita
+   KOLA - `0x62b8`/`0x5f38` a smycky, ktere krokuji pres jedno probuzeni
+   `0x62d2`/`0x5f0a` - trva v realnem case ROUND_VBL-krat dele. */
+const ROUND_VBL = 2;
+/* Krok, ktery original dela jednou za KOLO (`0x62b8(N)`/`0x5f38(N)` a smycky
+   pres jedno probuzeni): vrati true nejdriv ROUND_VBL tiku po predchozim.
+   `roundStart` odlozi prvni krok o cele kolo - `0x62b8` i smycky typu
+   `bsr 0x62d2; ...; subq; bne` nejdriv yieldnou a teprve pak odecitaji. */
+function roundDue(g, o, klic = "roundAt") {
+  const t = g ? (g.tick | 0) : 0;
+  if (!g) return true;                          // izolovane diagnosticke volani
+  if (o[klic] !== undefined && t < o[klic]) return false;
+  o[klic] = t + ROUND_VBL;
+  return true;
+}
+function roundStart(g, o, klic = "roundAt") {
+  if (g) o[klic] = (g.tick | 0) + ROUND_VBL;
+}
 const SCROLL = 12.5;                 // 0x1da6: $4000 16.16 = .25 px/VBL
 /* fp@(3542): cela cast scroll citace (word). Vsechny screen-y odvozene
    z mapoveho y pouzivaji tuto hodnotu, ne spojity g.scroll. */
@@ -4075,17 +4097,24 @@ function invalidateEnemyShotIfOutside(s) {
 }
 
 function advanceCannonShot(g, s, scrollDelta = 0, initial = false) {
+  // Smycka 0x96aa (snimek, hloubka) i citac zrychleni 0x96a4(5) bezi jednou
+  // za KOLO - pocitano od zrodu granatu; pohyb (0x62fe) po VBL.
+  const kolo = initial ||
+    (((g.tick | 0) - (s.bornTick | 0)) % ROUND_VBL) === 0;
   if (!initial) {
     s.y -= scrollDelta;                         // world-space camera projection
-    s.phase ^= 1;                               // druhy resume ukaze #40+
+    if (kolo) s.phase ^= 1;                     // druhy resume ukaze #40+
   }
   // 0x96aa je pred 0x96c2 -> 0x62d2: depth je pre-move, pozice post-move.
-  s.hwDepth = ((positionWord(s.y + scrollTop(g)) & 0xffff) >>> 1);
+  if (kolo) s.hwDepth = ((positionWord(s.y + scrollTop(g)) & 0xffff) >>> 1);
   const v = angVel(s.ang, s.spd);
   s.x += v.vx; s.y += v.vy;
-  s.st = (s.st | 0) + 1;
-  if (s.accel !== false && s.st % 5 === 0 && s.spd < 10.5)
-    s.spd += 0.5;                               // nova rychlost az dalsi krok
+  if (kolo) {
+    s.st = (s.st | 0) + 1;
+    // 0x966e: 0x96a4(5) = pet KOL, pak +128 (0.5 px); 20x az na 10.5
+    if (s.accel !== false && s.st % 5 === 0 && s.spd < 10.5)
+      s.spd += 0.5;                             // nova rychlost az dalsi krok
+  }
   invalidateEnemyShotIfOutside(s);
 }
 
@@ -4273,7 +4302,8 @@ function attachBossChild(boss, q) {             // 0xcc2a..0xcc56
   q.phase = q.kind === "escort" ? "escort-wait" : "linked";
   q.linked = true; q.ox = q.tx; q.oy = q.ty; q.z = 33;
   q.vx = 0; q.vy = 0;
-  if (q.kind === "escort") q.snakeWait = 20;   // 0xcb0e
+  if (q.kind === "escort") q.snakeWait = 20;   // 0xcb0e: 0x62b8(20) = KOLA
+  q.snakeAt = undefined;                         // prvni krok az v pristim kole
   boss.assemblyLeft = Math.max(0, (boss.assemblyLeft || 0) - 1);
 }
 const BOSS_SNAKE_ACTIONS = [-8, "hold", 8, "hold", "random",
@@ -4337,7 +4367,9 @@ function stepBossParts(g, boss, scrollDelta) {
           if (q.oy !== ty) q.oy += q.oy < ty ? 4 : -4;
         }
       } else {
-        stepBossEscort(g, q);
+        // Kliceni eskorty (0xcb0e..0xcb72) pocita jen KOLA: cekani 0x62b8
+        // (20 a 10+rand&31) i sest kroku otaceni pres jedno 0x62d2.
+        if (roundDue(g, q, "snakeAt")) stepBossEscort(g, q);
       }
       continue;
     }
@@ -5164,8 +5196,14 @@ function killSpawnCredited(g, s) {             // 0xa36a z player eventu
   // 0xba96 (INST2#2), 0xbbb2 (INST3#3). Bezi az za zablesk vyse, ktery
   // jeste vidi puvodni pocet. INST4#0 se nesnizuje - drzi scroll do konce
   // urovne, a cull tuto cestu neprovadi (+538 rovnou uvolni zaznam).
-  if (s.beh === "inst3" || s.beh === "factory" || s.beh === "inst2")
+  if (s.beh === "inst3" || s.beh === "factory" || s.beh === "inst2") {
     g.inst1Factories = Math.max(0, (g.inst1Factories | 0) - 1);
+    // 0xb6ba: fp@(140) klesne hned, ale pri nule umirajici uloha jeste
+    // 0x5f38(20) = 20 KOL ceka a teprve pak `bclr #3,fp@(166)`. Scroll se
+    // tedy rozjede az potom; drive se rozjel okamzite.
+    if ((g.inst1Factories | 0) === 0)
+      g.scrollLockUntil = (g.tick | 0) + 20 * ROUND_VBL;
+  }
   if (s.beh === "dada" || s.burstDeath) {
     // 0x88ec: zvuk 0x4c3c, 0x6d96 a osm 0x8952 chvostu po dvou ticich,
     // uhel +100 a rychlost +1536/256 na kazdy dalsi (jako 0x88fc).
@@ -5466,7 +5504,8 @@ function spawnSeaplaneBomb(g, s) {             // 0xb64a (dite 0x6178)
               alive: true, dead: false, hp: 1, cost: 5, budgeted: true,
               scoreValue: 10, lethal: true, castShadow: true,
               seq: [1, 2], per: 2, apos: 0, at: 0, animFresh: true,
-              st: 0, t: 20 };                    // +364 zustava -64
+              st: 0, t: 20,                      // +364 zustava -64
+              waitAt: (g.tick | 0) + ROUND_VBL }; // 0xb680: 0x62b8(20) = 20 KOL
   g.activeCost = (g.activeCost || 0) + h.cost;
   assignBobOrdinal(g, h); g.hazards.push(h);
 }
@@ -5753,7 +5792,8 @@ function spawnInst2Beam(g, s) {                 // 0xba9e (dite 0x617a)
               alive: true, dead: false, hp: 0, cost: 20, budgeted: true,
               scoreValue: 0, castShadow: false,
               seq: [8, 9, 10, 11, 12], per: 1, apos: 0, at: 0,
-              animFresh: true, animKill: true, lethal: true, lethalT: 5 };
+              animFresh: true, animKill: true, lethal: true, lethalT: 5,
+              lethalAt: (g.tick | 0) + ROUND_VBL };   // 0xbad8: 0x62b8(5) = 5 KOL
   g.activeCost = (g.activeCost || 0) + h.cost;
   assignBobOrdinal(g, h); g.hazards.push(h);
 }
@@ -6054,7 +6094,8 @@ function spawnFactoryBeam(g, s) {              // 0xb906 (dite 0x617a)
               alive: true, dead: false, hp: 0, cost: 20, budgeted: true,
               scoreValue: 0, seq: [4, 5, 6, 6, 7, 7, 8, 8], per: 1,
               apos: 0, at: 0, animFresh: true, castShadow: false,
-              life: 8, lethalT: 5, lethal: true };
+              life: 8, lethalT: 5, lethal: true,
+              lethalAt: (g.tick | 0) + ROUND_VBL };   // 0xb944: 0x62b8(5) = 5 KOL
   g.activeCost = (g.activeCost || 0) + h.cost;
   assignBobOrdinal(g, h); g.hazards.push(h);
 }
@@ -6309,10 +6350,11 @@ function advanceTownHazardField(g, h) {
     if (!h.parent.alive) { releaseHazard(g, h); return; }   // +542 0x6db4
     const sy = h.y - scrollTop(g);
     if (h.st === 0) {
-      if (sy >= 48) { h.st = 1; h.seq = [2]; h.t = 4; }
-    } else if (h.st === 1 && --h.t <= 0) {
+      if (sy >= 48) { h.st = 1; h.seq = [2]; h.t = 4; roundStart(g, h, "waitAt"); }
+    } else if (h.st === 1 && roundDue(g, h, "waitAt") && --h.t <= 0) {
+      // 0x7c16: `moveq #4` za inline .word, pak 0x62b8 = 4 KOLA
       spawnMamaDrone(g, h);
-      if (sy < 208) h.t = 4;
+      if (sy < 208) { h.t = 4; roundStart(g, h, "waitAt"); }
       else { h.seq = [1]; releaseHazard(g, h); }  // 0x7c36 + 0xa34c
     }
     return;
@@ -6332,15 +6374,20 @@ function advanceTownHazardField(g, h) {
       if (h.t <= 0) h.t = 150 + (random32(g) & 60);
       else if (--h.t <= 0) {
         if ((g.inst1Factories | 0) > 0) {
-          spawnLauncher(g, h); h.st = 1; h.n = 27;
+          spawnLauncher(g, h); h.st = 1; h.n = 27; roundStart(g, h, "moveAt");
         }
       }
     } else if (h.st === 1) {
-      h.y -= 1; if (--h.n <= 0) { h.st = 2; h.t = 30; }
+      // 0xb772: 0x62d2, pak y -= 1 - jeden krok za KOLO
+      if (roundDue(g, h, "moveAt")) {
+        h.y -= 1; if (--h.n <= 0) { h.st = 2; h.t = 30; }
+      }
     } else if (h.st === 2) {
-      if (--h.t <= 0) { h.st = 3; h.n = 27; }
+      if (--h.t <= 0) { h.st = 3; h.n = 27; roundStart(g, h, "moveAt"); }
     } else if (h.st === 3) {
-      h.y += 1; if (--h.n <= 0) { h.st = 0; h.t = 0; }
+      if (roundDue(g, h, "moveAt")) {            // 0xb790
+        h.y += 1; if (--h.n <= 0) { h.st = 0; h.t = 0; }
+      }
     }
   } else if (h.kind === "launcher") {
     h.y += h.vy;
@@ -6358,7 +6405,8 @@ function advanceTownHazardField(g, h) {
       }
     }
   } else if (h.kind === "beam") {
-    if (h.lethalT > 0 && --h.lethalT <= 0) h.lethal = false;   // trida 0
+    if (h.lethalT > 0 && roundDue(g, h, "lethalAt") &&
+        --h.lethalT <= 0) h.lethal = false;     // trida 0 po 5 KOLECH
     if (--h.life <= 0) h.retireAfterField = true;              // kill anim
   } else if (h.kind === "tapshot") {
     h.x += h.vx; h.y += h.vy;
@@ -6384,7 +6432,9 @@ function advanceTownHazardField(g, h) {
   } else if (h.kind === "seaplanebomb") {
     h.y += h.vy; h.vz += h.az; h.z += h.vz;
     if (h.st === 0) {
-      if (--h.t <= 0) { h.st = 1; h.az = -2048 / 65536; }   // 0xb686
+      if (roundDue(g, h, "waitAt") && --h.t <= 0) {         // 0xb686
+        h.st = 1; h.az = -2048 / 65536;
+      }
     } else if (Math.floor(h.z) <= 0) {         // 0xb68e: dopad
       queueTownExplosionTask(g, h.x, h.y, 1, "death-seaplanebomb");
       h.retireAfterField = true;               // fp@(-1414): bez skore
@@ -6615,7 +6665,8 @@ function advanceTownHazardField(g, h) {
       else releaseHazard(g, h);
     }
   } else if (h.kind === "inst2beam") {
-    if (h.lethalT > 0 && --h.lethalT <= 0) h.lethal = false;  // 0xbadc
+    if (h.lethalT > 0 && roundDue(g, h, "lethalAt") &&
+        --h.lethalT <= 0) h.lethal = false;     // 0xbadc po 5 KOLECH
   } else if (h.kind === "juntankturret") {
     if (!h.parent.alive) { releaseHazard(g, h); return; }   // +542 = 0x6db4
     h.x = h.parent.x + h.ox; h.y = h.parent.y + h.oy;
@@ -9414,7 +9465,8 @@ function step(g) {
   // 0x3cbe: scroll task scrolluje jen pri fp@(166) == 0. Bit 3 nastavuje
   // 0xb6ae (aktivni instalace nebo boss) a uvolni jej 0xb6ba pri
   // poslednim; bit 1 nastavi INST4#0 na konci urovne (0xbed0).
-  g.scrollHeld = (g.inst1Factories | 0) > 0 || !!g.levelEndHold;
+  g.scrollHeld = (g.inst1Factories | 0) > 0 || !!g.levelEndHold ||
+                 (g.tick | 0) < (g.scrollLockUntil | 0);
   if (!g.scrollHeld) {
     const step = SCROLL * TICK * (g.scrollMul ?? 1);
     g.scroll -= step;                          // scroll nahoru (fixture: 0 = stoji)
@@ -9757,7 +9809,7 @@ function step(g) {
         s.fr = 3; s.animSeq = null; s.animPos = 0; s.at = 0;
         if (s.typ === 2) { s.x = 352; s.vx = -0.5; s.vy = 0; }
         else { s.x = -32; s.vx = 0.5; s.vy = s.typ === 1 ? -0.5 / 32 : 0; }
-        s.st = 0; s.t = 50;
+        s.st = 0; s.t = 50; roundStart(g, s, "waitAt");   // 0xa210: 50 KOL
       } else if (s.beh === "tinytruck") {
         // 0xaedc (DESERT): nakladak, a2c6(TINYTRUK#0, 36, 272, HP 8,
         // 45 bodu, cost 10), dekal EXPL1#0 (+374 = 5), vy -0.75 (jede
@@ -10313,6 +10365,7 @@ function step(g) {
         const r = (random32(g) & 0xFFFF) << 16 >> 16;
         s.vx = (r >> 2) / 65536;
         s.z = 32; s.vz = 0.1875; s.zT = 10;
+        roundStart(g, s, "zAt");                  // 0x62b8(10): kola
       } else if (s.beh === "mine") {
         // 0x9b16: staticka rotujici mina, one-hit/contact detonation.
         s.cost = 7; s.hp = 10; s.scoreValue = 25;
@@ -10509,16 +10562,20 @@ function step(g) {
         if (g.inst4Handshake) s.t = 200;
         else { g.inst4Handshake = true; s.st = 3; s.rise = 15; }
       }
-      if (s.st === 1) {                          // 0xbf66: 15x { y -= 2 }
-        if (s.rise > 0) { s.y -= 2; s.rise--; }
-        else {                                   // 0xbf7a: SF fp@(148)
+      if (s.st === 1) {                          // 0xbf66: 15x { y -= 2 } za KOLO
+        if (s.rise > 0) {
+          if (roundDue(g, s, "riseAt")) { s.y -= 2; s.rise--; }
+        }
+        else if (roundDue(g, s, "riseAt")) {     // 0xbf7a: SF fp@(148) po yieldu
           g.inst4Handshake = false;
           if (g.inst4BossDead) { s.st = 3; s.rise = 15; }
           else { s.st = 2; s.t = 200; }          // 0xbf84: wait 200
         }
       }
-      if (s.st === 3) {                          // 0xbf96: 15x { y += 2 }
-        if (s.rise > 0) { s.y += 2; s.rise--; }
+      if (s.st === 3) {                          // 0xbf96: 15x { y += 2 } za KOLO
+        if (s.rise > 0) {
+          if (roundDue(g, s, "riseAt")) { s.y += 2; s.rise--; }
+        }
         else {
           random32(g);                           // 0xbfaa: vysledek se nepouzije
           startInst4Salvo(g, s);                 // 0xbfcc
@@ -10646,7 +10703,8 @@ function step(g) {
         s.turns = ((r >>> 16) & 31) + 8;         // horni slovo
         s.st = 1;
       }
-      if (s.st === 1) {                          // 0x9a0e: otaceni
+      // 0x9a0e: ADD +278 do +358, 0xa268, 0x62d2, SUBQ, BNE - otaceni za KOLO.
+      if (s.st === 1 && roundDue(g, s, "turnAt")) {
         s.ang = (s.ang + s.turnStep) & 255;
         s.fr = tapFrame(s.ang);
         s.nodeKey = "tap" + s.fr; s.nodeExt = null;
@@ -10689,7 +10747,7 @@ function step(g) {
           s.vx = 0; s.vy = 0; s.ax = 0; s.ay = 0;  // 0x6d96
           s.st = 1; s.t = 0;
         }
-      } else if (--s.t <= 0) {                   // 0x9eb6: kazdych 10 tiku
+      } else if (roundDue(g, s, "waitAt") && --s.t <= 0) {  // 0x9eb6: 0x62b8(10) = 10 KOL
         fireCannonStraight(g, s.x, s.sy, s.ang);
         s.t = 10;
       }
@@ -10714,7 +10772,7 @@ function step(g) {
         if (s.z >= 32) {                         // 0xb5e0
           s.vz = 0; s.ay = 2048 / 65536; s.st = 3; s.t = 1;
         }
-      } else if (--s.t <= 0) {                   // 0xb5f4: bomba po 10 ticich
+      } else if (roundDue(g, s, "waitAt") && --s.t <= 0) {  // 0xb5f4: 0x62b8(10) = 10 KOL
         spawnSeaplaneBomb(g, s); s.t = 10;
       }
     } else if (s.beh === "inst2") {
@@ -10972,16 +11030,21 @@ function step(g) {
       } else if (s.st === 1) {
         if (--s.t <= 0) {
           spawnPlatVehicle(g, s); sfxOpening(g, s.x);   // 0x5138
-          s.st = 2; s.n = 18;
+          s.st = 2; s.n = 18; roundStart(g, s, "moveAt");
         }
       } else if (s.st === 2) {
-        s.x += s.dir;
-        if (--s.n <= 0) { s.st = 3; s.t = 100; }
+        // 0xa40e: 0x62d2, pak x += 1 - jeden krok za KOLO
+        if (roundDue(g, s, "moveAt")) {
+          s.x += s.dir;
+          if (--s.n <= 0) { s.st = 3; s.t = 100; }
+        }
       } else if (s.st === 3) {
-        if (--s.t <= 0) { s.st = 4; s.n = 18; }
+        if (--s.t <= 0) { s.st = 4; s.n = 18; roundStart(g, s, "moveAt"); }
       } else if (s.st === 4) {
-        s.x -= s.dir;
-        if (--s.n <= 0) s.st = 5;
+        if (roundDue(g, s, "moveAt")) {          // 0xa436
+          s.x -= s.dir;
+          if (--s.n <= 0) s.st = 5;
+        }
       } else if (!s.platChild || !s.platChild.alive) {
         s.st = 1; s.t = 100;                     // 0xa456: az po smrti dite
       }
@@ -11192,19 +11255,22 @@ function step(g) {
       }
     } else if (s.beh === "airmine") {
       s.x += s.vx; s.z += s.vz;                 // housekeeping 0x62fe
-      if (--s.zT <= 0) { s.vz = -s.vz; s.zT = 10; }
+      // 0x75e4..0x75ee: NEG vz, pak 0x62b8(10) - deset KOL, ne tiku.
+      if (roundDue(g, s, "zAt") && --s.zT <= 0) { s.vz = -s.vz; s.zT = 10; }
     } else if (s.beh === "destrain") {
       s.x += s.vx; s.y += s.vy;                 // housekeeping 0x62fe
-      if (--s.t <= 0) {
+      // Wait 50 (0xa210) a wait 10 (0xa22c) jsou 0x62b8 = KOLA; mezi
+      // homingy je 0x629a = jeden VBL.
+      if ((s.st === 2 || roundDue(g, s, "waitAt")) && --s.t <= 0) {
         if (s.st === 0) {                       // po wait 50: anim + wait 10
           s.animSeq = [4, 5, 6, 5, 4, 3]; s.animPos = 0; s.fr = 4;
-          s.st = 1; s.t = 10;
+          s.st = 1; s.t = 10; roundStart(g, s, "waitAt");
         } else if (s.st === 1) {                // prvni homing, yield
           fireHoming(g, s.x + 6, s.sy, 0, s.vx, s.vy);
           s.st = 2; s.t = 1;
         } else {                                // druhy homing, zpet na wait 50
           fireHoming(g, s.x - 6, s.sy, 128, s.vx, s.vy);
-          s.st = 0; s.t = 50;
+          s.st = 0; s.t = 50; roundStart(g, s, "waitAt");
         }
       }
       if (s.animSeq && s.animPos < s.animSeq.length - 1)
@@ -11365,13 +11431,19 @@ function step(g) {
         // 0xac40 SUBQ #8,+324: hlaven odskoči nahoru; 0xac56 ji osmkrat
         // vrati ADDQ #1 dolu. +324 je primo world-y, zadna inverze osy.
         s.y -= 8; s.recoil = 8; s.st = 1;
+        s.recoilNext = g.tick | 0;               // prvni ADDQ jeste v tomto resume
         // 0x62d2 tikne animator pred skutecnym cooperative yieldem,
         // prvni viditelny recoil frame je proto uz CAMOGUN#1.
         s.fr = 1; s.animT = 3; fired = true;
       }
-      if (s.st === 1) {
+      // Animator 0x6cbc pocita VBL (fp@(-76)), takze bezi po tiku.
+      if (s.st === 1 && !fired && s.fr === 1 && --s.animT <= 0) s.fr = 0;
+      // 0xac56: ADDQ #1,+324; 0x62d2; SUBQ #1,+276; BNE - jeden krok za
+      // KOLO, ne za VBL. Zmereno trajdiff: s krokem za tik se vsech pet
+      // CAMOGUN v TOWN rozeslo s originalem v tiku 105 az 107.
+      if (s.st === 1 && (g.tick | 0) >= (s.recoilNext | 0)) {
+        s.recoilNext = (g.tick | 0) + ROUND_VBL;
         s.y += 1;
-        if (!fired && s.fr === 1 && --s.animT <= 0) s.fr = 0;
         if (--s.recoil <= 0) { s.st = 0; s.t = 100; s.fr = 0; }
       }
     } else if (s.beh === "boss") {

@@ -3065,8 +3065,12 @@ def main():
                              lead.shots[0].corr, lead.shots[0].ct];
 
               const cullCan = makeGame({ alive: false });
+              // Granat se probouzi jednou za KOLO (ROUND_VBL od zrodu, smycka
+              // 0x96aa). Fixture modeluje granat, ktery v nasledujicim kroku
+              // probuzeni MA - zrod o kolo drive nez ten krok.
               const cullCanRef = { kind: 'can', x: 3, y: 100, ang: 128,
-                spd: 3, st: 0, accel: false, phase: 0 };
+                spd: 3, st: 0, accel: false, phase: 0,
+                bornTick: (cullCan.tick | 0) + 1 - ROUND_VBL };
               cullCan.shots = [cullCanRef];
               step(cullCan);
               const cullCanField = [cullCan.shots.length,
@@ -4504,7 +4508,7 @@ def main():
                 const gaccel = game([]);
                 fireCannon(gaccel, 80, 80, 0, true, false);
                 const accel = [[gaccel.shots[0].x, gaccel.shots[0].spd]];
-                for (let i = 0; i < 6; i++) {
+                for (let i = 0; i < 12; i++) {
                   step(gaccel);
                   accel.push([gaccel.shots[0].x, gaccel.shots[0].spd]);
                 }
@@ -4582,18 +4586,27 @@ def main():
                     [160,67.646484,67.646484,84]],
                    "cannon initial ADD.W nebere signed high word 16.16: %s" %
                    exact_anim["cannonDiagonal"])
+            # Smycka 0x96aa strida snimek jednou za KOLO (ROUND_VBL tiku) od
+            # vlastniho zrodu granatu: prvni (zrod v tiku 41) prepne v 43,
+            # druhy (zrod v 42) v 44. Drive se stridalo kazdy tik.
             expect(exact_anim["cannon"] ==
                    [[[24, 0, True]],
-                    [[40, 1, True]],
+                    [[24, 0, True]],
+                    [[24, 0, True], [24, 0, False]],
                     [[40, 1, True], [24, 0, False]],
-                    [[24, 0, True], [40, 1, False]],
-                    [[40, 1, True], [24, 0, False]]],
+                    [[40, 1, True], [40, 1, False]]],
                    "granaty nemaji vlastni fazi 24/40 pro accel i straight: %s"
                    % exact_anim["cannon"])
+            # 0x966e: 0x96a4(5) = pet KOL, pak +0.5. Pocatecni pruchod pri
+            # zalozeni je 1. kolo, dalsi v tiku zrod+2, +4, +6, +8; v tom
+            # patem se rychlost zvedne po pohybu, takze od 9. kroku +1 px.
+            # (Drive po peti TICICH - 0x96a4 ale pocita probuzeni.)
             expect(exact_anim["accel"] ==
                    [[96.5, 0.5], [97, 0.5], [97.5, 0.5], [98, 0.5],
-                    [98.5, 1], [99.5, 1], [100.5, 1]],
-                   "granat nepouziva novou rychlost az po patem pohybu: %s"
+                    [98.5, 0.5], [99, 0.5], [99.5, 0.5], [100, 0.5],
+                    [100.5, 1], [101.5, 1], [102.5, 1], [103.5, 1],
+                    [104.5, 1]],
+                   "granat nepouziva novou rychlost az po patem kole: %s"
                    % exact_anim["accel"])
             expect(exact_anim["budget"] ==
                    {"accepted": [True] * 5, "rejected": False,
@@ -4750,8 +4763,11 @@ def main():
               step(world);
               const shotSpace = world.shots.map(s => [s.kind, s.x, s.y]);
               const depthGame = mkGame();
+              // Hloubka (0x96aa) se pocita jen v kole granatu - fixture
+              // modeluje granat, ktery v nasledujicim kroku probuzeni ma.
               depthGame.shots = [{ kind: 'can', x: 100, y: 40, ang: 64,
-                spd: 5, st: 0, accel: false, phase: 0 }];
+                spd: 5, st: 0, accel: false, phase: 0,
+                bornTick: (depthGame.tick | 0) + 1 - ROUND_VBL }];
               step(depthGame);
               const depthShot = depthGame.shots[0];
               const depthRecord = townHwCandidates(depthGame)
@@ -5891,7 +5907,9 @@ def main():
               step(g);
               const moved = { dx: shot.x - first.shotX, dy: shot.y - first.shotY };
               recoil.push({ y: s.y - y0, frame: s.fr });
-              for (let i = 0; i < 6; i++) {
+              // Navrat ze zakluzu (0xac56) je jeden pixel za KOLO, tedy 8 kol
+              // = 16 tiku; snima se kazdy tik.
+              for (let i = 0; i < 14; i++) {
                 step(g);
                 recoil.push({ y: s.y - y0, frame: s.fr });
               }
@@ -5936,15 +5954,26 @@ def main():
             expect(abs(cam["moved"]["dx"]) < 1e-6 and
                    abs(cam["moved"]["dy"] - 5) < 1e-6,
                    "CAMOGUN granat se nepohybuje konstantne 5 px/t dolu")
+            # 0xac56: ADDQ #1,+324; 0x62d2; SUBQ; BNE - jeden krok za KOLO
+            # (ROUND_VBL = 2 tiky), prvni jeste v tiku vystrelu. Animace
+            # (0x6cbc) pocita VBL, takze #1 drzi tri tiky jako drive.
+            # Overeno tools/trajdiff.py: s krokem za tik se vsech pet CAMOGUN
+            # v TOWN rozeslo s originalem v tiku 105..107, s krokem za kolo
+            # sedi vsech pet.
             expect([round(row["y"]) for row in cam["recoil"]] ==
-                   [-7, -6, -5, -4, -3, -2, -1, 0] and
+                   [-7, -7, -6, -6, -5, -5, -4, -4,
+                    -3, -3, -2, -2, -1, -1, 0, 0] and
                    [row["frame"] for row in cam["recoil"]] ==
-                   [1, 1, 1, 0, 0, 0, 0, 0],
-                   "CAMOGUN nema presnou 8tikovou recoil/anim sekvenci")
+                   [1, 1, 1] + [0] * 13,
+                   "CAMOGUN nema presnou recoil/anim sekvenci po kolech: %r" %
+                   (cam["recoil"],))
             settled = cam["settled"]
+            # Posledni krok zakluzu padne do 15. vzorku a hned zalozi
+            # 0x629c(100); snimek je o tik pozdeji, takze uz ubehl jeden VBL.
             expect(abs(settled["y"]) < 1e-6 and settled["state"] == 0 and
-                   settled["wait"] == 100,
-                   "CAMOGUN se po osmi recoil ticich nevratil do cekani")
+                   settled["wait"] == 99,
+                   "CAMOGUN se po osmi recoil kolech nevratil do cekani: %r" %
+                   (settled,))
             expect(settled["frame"] == 0, "CAMOGUN nevratil animaci na frame 0")
             expect(cam["hit1"] == {"hp": 1, "alive": True, "score": 0},
                    "CAMOGUN neprezil prvni zasah")
