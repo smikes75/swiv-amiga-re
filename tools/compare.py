@@ -297,6 +297,9 @@ def remake_frames(checkpoint):
               // Original t17 uz je davno za cold-boot prvnim Copper radkem;
               // checkpoint proto porovnava ustalenou COLOR16 sekvenci.
               const initialHudPrimed = true;
+              // Varianty (bez HELI, bez HUD) se renderuji ve stejnem kole;
+              // drzeni obrazu po kolech (klasicky rezim) by vratilo prvni.
+              state.roundDisplay = false;
               const render = () => {
                 // Kazda varianta musi mit stejny first-pass stav a nesmi
                 // posunout scheduler o jediny tick.

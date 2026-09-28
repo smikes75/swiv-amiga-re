@@ -62,6 +62,7 @@ def remake_series(low, high):
             page.wait_for_selector("#gamewrap", state="visible")
             return page.evaluate("""(cfg) => {
               startGame(0);
+              state.roundDisplay = false;   // render stavu v kazdem tiku
               const g = state.g;
               g.scrollMul = 1;
               g.vblBase = cfg.vblBase | 0;
@@ -116,6 +117,7 @@ def row_series(level, rows=None, span=0, step=16, bare=False):
             page.wait_for_selector("#gamewrap", state="visible")
             return page.evaluate("""(cfg) => {
               startGame(cfg.level);
+              state.roundDisplay = false;   // scroll se meni bez tiku
               const g = state.g;
               // Uroven zacina zacernena (fadeBlack 256, 16 snimku fade-in
               // z 0x1028). Bez nekolika kroku by kazdy kandidat byl cerny.

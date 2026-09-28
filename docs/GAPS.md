@@ -474,7 +474,9 @@ a po jednom VBL jen 32x.
 
 Tedy: **jedno kolo planovace (vsechny ulohy + vykresleni BOBu) trva na A500
 dva a vic snimku.** Scroll bezi zvlast a plynule (kamera se meni presne po
-4 VBL; na 2 400 px je jen 4 % zpozdeni - 9 986 VBL misto 9 600). Prepis
+4 VBL; na 2 400 px je jen 4 % zpozdeni - 9 986 VBL misto 9 600). *Oprava
+2026-09-28: plati pro citac `fp@(3530)`; na obrazovce se posun ukaze az
+s publikaci kola, viz etapa 2b.* Prepis
 naopak dela jedno kolo za tik, tedy 50 kol za sekundu.
 
 ### Co se tim NEMENI
@@ -585,10 +587,35 @@ HELI je nove sjednoceni pres osm poloh animace, `start` presunut z T 83 na
 82 (radek 3228 dovoluje 81..84; #0 pri kroku za kolo) a prah t28 snizen
 96,6 -> 96,3 (rotory formace v opacne fazi). Ostatni prahy se zvedly.
 
-**Etapa 2 - co dalsiho z toho plyne (otevrene):**
+### Varianta (a), etapa 2b: obraz klasickeho rezimu po kolech (2026-09-28)
 
-- **Kadence obrazu** klasickeho rezimu (objekty 25x za sekundu).
-- Rozhodovani, kolize a RNG jednou za kolo (etapa 3).
+Zmereno v harnessu vAmiga (60 po sobe jdoucich VBL v TOWN, textura po
+kazdem VBL, `fp@(256)` a `fp@(3530)`): obraz se meni **jen jednou za kolo**.
+V kazdem druhem VBL je rozdil presne 0 px, jinde 4 az 12 px (Copper
+COLOR07). Posun terenu (1 radek za 4 VBL) se take ukaze az s publikaci
+kola - scroll na obrazovce neni plynuly po VBL, jak predpokladala starsi
+veta vyse ("Scroll bezi zvlast a plynule" plati pro `fp@(3530)`, ne pro
+obraz).
+
+Disassembly: smycka `0x291e` (uloha s yieldem `0x5f0a`) v kazdem kole
+prohodi buffery, **zamkne `fp@(3542)` = horni slovo `fp@(3530)`** a zavola
+`0x41c8`, ktera obnovi pozadi a na konci postavi HW sprity (`0x3d00`).
+
+Prepis: v klasickem rezimu `frame()` drzi indexove pole, radek scrollu a
+vrstvu HW spritu z prvniho snimku kola (`g.pubField`); barvy (COLOR07,
+fade) a HUD se pocitaji dal po VBL. Vylepseny rezim dal interpoluje po
+tiku. Nastroje, ktere renderuji stav bez tiku (compare, align, behprobe,
+survey_remake), maji `state.roundDisplay = false`. Kontrakt v `uitest.py`:
+lichy tik kola = 0 px zmeny i po posunu hrace, bez drzeni 38 812 px.
+
+**Etapa 3 - otevrene (simulace po kolech):**
+
+- `fp@(3542)` (slovo scrollu pro vsechna screen-y) se meni jen za kolo;
+  prepis bere `Math.floor(g.scroll)` po tiku.
+- Fade `0x28b0` je korutina s `0x5f0a` a krokuje -16/+16 za KOLO, ne za
+  VBL; zatmeni tedy trva 32 VBL misto 16. Pred zmenou overit na casovani
+  kongratulaci a startu urovne (mereno v harnessu).
+- Rozhodovani, kolize a RNG jednou za kolo.
 - Drobnost nalezena cestou: GOOSE se v prepisu rodi o 2 px niz (ys0 286
   proti 284) a pri naletu zastavi o ~4 px pozdeji.
 

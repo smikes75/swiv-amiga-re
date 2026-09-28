@@ -19,7 +19,8 @@ with sync_playwright() as pw:
     page.keyboard.press(" ")
     page.wait_for_selector("#gamewrap", state="visible")
     res = page.evaluate("""(ticks) => {
-      startGame(0); const g = state.g, p = g.player;
+      startGame(0); state.roundDisplay = false;
+      const g = state.g, p = g.player;
       g.scrollMul = 1; g.vblBase = 186; g.lives = 100000;
       const fod = [{x: 257, vx: -0.8125}, {x: 195, vx: 0.7}]; let n = 0;
       window.fodderInitial = () => { const f = fod[Math.min(n++, fod.length - 1)]; return {x: f.x, vx: f.vx}; };

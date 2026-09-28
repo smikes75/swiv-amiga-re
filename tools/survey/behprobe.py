@@ -35,6 +35,7 @@ kill = spec.pop("kill", {})
 
 JS = """([spec, kill, maxtick]) => {
   const g = state.g; g.lives = 100000;
+  state.roundDisplay = false;                   // snimek = stav v tomto tiku
   const shots = [], log = [];
   const snap = (name) => { const now = performance.now(); g.last = now; frame(now);
     shots.push([name, document.querySelector('#game').toDataURL('image/png')]); };

@@ -12730,7 +12730,29 @@ function frame(now) {
   const top = Math.max(0, Math.min(g.mapH - 256, Math.floor(g.scroll)));
   if (!g.mapFrame)
     g.mapFrame = new ImageData(new Uint8ClampedArray(320 * 256 * 4), 320, 256);
-  const composed = composeTownBobs(g, top);
+  // Klasicky rezim: original publikuje obraz jednou za KOLO - smycka
+  // 0x291e prohodi buffery, zamkne fp@(3542) a 0x41c8 obnovi pozadi
+  // a postavi HW sprity (0x3d00). Harness vAmiga: mezi dvema publikacemi
+  // se obraz nezmeni ani o pixel, krome Copper barev (COLOR07 po VBL).
+  // Drzi se proto indexove pole, radek scrollu i vrstva HW spritu z prvniho
+  // snimku kola; barvy, HUD a fade se pocitaji dal po VBL.
+  const roundHold = !smooth && !g.over && state.roundDisplay !== false;
+  const round = Math.floor((g.tick | 0) / ROUND_VBL);
+  const held = roundHold && g.pubField && g.pubField.round === round &&
+               g.pubField.lv === g.lv ? g.pubField : null;
+  let composed, fieldTop = top;
+  if (held) {
+    composed = { index: held.index }; fieldTop = held.top;
+  } else {
+    composed = composeTownBobs(g, top);
+    if (roundHold) {
+      const pub = g.pubField && g.pubField.index.length === composed.index.length
+        ? g.pubField : { index: new Uint8Array(composed.index.length) };
+      pub.index.set(composed.index);
+      pub.round = round; pub.lv = g.lv; pub.top = top; pub.hwDrawn = false;
+      g.pubField = pub;
+    } else g.pubField = null;
+  }
   if (smooth && (stepped || !g.bobCur)) {
     // polohy publikovane v tomto tiku; predchozi tik drzi g.bobPrev
     g.bobPrev = stepped === 1 ? g.bobCur : null;
@@ -12739,7 +12761,7 @@ function frame(now) {
       .map(r => [smoothBobKey(r), { x: r.x, y: r.y }])) };
   }
   colorizeIndexedField(composed.index, 320, 256, state.mapMeta.height,
-                       state.mapMeta.margin, top, state.copperChecks,
+                       state.mapMeta.margin, fieldTop, state.copperChecks,
                        g.mapFrame.data, g.fadeBlack, g.fadeWhite,
                        g.lv === 0 && g.townColor07Enabled !== false &&
                          !g.fadeBlack
@@ -12965,7 +12987,19 @@ function frame(now) {
   // hardwarovymi sprity, ktere se skladaji az nize.
   // Jediny 0x3d00/0x3d4e pass pro cannon, PLOP#1 a P1 bolt pool:
   // 64 records, osm channel listu, banky podle channel pair a HW priorita.
-  if (!g.over)
+  if (!g.over && g.pubField) {
+    // HW sprity kola: kresli se jednou do vlastni vrstvy a pak se jen kopiruje
+    const pub = g.pubField;
+    if (!pub.hw) { pub.hw = document.createElement("canvas");
+                   pub.hw.width = 320; pub.hw.height = 256; }
+    if (!pub.hwDrawn) {
+      const hctx = pub.hw.getContext("2d");
+      hctx.clearRect(0, 0, 320, 256); hctx.imageSmoothingEnabled = false;
+      drawTownHardwareSprites(hctx, g, null);
+      pub.hwDrawn = true;
+    }
+    ctx.drawImage(pub.hw, 0, 0);
+  } else if (!g.over)
     drawTownHardwareSprites(ctx, g, smooth ? {
       smooth: true, alpha: Math.max(0, Math.min(1, g.frac / TICK)),
       top, scrollF: g.smoothScrollF ?? top,

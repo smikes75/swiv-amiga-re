@@ -7150,6 +7150,46 @@ def main():
                 expect(vez["korbSMaskou"] == vez["korb"],
                        "korba tanku nedostala masku: %r" % (vez,))
 
+            # Varianta (a), etapa 2b: klasicky rezim publikuje obraz jednou
+            # za KOLO (0x291e: exg bufferu, latch fp@(3542), 0x41c8 + HW
+            # sprity 0x3d00). Harness vAmiga: mezi publikacemi se obraz
+            # nezmeni, krome Copper barvy COLOR07 (VBL). Negativni kontrola:
+            # bez drzeni se tentyz posun hrace v lichem tiku projevi.
+            drz = page.evaluate("""() => {
+              startGame(0);
+              const g = state.g; g.lives = 99999;
+              state.smooth = false; state.roundDisplay = true;
+              for (let i = 0; i < 400; i++) {
+                step(g); g.lives = 99999; g.player.inv = 999;
+              }
+              if (g.tick % ROUND_VBL) step(g);           // prvni tik kola
+              const cv = document.querySelector('#game');
+              const cx = cv.getContext('2d');
+              const snap = () => { const now = performance.now();
+                g.hudCopperPrimed = true; g.last = now; frame(now);
+                return cx.getImageData(0, 0, 320, 256).data; };
+              const diff = (a, b) => { let n = 0;
+                for (let i = 0; i < a.length; i += 4)
+                  if (a[i] !== b[i] || a[i+1] !== b[i+1] || a[i+2] !== b[i+2]) n++;
+                return n; };
+              const a = snap();
+              const idx7 = g.pubField.index.reduce((n, v) => n + (v === 7), 0);
+              step(g); g.player.x += 6;                   // lichy tik kola
+              const drzeno = snap();
+              state.roundDisplay = false;
+              const volne = snap();
+              state.roundDisplay = true;
+              step(g);                                    // dalsi kolo
+              const dalsi = snap();
+              state.roundDisplay = undefined;
+              return { tick: g.tick, idx7, drzeno: diff(a, drzeno),
+                       volne: diff(a, volne), dalsi: diff(drzeno, dalsi) };
+            }""")
+            expect(drz["drzeno"] <= drz["idx7"] and
+                   drz["volne"] > drz["idx7"] + 50 and
+                   drz["dalsi"] > drz["idx7"] + 50,
+                   "klasicky obraz neni drzen po kolech: %r" % (drz,))
+
             # Druhe kriterium, ktere rozlisilo preuceny model: maskovani
             # musi byt zive i v TOWN, ne jen na referencnim miste.
             # Zmereno na stejnem behu (291 vzorku objektu ve vrstve > 0):
