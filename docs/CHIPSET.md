@@ -1637,3 +1637,34 @@ zvetseni 5): s predzvetsenim 23,47 ms, bez nej (vzdy nejblizsi soused)
 21,87 ms. Predzvetseni tedy stoji ~1,6 ms a kupuje vyhlazeny okraj
 spritovych pixelu pri podpixelove poloze - zustava.
 
+
+## Rotorovy disk a mereni snimku ve hre (2026-09-28)
+
+**Rotor jako disk** (volba vylepseneho rezimu, vychozi zapnuta). Listy
+rotoru (`JEEPHELI#5..#8`, sekundarni `0x93e2`; u hrace uvnitr slozenych
+snimku `0x945a`) jsou videt jen v kazdem druhem kole. Od varianty (a)
+kola po 2 VBL tedy blikaji 12,5x za sekundu (original pri 22 snimcich
+jeste pomaleji). Na CRT je dosvit slil do tmaveho pruhledneho disku, na
+LCD blikaji. Disk kresli vsechny ctyri polohy listu barvou 0 najednou:
+zaklad 0,14 (casovy prumer - kazdy list je videt 1/8 casu) a list 0,30,
+ktery plynule obiha rychlosti originalu (poloha dal po dvou kolech).
+Hrac se kresli telem `#0` (rozklad `HELI_ROTOR_PART`), stin rotoru se
+nekresli - ostatni rotory ho nemaji nikdy. Funguje i s naklonem.
+Kontrakt `uitest.py`: stopa vrtulniku mezi koly kolisa bez disku o
+1 143 bodu (3 144 / 4 218), s diskem o 33. Cena: `perf.py --hra` TOWN
+20,81 ms s diskem, 20,91 bez - pod sumem mereni.
+
+**Mereni snimku ve hre** (volba "mereni snimku" v panelu, vyvojarska).
+Ukazuje obnovovaci frekvenci displeje, interval mezi `requestAnimationFrame`
+(median, p95, max, vynechane snimky = nad 1,5x median) a prumer useku:
+simulace, sestaveni BOB fronty, klasicke pole (barveni 320x256 + HUD),
+teren, objekty, HUD+sprity. Bez flushe jsou useky jen priprava prikazu;
+volba "s flushi" po kazdem useku vynuti rasterizaci, takze useky nesou
+i praci rasteru/GPU (a snimek se tim zpomali). Headless Chromium, TOWN,
+"do okna": vylepseny rezim s flushi 14,7 ms, z toho **teren 12,3**
+(filtr hloubky ostrosti pres cely obraz, viz vyse), objekty 1,0.
+Vedlejsi nalez: ve vylepsenem rezimu se porad barvi i klasicke pole
+(0,64 ms), ktere se pak nezobrazi.
+
+Cisla z headless prohlizece plati jen jako pomery; o WebGL se rozhodne
+podle mereni na hracove stroji.

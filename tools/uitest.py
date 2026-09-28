@@ -7150,6 +7150,53 @@ def main():
                 expect(vez["korbSMaskou"] == vez["korb"],
                        "korba tanku nedostala masku: %r" % (vez,))
 
+            # Rotorovy disk (vylepseny rezim): listy 0x945a jsou videt jen
+            # v kazdem druhem kole, takze bez disku se oblast vrtulniku mezi
+            # sousednimi koly meni o cele listy. Disk kresli vsechny polohy
+            # porad, zmena mezi koly je jen obeh zvyrazneneho listu.
+            disk = page.evaluate("""() => {
+              startGame(0);
+              const g = state.g; g.lives = 99999;
+              Object.assign(state, { zoom: 3, smooth: true,
+                subpixelSprites: true, depthOfField: false,
+                softShadows: false, blendBg: false, spriteScale: "bez",
+                heliTilt: false });
+              for (let i = 0; i < 300; i++) {
+                step(g); g.lives = 99999; g.player.inv = 999;
+              }
+              if (g.tick % ROUND_VBL) step(g);
+              const cv = document.querySelector('#game');
+              const vyrez = () => {
+                const S = cv.width / 320, p = g.player;
+                return cv.getContext('2d').getImageData(
+                  Math.round((p.x - 24) * S), Math.round((p.y - 24) * S),
+                  48 * S, 48 * S).data; };
+              // Stopa vrtulniku v kole: body, ktere zmizi s hracem (tentyz
+              // tik, alfa 0). Teren pod vyrezem se mezi koly posouva, tak se
+              // neporovnavaji snimky, ale velikost stopy.
+              const kolo = () => {                 // dva tiky = jedno kolo
+                for (let k = 0; k < ROUND_VBL; k++) {
+                  g.frac = TICK; g.last = 0; frame(0); g.player.inv = 0;
+                }
+                g.frac = 0; g.last = 0; frame(0);
+                const s = vyrez();
+                g.player.alive = false; g.frac = 0; g.last = 0; frame(0);
+                const b = vyrez(); g.player.alive = true;
+                let n = 0;
+                for (let i = 0; i < s.length; i += 4)
+                  if (s[i] !== b[i] || s[i+1] !== b[i+1] || s[i+2] !== b[i+2]) n++;
+                return n; };
+              const beh = disc => { state.rotorDisc = disc;
+                const f = [kolo(), kolo(), kolo(), kolo()];
+                return { stopa: f, kolisani: Math.max(...f) - Math.min(...f) }; };
+              const bez = beh(false), s = beh(true);
+              state.rotorDisc = undefined; state.smooth = false;
+              return { bez, s };
+            }""")
+            expect(disk["bez"]["kolisani"] > 0 and
+                   disk["s"]["kolisani"] * 10 < disk["bez"]["kolisani"],
+                   "rotorovy disk porad blika mezi koly: %r" % (disk,))
+
             # Varianta (a), etapa 2b: klasicky rezim publikuje obraz jednou
             # za KOLO (0x291e: exg bufferu, latch fp@(3542), 0x41c8 + HW
             # sprity 0x3d00). Harness vAmiga: mezi publikacemi se obraz

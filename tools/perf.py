@@ -41,6 +41,7 @@ JS = """(arg) => {
   state.subpixelSprites = true; state.depthOfField = true;
   state.heliTilt = false; state.vehicleTracks = false; state.waterWaves = true;
   state.softShadows = true; state.spriteScale = "bez";
+  state.rotorDisc = true;
   Object.assign(state, prep);
   const g = state.g;
   for (let i = 0; i < warm; i++) { step(g); g.lives = 99999; g.player.inv = 0; }

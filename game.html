@@ -92,6 +92,9 @@ a { color:#cfe0ff }
       background:repeating-linear-gradient(to bottom, rgba(0,0,0,0) 0 2px, rgba(0,0,0,.28) 2px 3px),
                  repeating-linear-gradient(to right, rgba(255,0,0,.045) 0 1px, rgba(0,255,0,.045) 1px 2px, rgba(0,0,255,.045) 2px 3px);
       box-shadow:inset 0 0 42px rgba(0,0,0,.55);border-radius:6px"></div>
+    <pre id="perfhud" hidden style="position:absolute;left:4px;top:4px;margin:0;
+      padding:4px 6px;font:11px/1.35 monospace;color:#cfe;background:rgba(0,0,0,.72);
+      pointer-events:none;white-space:pre;border-radius:3px"></pre>
   </div>
   <div id="testbar" style="margin-top:6px;font:12px monospace;color:#9ab">
     <label><input type="checkbox" id="crtchk"> CRT</label>
@@ -114,6 +117,8 @@ a { color:#cfe0ff }
       title="TOKEN typ 1 (0x939c): stejna usti, ale strely se rozletnou do vejire misto rovnobezneho letu">&#10021; rozptyl</button>
     <span id="weaponlabel" style="opacity:.8"></span>
     &nbsp;&middot;&nbsp; <button type="button" id="btnend" title="Preskocit na zaverecnou sekvenci (klavesa C)">konec hry</button>
+    &nbsp;&middot;&nbsp; <label title="Vyvojarske: obnovovaci frekvence displeje, skutecny interval snimku (median, 95. percentil, vynechane snimky) a rozpad casu snimku na useky. Obraz ani simulaci nemeni."><input type="checkbox" id="perfchk"> m&#283;&#345;en&#237; sn&#237;mku</label>
+    <label title="Po kazdem useku vynuti vykresleni (getImageData 1x1), takze useky ukazuji i praci rasteru/GPU. Snimek se tim zpomali - meri se cena useku, ne dosazitelne fps."><input type="checkbox" id="perfflush"> s flush&#237;</label>
     <br>
     <span title="Ulozene pozice zustavaji v tomto prohlizeci">pozice</span>
     <select id="slotsel" style="font:inherit"></select>
@@ -131,6 +136,7 @@ a { color:#cfe0ff }
     &nbsp;&middot;&nbsp; <label title="Vozidla nechavaji stopy i mimo pasmo, ktere pro ne original otevira jen na tech mistech. Kresli se puvodnim dekalem JEEPHELI#40..#43 a jsou ciste zobrazovaci - do simulace ani po siti nezasahuji."><input type="checkbox" id="stopychk" checked> stopy vozidel</label>
     &nbsp;&middot;&nbsp; <label title="Sprity se kladou na zlomkovou polohu jako teren, misto aby skakaly po celych bodech displeje. Bez toho objekty po plynule jedouci zemi podkluzuji. Rozmaze se jen okraj spritu o jeden bod displeje, vnitrek zustava tvrdy."><input type="checkbox" id="subpxchk" checked> podpixelov&#233; sprity</label>
     &nbsp;&middot;&nbsp; <label title="Rotorovy disk se sklopi do smeru letu. Telo zustava pixel po pixelu nedotcene - naklani se jen rotor, ktery je jednobarevna plocha. Original naklonene snimky nema."><input type="checkbox" id="tiltchk"> n&#225;klon vrtuln&#237;ku</label>
+    &nbsp;&middot;&nbsp; <label title="Listy rotoru jsou v originale videt jen v kazdem druhem snimku hry, tedy blikaji 12,5x za sekundu. Na CRT je dosvit slil do tmaveho pruhledneho disku, na LCD blikaji. Disk kresli vsechny ctyri polohy listu slabe najednou a jeden silneji obiha stejnou rychlosti jako v originale."><input type="checkbox" id="rotorchk" checked> rotor jako disk</label>
     &nbsp;&middot;&nbsp; <label title="Sprity maji velke jednolite plochy a ostry obrys, takze pri zvetseni vypadaji hranateji nez ditherovany teren. Obe volby stavi na tomtez: Scale2x zdvojnasobi mrizku a schody rozdeli na polovicni, ale hrany nechava tvrde - porad je to pixel art. Vyhlazeno tutez mrizku dotahne na displej bilinearne, je to mekci, ale vzdalenejsi od predlohy. Maskovanych pozemnich objektu se to netyka."> hrany sprit&#367; <select id="sprsel" style="font:inherit"><option value="bez">bez &#250;prav</option><option value="scale2x">Scale2x</option><option value="vyhlazeno">vyhlazeno</option></select></label>
   </div>
   <div id="padrow" style="margin-top:4px;font:12px monospace;color:#9ab">
@@ -1971,9 +1977,11 @@ function standardBobRecords(spec, serialStart) {
     id, kind, key: key & 0xFFFF, spr, x, y, op, serial: serial++
   });
   const id = spec.id || "bob";
-  if (spec.secondary)
+  if (spec.secondary) {
     add(id + "-secondary", "secondary", mainKey - 1,
         spec.secondary, spec.x, spec.y, BOB_CLEAR_INDEX0);
+    if (spec.rotor) records[records.length - 1].rotorBlink = true;
+  }
   if (spec.primary)
     add(id + "-main", "main", mainKey,
         spec.primary, spec.x, spec.y, BOB_COOKIE_COPY);
@@ -1989,6 +1997,8 @@ function standardBobRecords(spec, serialStart) {
   // tutez vysku dostane i hlavni zaznam - pouziva ji volitelne nasvíceni
   for (const rec of records) {
     if (rec.kind === "main") rec.z = wordZ;
+    // blikajici rotor (vylepseny rezim ho kresli jako disk, viz ROTOR_DISC)
+    if (spec.rotor && rec.kind !== "secondary") rec.rotor = spec.rotor;
   }
   return { records, nextSerial: serial };
 }
@@ -2176,6 +2186,7 @@ function composeTownBobs(g, top) {
       castShadow: opts.castShadow,
       primaryOp: opts.primaryOp,
       fore: opts.fore,
+      rotor: opts.rotor || null,
       // creation ordinal objektu: klic pro parovani poloh mezi tiky
       // (smooth). Drive zustaval jen v pending a zaznamy dostaly serial,
       // ktery se posouva s kazdym prichozim/odchozim objektem.
@@ -2200,6 +2211,7 @@ function composeTownBobs(g, top) {
           ordinal: s.bobOrdinal,
           secondaryFile: secondaryVisible ? "JEEPHELI.LIN" : undefined,
           secondaryFrame: 5 + ((s.rotorTick >> 1) & 3),
+          rotor: s.rotorActive ? ROTOR_DISC : null,
           primaryOp: s.hitSpread ? BOB_FILL_INDEX9 : null,
         });
       }
@@ -2234,6 +2246,7 @@ function composeTownBobs(g, top) {
         ordinal: s.bobOrdinal,
         secondaryFile: rotorVisible ? "JEEPHELI.LIN" : undefined,
         secondaryFrame: 5 + ((s.rotorTick >> 1) & 3),
+        rotor: ROTOR_DISC,
         primaryOp: s.hitFlash ? BOB_FILL_INDEX9 : null,
       });
       continue;
@@ -2244,6 +2257,7 @@ function composeTownBobs(g, top) {
         ordinal: s.bobOrdinal,
         secondaryFile: rotorVisible ? "JEEPHELI.LIN" : undefined,
         secondaryFrame: 5 + ((s.rotorTick >> 1) & 3),
+        rotor: ROTOR_DISC,
         primaryOp: s.hitFlash ? BOB_FILL_INDEX9 : null,
       });
       continue;
@@ -2265,6 +2279,7 @@ function composeTownBobs(g, top) {
         secondaryFile: rotorVisible ? "JEEPHELI.LIN" : undefined,
         secondaryFrame: slow ? 5 + ((s.rotorSlow / 10) | 0)
                              : 5 + ((s.rotorTick >> 1) & 3),
+        rotor: slow ? null : ROTOR_DISC,
         primaryOp: s.hitFlash ? BOB_FILL_INDEX9 : null,
       });
       continue;
@@ -2327,6 +2342,7 @@ function composeTownBobs(g, top) {
         ordinal: s.bobOrdinal,
         secondaryFile: secondaryVisible ? "JEEPHELI.LIN" : undefined,
         secondaryFrame: 5 + ((s.rotorTick >> 1) & 3),
+        rotor: ROTOR_DISC,
         primaryOp: s.hitFlash ? BOB_FILL_INDEX9 : null,
       });
     } else {
@@ -2355,6 +2371,7 @@ function composeTownBobs(g, top) {
                        h.kind === "laser" ? 1 : 0,
           secondaryFile: rotorVisible ? "JEEPHELI.LIN" : undefined,
           secondaryFrame: 5 + (((h.rotorTick | 0) >> 1) & 3),
+          rotor: h.rotor ? ROTOR_DISC : null,
           primaryOp: flash ? BOB_FILL_INDEX9 : null });
   }
 
@@ -2409,7 +2426,7 @@ function composeTownBobs(g, top) {
           { ordinal: bubble.bobOrdinal, castShadow: false, objectFlags: 1 });
     const playerFrame = HELI_SEQUENCE[(p.heliAnimPos | 0) & 7]; // 0x945a
     bob("player", "JEEPHELI.LIN", playerFrame, p.x, p.y, 32, {
-      ordinal: p.bobOrdinal,
+      ordinal: p.bobOrdinal, rotor: ROTOR_DISC_HELI,
       primaryOp: (p.inv & 8) ? BOB_FILL_INDEX9 : null,
     });
     // HELI weapon child 0x939c je neviditelny scheduler task. Snimky
@@ -3896,6 +3913,22 @@ const HELI_SEQUENCE = [0, 1, 0, 2, 0, 3, 0, 4];
    Tabulka je [rotor, dx, dy]. */
 const HELI_ROTOR_PART = { 1: [5, 1, 1], 2: [6, 1, 1],
                           3: [7, 0, 0], 4: [8, 2, 2] };
+/* Rotorovy disk (vylepseny rezim, v originale neni). Listy `#5`..`#8`
+   (sekundarni `0x93e2`, u hrace uvnitr `0x945a`) jsou videt jen v kazdem
+   druhem kole a tocit se o polohu dal po dvou kolech. Pri 25 kolech za
+   sekundu blikaji 12,5x za sekundu (original pri 22 snimcich jeste
+   pomaleji); na CRT to dosvit slil do tmaveho pruhledneho disku, na LCD
+   to blika. Disk kresli vsechny ctyri polohy listu barvou 0 najednou:
+   slaby zaklad (casovy prumer - kazdy list je v originale videt 1/8
+   casu) a silnejsi list, ktery plynule obiha stejnou rychlosti jako
+   v originale. Ciste zobrazovaci: do simulace ani do site nezasahuje.
+   Polozky jsou [snimek listu, dx, dy] vuci kotve objektu; `body` je
+   snimek bez listu, kterym se u hrace nahradi slozeny snimek. */
+const ROTOR_DISC = { parts: [[5, 0, 0], [6, 0, 0], [7, 0, 0], [8, 0, 0]] };
+const ROTOR_DISC_HELI = { body: 0, parts: [5, 6, 7, 8].map(
+  f => { const q = Object.values(HELI_ROTOR_PART).find(v => v[0] === f);
+         return [f, q[1], q[2]]; }) };
+const ROTOR_DISC_BASE = 0.14, ROTOR_DISC_BLADE = 0.3;
 /* Rychlost vrtulniku je `+356` = 768 v 16.16, tedy 3 px/tik po ose
    (0x9476). Naklon se tim normuje na plny vychyl pri plne rychlosti. */
 const HELI_TILT_SPEED = 3;
@@ -8448,6 +8481,7 @@ function setMode(fx) {
   for (const [id, klic] of [["dofchk", "depthOfField"],
                             ["softshchk2", "softShadows"],
                             ["tiltchk", "heliTilt"],
+                            ["rotorchk", "rotorDisc"],
                             ["subpxchk", "subpixelSprites"],
                             ["stopychk", "vehicleTracks"],
                             ["vlnkychk", "waterWaves"],
@@ -8497,6 +8531,17 @@ document.getElementById("sprsel").onchange = e => {
     for (const spr of state.indexedFrameCache.values())
       if (spr) { spr.smoothCache = null; if (spr._sc2) spr._sc2.smoothCache = null; }
   try { localStorage.setItem("swivSprite", e.target.value); } catch (e2) {}
+};
+document.getElementById("perfchk").onchange = e => {
+  PERF.on = e.target.checked;
+  PERF.intervals = []; PERF.frames = []; PERF.last = 0; PERF.shown = 0;
+  document.getElementById("perfhud").hidden = !PERF.on;
+};
+document.getElementById("perfflush").onchange = e => {
+  PERF.flush = e.target.checked; PERF.frames = [];
+};
+document.getElementById("rotorchk").onchange = e => {
+  state.rotorDisc = state.smooth && e.target.checked;
 };
 document.getElementById("tiltchk").onchange = e => {
   state.heliTilt = state.smooth && e.target.checked;
@@ -12390,7 +12435,8 @@ function heliTiltParts(g) {
   const part = HELI_ROTOR_PART[HELI_SEQUENCE[(g.player.heliAnimPos | 0) & 7]];
   const body = indexedFrameFor(state, "JEEPHELI.LIN", 0);
   if (!body) return null;
-  const rotor = part ? indexedFrameFor(state, "JEEPHELI.LIN", part[0]) : null;
+  const rotor = part && !state.rotorDisc
+    ? indexedFrameFor(state, "JEEPHELI.LIN", part[0]) : null;
   return { body, rotor: part && rotor ? rotor : null,
            dx: part ? part[1] : 0, dy: part ? part[2] : 0 };
 }
@@ -12422,6 +12468,25 @@ function drawTiltedHeli(ctx, r, dx, dy, palRow, c07, part, ux, uy,
       ax + ux * HELI_BANK_ROTOR + rotor.ox + part.dx,
       ay + uy * HELI_BANK_ROTOR + rotor.oy + part.dy, S, blurDev,
       zx, zy, ax, ay);
+}
+/* Rotorovy disk (viz ROTOR_DISC). `ax`, `ay` je kotva objektu v hernich
+   bodech, `faze` 0..4 poloha obihajiciho listu. `zx`, `zy`, `cx`, `cy`
+   predavaji zuzeni naklonu vrtulniku, jinak undefined. */
+function drawRotorDisc(ctx, rotor, ax, ay, palRow, c07, S, blurDev, faze,
+                       zx, zy, cx, cy) {
+  const a0 = ctx.globalAlpha;
+  for (let i = 0; i < rotor.parts.length; i++) {
+    const [f, ox, oy] = rotor.parts[i];
+    const spr = indexedFrameFor(state, "JEEPHELI.LIN", f);
+    if (!spr) continue;
+    let d = Math.abs(faze - i) % 4; d = Math.min(d, 4 - d);
+    ctx.globalAlpha = a0 * (ROTOR_DISC_BASE +
+                            ROTOR_DISC_BLADE * Math.max(0, 1 - d));
+    drawSpriteDevice(ctx,
+      smoothSpriteCanvas(spr, palRow, BOB_CLEAR_INDEX0, c07, null, 0, 0),
+      ax + ox + spr.ox, ay + oy + spr.oy, S, blurDev, zx, zy, cx, cy);
+  }
+  ctx.globalAlpha = a0;
 }
 /* HUD pruh do pruhledneho platna - stejna smycka jako compositeHudPlane,
    jen misto do hotoveho snimku zapisuje do vrstvy s alfa 0 na pozadi. */
@@ -12559,6 +12624,7 @@ function renderSmoothField(ctx, g, S, composed, hudCv) {
       ctx.globalAlpha = 1;
     }
   } else ctx.drawImage(st.cv, 0, -fy);
+  perfMark(ctx, "teren");
   if (state.depthOfField) {                      // objekty uz ostre
     ctx.filter = "none";
     ctx.imageSmoothingEnabled = false;
@@ -12586,8 +12652,19 @@ function renderSmoothField(ctx, g, S, composed, hudCv) {
       (cilY - (state.heliTiltY || 0)) * HELI_TILT_LAG;
   }
   const tiltX = state.heliTiltX || 0, tiltY = state.heliTiltY || 0;
-  for (const r of composed.ordered) {
+  // Obeh listu disku: poloha dal po dvou kolech jako v originale, jen
+  // plynule. Casem simulace (tik + alfa), takze pauza disk zastavi.
+  const rotorFaze = (((g.tick | 0) + alpha) / (2 * ROUND_VBL)) % 4;
+  const heliBody = state.rotorDisc
+    ? indexedFrameFor(state, "JEEPHELI.LIN", ROTOR_DISC_HELI.body) : null;
+  for (let r of composed.ordered) {
     if (!r.spr) continue;
+    if (state.rotorDisc && r.rotorBlink) continue;   // listy kresli disk
+    // Hrac: slozeny snimek s listy (0x945a) se nahradi samotnym telem;
+    // stin rotoru se pak nekresli, stejne jako u ostatnich rotoru, ktere
+    // stin z listu nemaji nikdy (stin je jen z primarniho snimku).
+    if (heliBody && r.rotor && r.rotor.body !== undefined)
+      r = Object.assign({}, r, { spr: heliBody });
     const key = smoothBobKey(r);
     const p = prev && key !== null ? prev.byKey.get(key) : null;
     // Rohy spritu ze ZLOMKOVYCH poloh: drive se konce zaokrouhlovaly na
@@ -12675,22 +12752,96 @@ function renderSmoothField(ctx, g, S, composed, hudCv) {
         r.kind === "shadow" ? 0 : tiltX, r.kind === "shadow" ? 0 : tiltY,
         r.kind === "shadow" ? tiltX * HELI_BANK_SHADOW : 0,
         r.kind === "shadow" ? tiltY * HELI_BANK_SHADOW : 0, S, blurDev);
+      if (state.rotorDisc && r.kind === "main") {
+        // disk se naklani s rotorem stejne jako list v drawTiltedHeli
+        const ax = dx - r.spr.ox, ay = dy - r.spr.oy;
+        drawRotorDisc(ctx, r.rotor, ax + tiltX * HELI_BANK_ROTOR,
+                      ay + tiltY * HELI_BANK_ROTOR,
+                      pal.subarray(row * 16, row * 16 + 16), c07, S, blurDev,
+                      rotorFaze, 1 - HELI_SQUASH * Math.abs(tiltX),
+                      1 - HELI_SQUASH * Math.abs(tiltY), ax, ay);
+      }
       continue;
     }
     drawSpriteDevice(ctx, cv, dx, dy, S, blurDev);
+    if (state.rotorDisc && r.rotor && r.kind === "main")
+      drawRotorDisc(ctx, r.rotor, dx - r.spr.ox, dy - r.spr.oy,
+                    pal.subarray(row * 16, row * 16 + 16), c07, S, blurDev,
+                    rotorFaze);
   }
   // HUD (5. bitplane) jako **pruhledna** vrstva: drive se sem kopirovalo
   // prvnich 16 radku klasickeho snimku, jenze ten ma teren na celem
   // `top`, ne na interpolovanem scrollF - pod HUDem tedy stal a na radku
   // 16 vznikal nehybny vodorovny sev (zmereno: radky 0-15 se neposouvaly,
   // od 16 dolu ano). Textura HUDu je ridka, teren pod ni prosvita.
+  perfMark(ctx, "objekty");
   if (hudCv) ctx.drawImage(hudCv, 0, HUD_SCREEN_Y);
   ctx.restore();
 }
 
+/* Mereni snimku (volba "mereni snimku", vyvojarske; nic nemeni na obraze
+   ani simulaci). Usek = cas JS od predchoziho useku. Canvas kreslici
+   prikazy jen zaznamenava a rasterizuje je az pri flushi, takze bez flushe
+   ukazuje priprava prikazu, ne cena kresleni (viz tools/perf.py). S volbou
+   "s flushi" se po kazdem useku vynuti rasterizace (getImageData 1x1) a usek
+   pak nese i praci rasteru/GPU - snimek se tim ale zpomali, takze se tak
+   meri cena useku, ne dosazitelne fps. Interval snimku je mezi volanimi
+   requestAnimationFrame, tedy to, co hrac skutecne vidi. */
+const PERF = { on: false, flush: false, t: 0, cur: null, last: 0,
+               intervals: [], frames: [], shown: 0 };
+const PERF_USEKY = ["simulace", "sestaveni", "klasicke pole", "teren",
+                    "objekty", "HUD+sprity"];
+function perfMark(ctx, usek) {
+  if (!PERF.cur) return;
+  if (PERF.flush && ctx) ctx.getImageData(0, 0, 1, 1);
+  const t = performance.now();
+  PERF.cur[usek] = (PERF.cur[usek] || 0) + (t - PERF.t);
+  PERF.t = t;
+}
+function perfBegin(now) {
+  if (!PERF.on) { PERF.cur = null; return; }
+  const t = performance.now();
+  if (PERF.last) {
+    PERF.intervals.push(now - PERF.last);
+    if (PERF.intervals.length > 240) PERF.intervals.shift();
+  }
+  PERF.last = now; PERF.t = t; PERF.cur = { t0: t };
+}
+function perfEnd() {
+  if (!PERF.cur) return;
+  PERF.cur.celkem = performance.now() - PERF.cur.t0;
+  PERF.frames.push(PERF.cur);
+  if (PERF.frames.length > 240) PERF.frames.shift();
+  PERF.cur = null;
+  const t = performance.now();
+  if (t - PERF.shown < 500) return;
+  PERF.shown = t;
+  const el = document.getElementById("perfhud");
+  if (!el) return;
+  const pct = (a, q) => { if (!a.length) return 0;
+    const b = a.slice().sort((x, y) => x - y);
+    return b[Math.min(b.length - 1, Math.floor(q * b.length))]; };
+  const iv = PERF.intervals, med = pct(iv, 0.5);
+  const vynech = med ? iv.filter(v => v > 1.5 * med).length : 0;
+  const prum = k => PERF.frames.reduce((n, f) => n + (f[k] || 0), 0) /
+                    Math.max(1, PERF.frames.length);
+  const f2 = v => v.toFixed(v < 10 ? 2 : 1);
+  const radky = [
+    "obnova " + (med ? (1000 / med).toFixed(0) : "?") + " Hz, snimek p50 " +
+      f2(med) + " p95 " + f2(pct(iv, 0.95)) + " max " + f2(pct(iv, 1)) +
+      " ms, vynechano " + vynech + "/" + iv.length,
+    (PERF.flush ? "S FLUSHI (cena useku vc. rasteru):"
+                : "JS (bez flushe = jen priprava prikazu):") +
+      " celkem " + f2(prum("celkem")) + " ms, p95 " +
+      f2(pct(PERF.frames.map(f => f.celkem), 0.95)),
+    PERF_USEKY.map(k => k + " " + f2(prum(k))).join("  "),
+  ];
+  el.textContent = radky.join("\n");
+}
 function frame(now) {
   const g = state.g;
   if (!g) { state.loopRunning = false; return; }
+  perfBegin(now);
   pollGamepads(g);
   if (!g.last) g.last = now;
   let dt = Math.min(0.1, (now - g.last) / 1000); g.last = now;
@@ -12714,8 +12865,10 @@ function frame(now) {
     } else stepStatsScreen(g);
   }
   if (g.statsDone) {                           // 0xda0: zpet na 0x0d64
+    PERF.cur = null;
     state.loopRunning = false; state.g = null; showTitle(); return;
   }
+  perfMark(null, "simulace");
 
   const cv = $("#game"), ctx = cv.getContext("2d");
   // Vylepseny rezim kresli do plochy skalovane S-krat, aby sly polohy
@@ -12760,6 +12913,7 @@ function frame(now) {
       .filter(r => smoothBobKey(r) !== null)
       .map(r => [smoothBobKey(r), { x: r.x, y: r.y }])) };
   }
+  perfMark(null, "sestaveni");
   colorizeIndexedField(composed.index, 320, 256, state.mapMeta.height,
                        state.mapMeta.margin, fieldTop, state.copperChecks,
                        g.mapFrame.data, g.fadeBlack, g.fadeWhite,
@@ -12774,11 +12928,13 @@ function frame(now) {
   g.hudCopperPrimed = true;
   const hudOverlay = smooth
     ? hudOverlayCanvas(g, hudPlane.bytes, g.tick, hudFirstPass) : null;
+  perfMark(null, "klasicke pole");
   if (smooth) {
     renderSmoothField(ctx, g, S, composed, hudOverlay);
     ctx.save(); ctx.scale(S, S);
   } else {
     ctx.putImageData(g.mapFrame, 0, 0);
+    perfMark(ctx, "teren");
   }
   const wpc = palAtImgY(top + 128);       // paleta okna pro letce/strely/hrace
 
@@ -13009,6 +13165,7 @@ function frame(now) {
       q: v => Math.round(v * S) / S,
     } : null);
   if (smooth) ctx.restore();
+  perfMark(ctx, "HUD+sprity");
 
   // Po continue + closing fadu uz pod statistikou neprosvita HUD ani
   // pozdni HW sprity: 0x0da2 kresli na cistou plochu s paletou 0x2a1c.
@@ -13017,6 +13174,7 @@ function frame(now) {
     else renderStatsScreen(ctx, g);
   }
   if ((g.tick & 31) === 0) updateJumpLabel();
+  perfEnd();
 
   requestAnimationFrame(frame);
 }
