@@ -1457,6 +1457,12 @@ vypisuje jen diagnosticky. Prahy jsou tesne pod zmerenymi hodnotami:
 | grass / river / ice / scifi | 92,9 / 93,3 / 88,9 / 95,3 | 92,8 / 93,2 / 88,8 / 95,2 |
 | desert | 95,7 | 95,6 |
 
+Aktualizace 2026-09-28 (varianta (a), etapa 2a): maska HELI je sjednoceni
+pres osm poloh animace vrtulniku, `start` je T 82 (faze #0 pri kroku za
+kolo) a prahy jsou 99,8 / 98,9 / 98,1 / 99,8, 93,9 / **96,3** / 94,9,
+92,9 / 93,4 / 89,0 / 95,2, final 71,8, desert 96,7. Snizeni t28 je
+jedina vyjimka z pravidla, oduvodnena v hlavicce `compare.py`.
+
 V hlavicce `compare.py` i v `docs/GAPS.md` je ted veta, co procento je
 (podil bodu shodnych na +-8 urovni v JEDNOM snimku) a co neni (mira
 vernosti prepisu).

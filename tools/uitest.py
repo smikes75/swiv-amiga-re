@@ -7,6 +7,7 @@ a cyklus CAMOGUN.
 Pri chybe nebo nesplnene podmince skonci nenulovym navratovym kodem.
 
     python3 tools/uitest.py
+    UITEST_VSE=1 python3 tools/uitest.py   # nezastavi se na prvnim selhani
 """
 
 from playwright.sync_api import sync_playwright
@@ -15,8 +16,13 @@ import os
 import time
 
 
+SELHANI = []
+
+
 def expect(condition, message):
     if not condition:
+        if os.environ.get("UITEST_VSE"):         # sber vsech selhani
+            SELHANI.append(message); print("FAIL", message); return
         raise AssertionError(message)
 
 
@@ -1196,14 +1202,15 @@ def main():
                    "FODDERA nema zrychleni 1/32 px/t2 se stropem 3 px/t")
             expect(abs(formations["edge"]["vx"] - 1 / 32) < 1e-9 and
                    abs(formations["edge"]["x"] - (31 + 1 / 32)) < 1e-9 and
-                   formations["fodAnim"] == [2, 3, 2, 4, 2, 5, 2, 6],
+                   # perioda 1 = jeden snimek za KOLO (2 VBL), animPer
+                   formations["fodAnim"] == [2, 2, 3, 3, 2, 2, 4, 4],
                    "FODDERA nema pozvolnou korekci okraje/rotor period 1")
             expect(formations["yellowCount"] == 6 and
                    formations["yellowY"] == [100, 92, 84, 76, 68, 60] and
                    formations["yFirst"] is True and 256 <= formations["xFirst"] < 320 and
                    formations["yBefore"] is False and formations["ySecond"] is True and
                    0 <= formations["xSecond"] < 64 and
-                   formations["yelAnim"] == [0, 1, 0, 2, 0, 3, 0, 4],
+                   formations["yelAnim"] == [0, 0, 1, 1, 0, 0, 2, 2],
                    "YELLOW nema 6 samostatne aktivovanych clenu/animaci: %s" %
                    formations)
             expect(formations["budgetAccepted"] is False and
@@ -2369,12 +2376,15 @@ def main():
                 k2.hitCooldown = -1; shootToken(g, k2);
               }
               const locked = { typ: k2.typ, cooldown: k2.hitCooldown };
+              // 0x9764: cyklus ikona/prazdno = 2 KOLA, cooldown -1 na jeho
+              // zacatku; 12 cyklu = 24 kol = 48 VBL pri ROUND_VBL 2.
               k2.y = g.scroll + 100;
-              for (let i = 0; i < 24; i++) stepTokens(g, 0);
+              for (let i = 0; i < 12 * 2 * ROUND_VBL; i++) { g.tick++; stepTokens(g, 0); }
               const y0 = k2.y; shootToken(g, k2);
               const blocked = { typ: k2.typ, dy: k2.y - y0,
                                 cooldown: k2.hitCooldown };
-              stepTokens(g, 0); k2.y += 8; shootToken(g, k2);
+              for (let i = 0; i < ROUND_VBL; i++) { g.tick++; stepTokens(g, 0); }
+              k2.y += 8; shootToken(g, k2);
               const unlocked = k2.typ;
               const k3 = mk(3); let accepted = 0;
               while (k3.typ !== 4 && accepted < 60) {
@@ -3497,7 +3507,8 @@ def main():
                    "JOY 0x959e/rychlost 3 nesedi: %s" %
                    player_exact["joystick"])
             expect(player_exact["clamp"] == [1, 1, 319, 255] and
-                   player_exact["anim"] == [0, 1, 0, 2, 0, 3, 0, 4],
+                   # 0x945a perioda 1 = jeden snimek za kolo (animPer)
+                   player_exact["anim"] == [0, 0, 1, 1, 0, 0, 2, 2],
                    "HELI clamp nebo 0x945a anim nesedi: %s" % player_exact)
             expect(player_exact["weaponTable"] == [[2, 11], [1, 11], [5, 8]],
                    "0x70c8 neni MIN clamp: %s" % player_exact["weaponTable"])
@@ -4016,13 +4027,14 @@ def main():
                 # scroll word: 1000 -> 999.75 je delta -1, dalsi tik 0
                 "air": [[-64, 1099, 0, 1], [-64, 1099, 0, 1]],
                 "prox": [[0, 1100, 0, 1], [0, 1100, 0, 1]],
-                "core": [[-64, 1099, 1, 0], [-64, 1099, 1, 0]],
+                # perioda 1 = snimek za kolo: po prvnim tiku jen at 1 (animDue)
+                "core": [[-64, 1099, 0, 1], [-64, 1099, 0, 1]],
                 "flame": [[-8, 1100, 1, 0], [-8, 1100, 1, 0]],
                 "spawn": [[-64, 1100, 0, 1], [-64, 1100, 0, 1]],
                 "token": [[-64, 1099.5, 1, False, -2],
                           [-64, 1099.5, 1, False, -2]],
                 "roto": [[4, 4, 1, 49, 0], [4, 4, 1, 49, 0]],
-                "mill": [[1099, 1, 1, 0], [1099, 1, 1, 0]],
+                "mill": [[1099, 0, 1, 0], [1099, 0, 1, 0]],
                 "goose": [[935, 3, False, 0],
                           [935, 3, True, 0]],
             }
@@ -5955,8 +5967,9 @@ def main():
                    abs(cam["moved"]["dy"] - 5) < 1e-6,
                    "CAMOGUN granat se nepohybuje konstantne 5 px/t dolu")
             # 0xac56: ADDQ #1,+324; 0x62d2; SUBQ; BNE - jeden krok za KOLO
-            # (ROUND_VBL = 2 tiky), prvni jeste v tiku vystrelu. Animace
-            # (0x6cbc) pocita VBL, takze #1 drzi tri tiky jako drive.
+            # (ROUND_VBL = 2 tiky), prvni jeste v tiku vystrelu. Animator
+            # (0x6cbc) odecita VBL, ale krokuje jednou za kolo: perioda 3
+            # drzi #1 dve kola = 4 VBL (vystrel + 3 dalsi tiky).
             # Overeno tools/trajdiff.py: s krokem za tik se vsech pet CAMOGUN
             # v TOWN rozeslo s originalem v tiku 105..107, s krokem za kolo
             # sedi vsech pet.
@@ -5964,7 +5977,7 @@ def main():
                    [-7, -7, -6, -6, -5, -5, -4, -4,
                     -3, -3, -2, -2, -1, -1, 0, 0] and
                    [row["frame"] for row in cam["recoil"]] ==
-                   [1, 1, 1] + [0] * 13,
+                   [1, 1, 1, 1] + [0] * 12,
                    "CAMOGUN nema presnou recoil/anim sekvenci po kolech: %r" %
                    (cam["recoil"],))
             settled = cam["settled"]
@@ -7630,3 +7643,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+    if SELHANI:
+        raise SystemExit("%d selhani" % len(SELHANI))

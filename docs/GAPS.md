@@ -541,13 +541,52 @@ Overeno `tools/trajdiff.py` (2 400 px TOWN, original z ulozeneho behu
 v `uitest.py` upraveny s odvozenim (zakluz -7,-7,-6,-6..., granat strida
 snimek za kolo od zrodu, zrychleni po 5 kolech).
 
+### Varianta (a), etapa 2a: animace po kolech (2026-09-28)
+
+Animator (`0x6cbc`, volany z `0x62d2`, tedy jednou za kolo; blok na
+`+380`, sekundarni `+422`, snimek na `+18` = `+398`/`+440`):
+
+```
+subw fp@(-76),a0@(10)   ; citac -= ubehle VBL
+bhis konec              ; jeste > 0: nic
+movew a0@(12),a0@(10)   ; citac = perioda (zbytek se ZAHODI)
+...                     ; prikazy, pak JEDEN snimek a rts
+```
+
+Snimek s periodou p tedy trva `2*ceil(p/2)` VBL: **sude periody (2, 4, 6,
+8, 10, 12) se nemeni, licha se zaokrouhli nahoru a perioda 1 je jeden
+snimek za kolo.** V prepisu `animPer(p)` a `animDue(o, p, klic)`; zmenena
+jsou jen mista s lichou nebo promennou periodou:
+
+- obecne kroky se `seq/per`: vzdusne objekty (`advanceAirAnim`), hazardy
+  (obecny i seznam `launcher`...`inst5weaver`), vez plosiny, XEVGUN
+  (vcetne `orflag(128)` po poslednim snimku), neprelozene objekty
+  (`s.anim.period`), LAKESUB;
+- konstanty: tovarna 5 (`0xb8a6`), INST2 5, HOVER 5, XEVDRIFT 7, BOS 1,
+  CAMOGUN 3 (`#1` drzi 4 VBL misto 3);
+- perioda 1: rotory (sekundarni `0x93e2`, 5 mist vcetne GOOSE), vrtulnik
+  hrace `0x945a`, blikani GOOSE `0xc7fc`;
+- smycka `0x9764` tokenu (ikona / `0x62d2` / prazdno / `0x62d2`): cyklus
+  jsou 2 KOLA, cooldown zasahu -1 na jeho zacatku.
+
+Overeno: mina `0x9b40` a tovarna `0xb8a6` jsou opravdu skripty animatoru
+(`bsrw 0x6c88` + inline `0xb0NN`), ne smycky kodu. Kontrakty v `uitest.py`
+upraveny s odvozenim (perioda 1 -> `[2,2,3,3,...]`, CAMOGUN `[1,1,1,1,0...]`,
+token 12 cyklu = 48 VBL); `trajdiff` beze zmeny (CAMOGUN 5/5, tanky 15/16).
+
+Zmereno v harnessu vAmiga (snimek `+398` vsech uloh po VBL, TOWN): uloha
+vrtulniku hrace (skript `0x945e`, perioda 1) meni snimek presne na hranici
+kola - po 2 VBL, kdyz kola trvaji 2, a az po 3-4, kdyz trvaji dele; FLAME
+(perioda 3) drzi snimky 4, 4, 4, 4, 6 VBL. Model tedy sedi, jen original
+ma kola promenna.
+
+`tools/compare.py`: faze vrtulniku v checkpointu je proto loterie. Maska
+HELI je nove sjednoceni pres osm poloh animace, `start` presunut z T 83 na
+82 (radek 3228 dovoluje 81..84; #0 pri kroku za kolo) a prah t28 snizen
+96,6 -> 96,3 (rotory formace v opacne fazi). Ostatni prahy se zvedly.
+
 **Etapa 2 - co dalsiho z toho plyne (otevrene):**
 
-- **Animace.** Animator `0x6cbc` odecte uplynule VBL, a kdyz citac doběhne,
-  nabije ho znovu periodou (zbytek zahodi) a posune o JEDEN snimek. Za kolo
-  tedy nanejvys jeden snimek: s koly po 2 VBL bezi perioda 1 polovicni
-  rychlosti a perioda 3 trva 4 VBL. Prepis ma krokovani animaci ve 26
-  mistech, ne centralne.
 - **Kadence obrazu** klasickeho rezimu (objekty 25x za sekundu).
 - Rozhodovani, kolize a RNG jednou za kolo (etapa 3).
 - Drobnost nalezena cestou: GOOSE se v prepisu rodi o 2 px niz (ys0 286

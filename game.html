@@ -1115,6 +1115,19 @@ function roundDue(g, o, klic = "roundAt") {
 function roundStart(g, o, klic = "roundAt") {
   if (g) o[klic] = (g.tick | 0) + ROUND_VBL;
 }
+/* Animator 0x6cbc bezi v 0x62d2, tedy jednou za KOLO: citac -= elapsed VBL
+   (fp@(-76)), a kdyz klesne na nulu nebo pod ni, nastavi se znovu na periodu
+   (zbytek se zahodi) a posune se o JEDEN snimek. Snimek s periodou p proto
+   trva ROUND_VBL * ceil(p / ROUND_VBL) VBL: sude periody beze zmeny, licha
+   se zaokrouhli nahoru a perioda 1 je jeden snimek za kolo. Pocitadlo `klic`
+   se po zobrazeni seq[0] (fresh) nuluje; pak kazdy tik +1. */
+function animPer(p) { return ROUND_VBL * Math.ceil(p / ROUND_VBL); }
+function animDue(o, per, klic = "at") {
+  if (!(per > 0)) return false;                 // bez skriptu: pevny snimek
+  if ((o[klic] = (o[klic] | 0) + 1) < animPer(per)) return false;
+  o[klic] = 0;
+  return true;
+}
 const SCROLL = 12.5;                 // 0x1da6: $4000 16.16 = .25 px/VBL
 /* fp@(3542): cela cast scroll citace (word). Vsechny screen-y odvozene
    z mapoveho y pouzivaji tuto hodnotu, ne spojity g.scroll. */
@@ -3959,15 +3972,15 @@ const DOF_FOCUS_Z = 32;
 const HELI_TILT_LAG = 0.25;
 
 function resetPlayerHeliAnim(p) {
-  p.heliAnimPos = 0;
+  p.heliAnimPos = 0; p.heliAnimAt = 0;
   // Animator je pripojen pred prvnim yieldem; prvni scheduler resume
-  // jeste enqueueuje #0 a teprve dalsi VBL pokroci na #1.
+  // jeste enqueueuje #0 a teprve dalsi kolo pokroci na #1 (perioda 1).
   p.heliAnimFresh = true;
 }
 function stepPlayerHeliAnim(p) {
   if (!Number.isInteger(p.heliAnimPos)) resetPlayerHeliAnim(p);
   if (p.heliAnimFresh) p.heliAnimFresh = false;
-  else p.heliAnimPos = ((p.heliAnimPos | 0) + 1) & 7;
+  else if (animDue(p, 1, "heliAnimAt")) p.heliAnimPos = ((p.heliAnimPos | 0) + 1) & 7;
 }
 function playerMoveVelocity(a, speed = 768) {
   // 0x6a6a vraci pro diagonalu 181/256; 181*768/65536 = 543/256.
@@ -4602,11 +4615,14 @@ function stepTokens(g, scrollDelta) {
       k.y += k.vy;                              // prvni active pohyb 0.5
       k.hitCooldown = -1;
       k.blink = false; k.activeHalf = 1;        // prvni icon, pak blank
+      roundStart(g, k, "blinkAt");
       continue;
     }
     k.x += k.vx; k.y += k.vy;
-    // 0x9764..0x9776: ikonovy a prazdny frame tvori dvoutikovy cyklus.
-    // Cooldown zasahu se zmensi jen na jeho zacatku, tedy jednou za 2 t.
+    // 0x9764..0x9776: ikonovy a prazdny frame, kazdy za jednim 0x62d2,
+    // tvori dvoukolovy cyklus. Cooldown zasahu se zmensi jen na jeho
+    // zacatku, tedy jednou za 2 kola.
+    if (!roundDue(g, k, "blinkAt")) continue;
     if ((k.activeHalf & 1) === 0) k.hitCooldown--;
     k.blink = (k.activeHalf & 1) !== 0;
     k.activeHalf ^= 1;
@@ -4873,9 +4889,7 @@ function stepFodderMotion(a) {                 // 0x80f4..0x8130 + 0x62d2
 }
 function advanceAirAnim(a) {
   if (a.animFresh) { a.animFresh = false; return; }
-  if (++a.at >= a.per) {
-    a.at = 0; a.apos = (a.apos + 1) % a.seq.length;
-  }
+  if (animDue(a, a.per)) a.apos = (a.apos + 1) % a.seq.length;
 }
 
 /* ---- pohyblive casti min a plamenometu ---- */
@@ -6750,8 +6764,8 @@ function advanceTownHazardField(g, h) {
   } else if (h.kind === "platturret") {
     if (!h.parent.alive) { releaseHazard(g, h); return; }
     h.x = h.parent.x + h.ox; h.y = h.parent.y;  // vazane dite (+367 bit 3)
-    if (h.st >= 1 && h.apos < h.seq.length - 1 && ++h.at >= h.per) {
-      h.at = 0; h.apos++;                        // 0x0a512 bezi i pres wait 120
+    if (h.st >= 1 && h.apos < h.seq.length - 1 && animDue(h, h.per)) {
+      h.apos++;                        // 0x0a512 bezi i pres wait 120
     }
     if (--h.t <= 0) {
       if (h.st === 0) {                        // wait 300 -> prvni palba
@@ -6781,8 +6795,8 @@ function advanceTownHazardField(g, h) {
       h.kind === "inst5bomb" || h.kind === "inst5hunter" ||
       h.kind === "inst5weaver") {
     if (h.animFresh) h.animFresh = false;
-    else if (++h.at >= h.per) {
-      h.at = 0; h.apos++;
+    else if (animDue(h, h.per)) {
+      h.apos++;
       if (h.apos >= h.seq.length) {
         // 0x8800 na konci skriptu (LAKESUB vez) = tiche zabiti bez skore;
         // end(0) drzi posledni snimek (JUNTANK dron).
@@ -6806,9 +6820,9 @@ function advanceTownHazardField(g, h) {
     if (!h.parent.alive) { releaseHazard(g, h); return; }   // +542 = 0x6db4
     h.x = h.parent.x; h.y = h.parent.y; h.z = (h.parent.z || 0) + 1;
     if (h.apos < h.seq.length - 1) {
-      if (++h.at >= h.per) { h.at = 0; h.apos++; }
-    } else if (++h.at >= h.per) {              // orflag(128) po ctvrtem
-      h.at = 0; h.hidden = true;
+      if (animDue(h, h.per)) h.apos++;
+    } else if (animDue(h, h.per)) {            // orflag(128) po ctvrtem
+      h.hidden = true;
     }
     if (--h.t <= 0) {
       if (h.st === 0) { spawnXevBomb(g, h); h.st = 1; h.t = 100; }
@@ -6854,9 +6868,7 @@ function advanceTownHazardField(g, h) {
   // 0x6c88 attach countdown1 v creation fieldu teprve publikuje seq[0];
   // plna perioda se odmeri az od nasledujiciho resume.
   if (h.animFresh) h.animFresh = false;
-  else if (++h.at >= h.per) {
-    h.at = 0; h.apos = (h.apos + 1) % h.seq.length;
-  }
+  else if (animDue(h, h.per)) h.apos = (h.apos + 1) % h.seq.length;
   const sy = h.y - scrollTop(g);
   const margin = h.kind === "proxfrag" || h.kind === "splash" ||
                  h.kind === "xevbomb" || h.kind === "platshot" ? 0
@@ -6952,7 +6964,7 @@ function stepTankTurret(g, s) {
 function initMill(g, s) {                      // 0x79d4 po a2c6
   s.cost = 15; s.hp = 10; s.scoreValue = 70;
   s.vy = 0.5; s.scrollLocked = false; s.st = 0; s.fr = 0;
-  s.rotorTick = 0; s.rotorFresh = true;
+  s.rotorTick = 0; s.rotorAt = 0; s.rotorFresh = true;
   // Bez 0x8822: cost muze docasne prekrocit 160, stejne jako BIRD.
   g.activeCost = (g.activeCost || 0) + s.cost; s.budgeted = true;
 }
@@ -9833,7 +9845,7 @@ function step(g) {
         s.scrollLocked = true; s.z = 32; s.st = 0;
         s.vx = 0; s.vy = 1; s.ax = 0; s.ay = 0; s.facing = 0;
         s.fr = 3; s.animSeq = null; s.animPos = 0; s.at = 0;
-        s.rotorTick = 0; s.rotorFresh = true;
+        s.rotorTick = 0; s.rotorAt = 0; s.rotorFresh = true;
       } else if (s.beh === "egg") {
         // 0x8478 (DESERT): vejce, a2c6(EGGS#2, 32, -16, HP 0, 200 bodu,
         // cost 13); +328 z = 0, lezi na zemi bez stinu, HP 0 = bez
@@ -10184,7 +10196,7 @@ function step(g) {
         s.cost = 35; s.hp = 70; s.scoreValue = 300;
         accountCost(g, s);
         s.scrollLocked = true; s.z = 32; s.vx = 0; s.vy = 0x6000 / 65536;
-        s.fr = 0; s.rotorTick = 0; s.rotorFresh = true;
+        s.fr = 0; s.rotorTick = 0; s.rotorAt = 0; s.rotorFresh = true;
         spawnMamaBar(g, s);
       } else if (s.beh === "piston") {
         // 0xb6d6: a2c6(INST1#14, 0x8000, -60, HP 0, 0, cost 10), bez stinu,
@@ -10252,7 +10264,7 @@ function step(g) {
         s.cost = 15; s.hp = 6; s.scoreValue = 45;
         accountCost(g, s);
         s.fr = 0; s.z = 0; s.vz = 0; s.vx = 0; s.vy = 0; s.st = 0;
-        s.rotorTick = 0; s.rotorFresh = true; s.rotorSlow = 0;
+        s.rotorTick = 0; s.rotorAt = 0; s.rotorFresh = true; s.rotorSlow = 0;
       } else if (s.beh === "blinklight") {
         // 0xb954: a2c6(INST1#9, 0, -24, HP 0, 0 bodu, cost 2), anim 0xb96a
         // INST1#9/#10 perioda 4 loop, 0x62cc.
@@ -10474,7 +10486,7 @@ function step(g) {
     } else if (s.beh === "mama") {
       s.y += s.vy;                              // housekeeping (obrazovka)
       if (s.rotorFresh) s.rotorFresh = false;
-      else s.rotorTick = (s.rotorTick + 1) & 7;
+      else if (animDue(s, 1, "rotorAt")) s.rotorTick = (s.rotorTick + 1) & 7;
       const bar = s.barTask;
       if (bar && bar.alive) {                   // bit 3: poloha rodice + (0,-30)
         bar.x = s.x; bar.y = s.y - 30; bar.z = s.z;
@@ -10484,7 +10496,7 @@ function step(g) {
       const rod = s.rodTask;
       if (rod && rod.alive) s.fr = (Math.floor(rod.y) & 2) ? 15 : 14;
     } else if (s.beh === "factory") {
-      if (s.fr > 11 && ++s.at >= 5) { s.at = 0; s.fr--; }   // 0xb8aa
+      if (s.fr > 11 && animDue(s, 5)) s.fr--;   // 0xb8aa
       if (s.st === 0) {
         if (s.sy >= 84) {                       // 0x9ae8 hotovo, 0xb6ae
           s.hp = s.armedHp; g.inst1Factories = (g.inst1Factories | 0) + 1;
@@ -10753,8 +10765,9 @@ function step(g) {
       }
     } else if (s.beh === "bos") {
       s.vx += s.ax; s.x += s.vx; s.y += s.vy;    // housekeeping 0x62fe
-      s.at = 0; s.apos = (s.apos + 1) & 3;       // anim perioda 1 loop
-      s.fr = s.animSeq[s.apos];
+      if (animDue(s, 1)) {                       // anim perioda 1 loop
+        s.apos = (s.apos + 1) & 3; s.fr = s.animSeq[s.apos];
+      }
       const gun = s.gunChild;
       if (gun && gun.alive) { gun.x = s.x; gun.y = s.y; gun.z = s.z; }
       if (s.st === 0 && s.sy >= 200) {           // 0x9afa(200)
@@ -10776,8 +10789,7 @@ function step(g) {
         spawnSeaplaneBomb(g, s); s.t = 10;
       }
     } else if (s.beh === "inst2") {
-      if (s.animSeq && ++s.at >= 5) {           // perioda 5, end drzi
-        s.at = 0;
+      if (s.animSeq && animDue(s, 5)) {         // perioda 5, end drzi
         if (s.apos < s.animSeq.length - 1) { s.apos++; s.fr = s.animSeq[s.apos]; }
       }
       if (s.st === 0) {
@@ -10899,7 +10911,7 @@ function step(g) {
       } else {
         // anim 0x0b4c4 HOVER#1..#5 perioda 5, end(0) = drzi #5.
         if (s.animFresh) { s.animFresh = false; s.fr = 1; s.at = 0; }
-        else if (s.fr < 5 && ++s.at >= 5) { s.at = 0; s.fr++; }
+        else if (s.fr < 5 && animDue(s, 5)) s.fr++;
         if (s.st < 4 && --s.t <= 0) {
           if (s.st === 1) { spawnHoverMissile(g, s); s.st = 2; s.t = 25; }
           else if (s.st === 2) { s.ay = 4096 / 65536; s.st = 3; s.t = 50; }
@@ -10907,8 +10919,8 @@ function step(g) {
         }
       }
     } else if (s.beh === "lakesub") {
-      if (s.animSeq && ++s.at >= s.per) {
-        s.at = 0; s.apos++;
+      if (s.animSeq && animDue(s, s.per)) {
+        s.apos++;
         if (s.apos >= s.animSeq.length) {
           if (s.animPhase === 0) {               // period(12) loop #5/#4
             s.animPhase = 1; s.animSeq = [5, 4]; s.per = 12; s.apos = 0;
@@ -11075,7 +11087,7 @@ function step(g) {
       }
     } else if (s.beh === "xevdrift") {
       s.y += s.vy;                               // housekeeping (mapove)
-      if (++s.at >= 7) { s.at = 0; s.fr = s.fr >= 8 ? 3 : s.fr + 1; }
+      if (animDue(s, 7)) s.fr = s.fr >= 8 ? 3 : s.fr + 1;
     } else if (s.beh === "xevswarm") {
       s.x += s.vx; s.y += s.vy;                  // bit4: obrazovkove
       if (s.st === 0) {
@@ -11133,7 +11145,7 @@ function step(g) {
         if (s.sy >= 64) { s.st = 1; s.vz = 0.5; }
       } else {
         if (s.rotorFresh) s.rotorFresh = false;
-        else s.rotorTick = (s.rotorTick + 1) & 7;
+        else if (animDue(s, 1, "rotorAt")) s.rotorTick = (s.rotorTick + 1) & 7;
         if (s.st === 1) {
           s.z += s.vz;
           if (s.z >= 32) {
@@ -11302,7 +11314,7 @@ function step(g) {
       }
     } else if (s.beh === "tilt") {
       if (s.rotorFresh) s.rotorFresh = false;
-      else s.rotorTick = (s.rotorTick + 1) & 7;
+      else if (animDue(s, 1, "rotorAt")) s.rotorTick = (s.rotorTick + 1) & 7;
       const turn = (facing, seq) => {
         s.facing = facing; s.animSeq = seq; s.animPos = 0; s.at = 0;
         s.fr = seq[0];
@@ -11347,7 +11359,7 @@ function step(g) {
       s.y += s.vy;
       const sy = s.y - scrollTop(g);
       if (s.rotorFresh) s.rotorFresh = false;
-      else s.rotorTick = (s.rotorTick + 1) & 7;
+      else if (animDue(s, 1, "rotorAt")) s.rotorTick = (s.rotorTick + 1) & 7;
       // 0x6480 cull se vyhodnoti pred navratem z waitu a pripadnou salvou.
       if (outsideCullMargin(s.x, sy, -64)) {
         s.retireAfterField = true;
@@ -11434,10 +11446,11 @@ function step(g) {
         s.recoilNext = g.tick | 0;               // prvni ADDQ jeste v tomto resume
         // 0x62d2 tikne animator pred skutecnym cooperative yieldem,
         // prvni viditelny recoil frame je proto uz CAMOGUN#1.
-        s.fr = 1; s.animT = 3; fired = true;
+        s.fr = 1; s.animT = 0; fired = true;
       }
-      // Animator 0x6cbc pocita VBL (fp@(-76)), takze bezi po tiku.
-      if (s.st === 1 && !fired && s.fr === 1 && --s.animT <= 0) s.fr = 0;
+      // Animator 0x6cbc odecita VBL (fp@(-76)), ale krokuje jen jednou za
+      // kolo: perioda 3 drzi #1 dve kola, tedy 4 VBL.
+      if (s.st === 1 && !fired && s.fr === 1 && animDue(s, 3, "animT")) s.fr = 0;
       // 0xac56: ADDQ #1,+324; 0x62d2; SUBQ #1,+276; BNE - jeden krok za
       // KOLO, ne za VBL. Zmereno trajdiff: s krokem za tik se vsech pet
       // CAMOGUN v TOWN rozeslo s originalem v tiku 105 az 107.
@@ -11450,20 +11463,21 @@ function step(g) {
       // 0xc810 vola 0x62d2 primo po setupu: uz aktivacni tik provede prvni
       // vlastni pohyb i child scheduler pass.
       stepBossParts(g, s, scrollDelta);
-      if (s.st === 0) s.bodyHidden = !s.bodyHidden; // 0xc7fc: bit7 blikani
+      // 0xc7fc: bit7 blikani je animator perioda 1 - jeden stav za kolo.
+      if (s.st === 0 && roundDue(g, s, "blinkAt")) s.bodyHidden = !s.bodyHidden;
       if (s.unfoldPos >= 0 && s.unfoldPos < 6 && --s.unfoldWait <= 0) {
         s.unfoldPos++;
         s.bodyFrame = [0, 0, 1, 2, 3, 4, 5][s.unfoldPos];
         s.unfoldWait = 10;                      // 0xc82e
       }
-      if (s.rotorActive) s.rotorTick = (s.rotorTick + 1) & 7;
+      if (s.rotorActive && animDue(s, 1, "rotorAt")) s.rotorTick = (s.rotorTick + 1) & 7;
       let bsy = s.y - scrollTop(g);
       if (s.st === 0) {                         // nalet zdola az na y 72
         if (s.arrived) {                        // resume po poslednim blink BOBu
           s.st = 1; s.vy = 0; s.hp = 25;        // nejprve cekani 0xc85e
           s.bodyHidden = false; s.bodyFrame = 0;
           s.unfoldPos = 0; s.unfoldWait = 10;
-          s.rotorActive = true; s.rotorTick = 0;// secondary 0x93e2
+          s.rotorActive = true; s.rotorTick = 0; s.rotorAt = 0;// 0x93e2
         } else {
           s.y += s.vy;
           bsy = s.y - scrollTop(g);
@@ -11583,10 +11597,8 @@ function step(g) {
   // animace dosud neprelozenych objektu podle vytezenych skriptu
   for (const s of g.spawns) {
     if (!s.born || !s.alive || !s.anim) continue;
-    if (++s.at >= s.anim.period) {
-      s.at = 0;
+    if (animDue(s, s.anim.period))
       s.apos = (s.apos + 1) % s.anim.frames.length;
-    }
   }
 
   // Nove 0x894a tasky maji stejnou prioritu100, ale vznikly az uvnitr

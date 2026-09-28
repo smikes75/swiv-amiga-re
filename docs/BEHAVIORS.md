@@ -335,8 +335,9 @@ Countdown bezi i mimo viewport az do bezneho cullu na `sy>=320`.
 - inline animace na `0xac48` je `period(3), CAMOGUN#1, #0, end`;
   stary zaznam od `0xac46` chybne povazoval displacement instrukce
   `bsr.w 0x6c88` za prikaz animace; `0x62d2` tikne animator pred
-  cooperative yieldem, takze viditelnych osm recoil framu je
-  `#1,#1,#1,#0,#0,#0,#0,#0`
+  cooperative yieldem, takze `#1` je videt uz v kole vystrelu. Animator
+  krokuje jednou za kolo, takze osm recoil KOL (po 2 VBL) ukaze
+  `#1,#1,#0,#0,#0,#0,#0,#0` - `#1` 4 VBL (GAPS, varianta (a), etapa 2a)
 - `SUBQ #8,+324` odskoci 8 px **nahoru** a osm `ADDQ #1` kroku jej
   vrati dolu; world-y se v remaku neinvertuje
 

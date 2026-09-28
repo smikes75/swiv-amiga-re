@@ -15,7 +15,14 @@ Zarazka (ratchet) proto stoji na TERENU (`terrainFloor`): teren je ta cast,
 ktera ma sedet, a nezavisi na tom, co zrovna leti kolem. Lezi tesne pod
 zmerenou hodnotou a smi se jen zvedat. `whole`, `HUD` a `HELI` se vypisuji
 jen diagnosticky. Masky HUD/HELI se odvozuji ze stejneho renderu s vypnutymi
-vrstvami; terrain proto nezahrnuje ani jejich pixely.
+vrstvami; terrain proto nezahrnuje ani jejich pixely. Maska HELI je
+sjednoceni pres vsech osm poloh animace vrtulniku - rotor jinych snimku
+presahuje obrys aktualniho a faze je loterie (kolo originalu 2 az 5 VBL).
+
+Jedina vyjimka z "jen zvedat": t28 96,6 -> 96,3 (2026-09-28). Varianta (a)
+krokuje animaci s periodou 1 jednou za kolo (overeno v harnessu: snimek
+ulohy vrtulniku se meni jen na hranici kola) a rotory formace vpravo maji
+v t28 opacnou fazi nez drive. Posun `ticks` by zmenil radek.
 
 Zname zbyvajici zdroje rozdilu: sumova textura terenu (nas LCG neni
 generator hry), zbytky profilu/capture (kryje tolerance) a faze animaci
@@ -71,10 +78,12 @@ CHECKPOINTS = {
     # PRESS FIRE/JEEP v t17..t23 vychazi okno 172..199 mod 256.
     # Radek zmereny posunem proti baseline (3228). S PAM paletou a
     # prevodem VAMIGA_LUT: teren 100 %, HELI 99.7 %, celek 99.2 %.
-    # T17 = 83: radek 3228 dovoluje 81..84 (word = 3249 - ceil(T/4)),
-    # rotor JEEPHELI#0 vyzaduje liche T (index (T+3)&7 sudy); odstup
-    # k t19 (T=184) je tedy 101 - vAmiga `wait` ma jitter jednoho snimku.
-    "start": {"t": 17, "row": 3228, "terrainFloor": 99.8, "ticks": 83,
+    # T17 = 82: radek 3228 dovoluje 81..84 (word = 3249 - ceil(T/4)),
+    # original ukazuje JEEPHELI#0. Animator 0x945a (perioda 1) krokuje
+    # jednou za kolo (2 VBL, varianta (a)), #0 tedy padne na T 81/82;
+    # drive, s krokem za tik, to bylo liche T (83). Odstup k t19 (T=184)
+    # je 102 - vAmiga `wait` ma jitter a kola originalu trvaji 2 az 5 VBL.
+    "start": {"t": 17, "row": 3228, "terrainFloor": 99.8, "ticks": 82,
               "vblBase": 186},
     # Prvni FODDERA vlna: RNG originalu nezname, x0/vx clenu jsou zmerene
     # z t18/t19 (257, -13/16). Clen 0 umira kontaktem s hracem: kolizni
@@ -105,10 +114,10 @@ CHECKPOINTS = {
     "t26": {"t": 26, "row": 3118, "terrainFloor": 93.9, "ticks": 521,
             "vblBase": 186,
             "fodder": [{"x": 257, "vx": -0.8125}, {"x": 195, "vx": 0.7}]},
-    "t28": {"t": 28, "row": 3092, "terrainFloor": 96.6, "ticks": 627,
+    "t28": {"t": 28, "row": 3092, "terrainFloor": 96.3, "ticks": 627,
             "vblBase": 186,
             "fodder": [{"x": 257, "vx": -0.8125}, {"x": 195, "vx": 0.7}]},
-    "t30": {"t": 30, "row": 3066, "terrainFloor": 94.7, "ticks": 729,
+    "t30": {"t": 30, "row": 3066, "terrainFloor": 94.9, "ticks": 729,
             "vblBase": 186,
             "fodder": [{"x": 257, "vx": -0.8125}, {"x": 195, "vx": 0.7}]},
     # PRVNI CHECKPOINT MIMO TOWN. Do DESERTu se baseline dostane jen
@@ -138,14 +147,14 @@ CHECKPOINTS = {
     # dane urovne, scroll na nalezeny radek a ZADNE objekty (korutiny se
     # nespousti). Rozdil je tedy presne tam, kde original nejake objekty ma,
     # plus pripadna chyba terenu - a prave tu ma zarazka hlidat.
-    "grass": {"prefix": "zone", "pos": 48788, "terrainFloor": 92.8,
+    "grass": {"prefix": "zone", "pos": 48788, "terrainFloor": 92.9,
               "level": 2, "row": 15963, "onlyTerrain": True},
-    "river": {"prefix": "zone", "pos": 45488, "terrainFloor": 93.2,
+    "river": {"prefix": "zone", "pos": 45488, "terrainFloor": 93.4,
               "level": 3, "row": 12663, "onlyTerrain": True},
     # ICE i SCIFI musely dostat jinou pozici nez prvni pokus: 40688 padlo
     # do otevrene vody mezi SWAP plosinami, kde vypada kazdy radek stejne,
     # a 35488 do opakujicich se sestiuhelniku. Viz docs/GAPS.md.
-    "ice": {"prefix": "zone", "pos": 42000, "terrainFloor": 88.8,
+    "ice": {"prefix": "zone", "pos": 42000, "terrainFloor": 89.0,
             "level": 4, "row": 9176, "onlyTerrain": True},
     "scifi": {"prefix": "zone", "pos": 37000, "terrainFloor": 95.2,
               "level": 5, "row": 4175, "onlyTerrain": True},
@@ -156,7 +165,7 @@ CHECKPOINTS = {
     # INST5#17 jako dekaly), nepratele i vybuchy, kdezto prepis se sem stavi
     # bez objektu. Zarazka tedy hlida, ze se nerozbije dekodovani mapy,
     # palety a dlazdic FINALu - ne chovani.
-    "final": {"prefix": "zone", "pos": 32950, "terrainFloor": 71.6,
+    "final": {"prefix": "zone", "pos": 32950, "terrainFloor": 71.8,
               "level": 6, "row": 126, "onlyTerrain": True},
     # Puvodni poznamka, proc to dlouho nebylo (plati jako varovani):
     # Zona je uzka: `FINAL.PAM` ma 384 radku a v retezu od urovne 5 zacina
@@ -175,7 +184,7 @@ CHECKPOINTS = {
     # (sedi na vsech ctyrech zonovych checkpointech). Snimky z 35450 az
     # 35250 proto ukazovaly SCIFI (94,8 % proti urovni 5) a jeste drivejsi
     # pokus s 32188 byl uz ZA koncem retezu.
-    "desert": {"t": 900, "prefix": "deep", "terrainFloor": 95.6,
+    "desert": {"t": 900, "prefix": "deep", "terrainFloor": 96.7,
                "env": {"SWIV_BASELINE_UNLIMITED_LIVES": "1",
                        "SWIV_BASELINE_HOLD_FIRE": "1"},
                "level": 1, "untilLock": True, "extraTicks": 300,
@@ -298,6 +307,18 @@ def remake_frames(checkpoint):
               };
 
               const whole = render();
+              // Snimek vrtulniku (animator 0x945a, perioda 1) krokuje
+              // jednou za KOLO a kola originalu trvaji 2 az 5 VBL, takze
+              // jeho faze v checkpointu je loterie. Rotor jinych snimku
+              // presahuje obrys aktualniho; maska HELI je proto
+              // sjednoceni pres vsech osm poloh sekvence, aby terrain
+              // nezavisel na fazi animace.
+              const heliPos = p.heliAnimPos;
+              const heliVariants = [];
+              for (let k = 0; k < 8; k++) {
+                p.heliAnimPos = k; heliVariants.push(render());
+              }
+              p.heliAnimPos = heliPos;
 
               p.alive = false;
               const withoutHeli = render();
@@ -316,12 +337,15 @@ def remake_frames(checkpoint):
               };
               const terrain = render();
 
-              return { whole, withoutHeli, terrain };
+              return { whole, withoutHeli, terrain, heliVariants };
             }""", checkpoint)
         finally:
             browser.close()
-    return {name: to_vamiga(_decode_data_url(data))
-            for name, data in encoded.items()}
+    out = {name: to_vamiga(_decode_data_url(data))
+           for name, data in encoded.items() if name != "heliVariants"}
+    out["heliVariants"] = [to_vamiga(_decode_data_url(data))
+                           for data in encoded["heliVariants"]]
+    return out
 
 
 def _pixel_changed(a, b, x, y):
@@ -339,7 +363,8 @@ def region_masks(frames):
         for x in range(width):
             point = (x, y)
             hud = _pixel_changed(without_heli, terrain, x, y)
-            heli = _pixel_changed(whole, without_heli, x, y)
+            heli = any(_pixel_changed(v, without_heli, x, y)
+                       for v in frames["heliVariants"])
             masks["whole"].append(point)
             if heli:
                 masks["HELI"].append(point)
