@@ -2027,3 +2027,44 @@ FLATTANKu, ne `truckdrop`, `0xa5a4` telo JUNHATCH, `0xaa04` telo PROXMINE,
 Nemodelovano: snimky OBJEKTU s atributem bit 1 by rovinu menily taky
 (`0x3e38` plati pro kazdy BOB); stin nakloneneho vrtulniku (volba
 vylepseneho rezimu) masku nema.
+
+
+## Drahy objektu mimo TOWN (2026-09-29, `trajdiff --od`)
+
+`tools/trajdiff.py --od POZICE`: original dojede na mapovou pozici se
+strelbou a kmitanim vlevo/vpravo (joystick PULL_LEFT/PULL_RIGHT), pak
+pusti ovladani a meri drahy nove aktivovanych objektu; prepis startuje
+na skutecne startovni pozici originalu s jeho obtiznosti `fp@(182)`.
+`--stat VBL` nechava zamky byt (arena) a obe strany simuluji stejny pocet
+VBL.
+
+| zona (pozice) | sparovano | shoda | rozchazi se |
+|---|---:|---:|---|
+| DESERT 52000 | 32 | 22 | goose7 5 (do 12 px, delka kol), airmine 5 (vx z RNG) |
+| GRASS 48788 | 54 | 37 | FODDERA 8, YELLOW 4 (RNG/cil), VTOL 3, PLAT 2 |
+| RIVER 45488 | 16 | 15 | GOOSE 1 (znamych 2 px) |
+| ICE 43600 | 6 | 4 | MAMA 2, MILL 1 - objekty vazane na obrazovku, original zpomaluje scroll |
+| SCIFI 38500 | 19 | 19 | - |
+| konec SCIFI 33600 | 17 | 9 | FODDERA 8 (RNG) |
+
+**Opraveno:** goose7 (`0x8794`) zrychluje po 70 VBL jen jednou na
+vy 4,5 (`0x880e`), smycka `0x881c beqs 0x8812` opakuje jen strelbu.
+Prepis pricital +4 pri kazdem vystrelu. DESERT husy 0/16 -> 11/16.
+
+**Zjisteno o originalu:**
+
+- **Scroll pri zatezi zpomaluje:** 800 px trva v RIVERu 3 548 VBL,
+  v ICE 3 638 a v SCIFI 3 631 misto 3 200 (+11 az 14 %), na konci SCIFI
+  600 px 7 078 VBL. Prepis scrolluje konstantne.
+- **Bez zabijeni nepratel se hra zastavi:** v RIVERu na 46159 stoji
+  stavitel terenu (`fp@(3538)` = 46144, scroll potrebuje +16), protoze
+  `0x3496` stavi jen, kdyz je ctec mapy `fp@(3586)` dost napred, a ctec
+  zjevne ceka (nejspis na pamet pro dalsi ulohu, `0x6162`). `fp@(166)` je
+  pritom 0. Hypoteza, neovereno; prepis tuto mechaniku nema.
+- Kola jsou v ICE a na konci SCIFI delsi (nejcasteji 4 az 5 VBL misto 2),
+  takze tam se chovani pocitana na kola od prepisu rozchazeji vic.
+
+**Otevrene:** GRASS VTOL (3) a PLAT (2) rozebrat; FINAL arena
+(`--od 32995 --stat`) - prepis sleduje jen mapove objekty a letce, casti
+INST5 jsou hazardy a do srovnani se zatim nedostanou.
+

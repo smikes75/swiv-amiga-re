@@ -63,12 +63,17 @@ ORIG_JS = """(cfg) => {
   const hold = p + cfg.a6 + 166;
   if (cfg.od) {
     let n = 0;
+    // Strelba z mista nezasahne nepratele mimo osu vrtulniku; v RIVERu se
+    // pak pamet zaplni a ctec mapy (a s nim teren i scroll) stoji na 46159.
+    // Proto vrtulnik kmita vlevo/vpravo (GamePadAction 2 = PULL_LEFT,
+    // 3 = PULL_RIGHT, 10 = RELEASE_X).
     while ((cam() & 0xffff) > cfg.od && n++ < 200000) {   // cam() je se znamenkem
       H[hold] &= ~0x08;
       VA.fn.joy(2, (n % 10) < 5 ? 4 : 13);
+      if (n % 120 === 0) VA.fn.joy(2, (n / 120) % 2 ? 2 : 3);
       VA.run(1, null);
     }
-    VA.fn.joy(2, 13);
+    VA.fn.joy(2, 13); VA.fn.joy(2, 10);
     for (let i = 0; i < 50; i++) { H[hold] &= ~0x08; VA.run(1, null); }
   }
   const obtiznost = W(cfg.a6 + 182);
@@ -111,8 +116,8 @@ ORIG_JS = """(cfg) => {
   };
   scan();
   let stoji = 0, posledni = cam();
-  while (zero - cam() < cfg.dist && stoji < 3000) {
-    if (cfg.od) H[hold] &= ~0x08;
+  while (zero - cam() < cfg.dist && stoji < (cfg.stat ? cfg.statVbl : 3000)) {
+    if (cfg.od && !cfg.stat) H[hold] &= ~0x08;
     VA.run(1, null); vbl++;
     if (cam() === posledni) stoji++; else { stoji = 0; posledni = cam(); }
     kamera.push(cam());
@@ -165,8 +170,9 @@ REMAKE_JS = """(cfg) => {
     for (const [o, t] of live) if (!seen.has(o)) { t.konec = tik; live.delete(o); }
   };
   scan();
-  while (zero - scrollTop(g) < cfg.dist && guard++ < 400000) {
-    if (cfg.od) g.inst1Factories = 0;
+  while (zero - scrollTop(g) < cfg.dist && guard++ < 400000 &&
+         (!cfg.maxTik || tik < cfg.maxTik)) {
+    if (cfg.od && !cfg.stat) g.inst1Factories = 0;
     step(g); tik++;
     g.lives = 99;
     scan();
@@ -178,7 +184,7 @@ REMAKE_JS = """(cfg) => {
 K_RETEZ = 32826          # radek retezu prepisu = mapova pozice - K (covercheck)
 
 
-def original(dist, tiku, od=0):
+def original(dist, tiku, od=0, stat=0):
     srv, port = vacmp.serve(os.path.join(ROOT, "web"))
     try:
         with sync_playwright() as pw:
@@ -193,14 +199,15 @@ def original(dist, tiku, od=0):
             page.evaluate(vacmp.PLAY_PROLOGUE)
             res = page.evaluate(ORIG_JS, {"a6": vacmp.A6_BASE, "mark": MARK,
                                           "dist": dist, "tiku": tiku,
-                                          "od": od})
+                                          "od": od, "stat": bool(stat),
+                                          "statVbl": stat or 0})
             br.close()
     finally:
         srv.shutdown()
     return res
 
 
-def remake(dist, tiku, od=0, obtiznost=None):
+def remake(dist, tiku, od=0, obtiznost=None, stat=False, max_tik=0):
     with sync_playwright() as pw:
         br = pw.chromium.launch()
         page = br.new_page()
@@ -210,7 +217,8 @@ def remake(dist, tiku, od=0, obtiznost=None):
         page.wait_for_selector("#titlewrap", state="visible")
         page.evaluate("window.requestAnimationFrame = () => 0")
         res = page.evaluate(REMAKE_JS, {"dist": dist, "tiku": tiku, "od": od,
-                                        "K": K_RETEZ, "obtiznost": obtiznost})
+                                        "K": K_RETEZ, "obtiznost": obtiznost,
+                                        "stat": stat, "maxTik": max_tik})
         br.close()
     return res
 
@@ -325,6 +333,11 @@ def main():
     od = 0
     if "--od" in args:
         i = args.index("--od"); od = int(args[i + 1]); del args[i:i + 2]
+    # --stat VBL: po dojeti zamky nechat byt (napr. arena FINAL, kde scroll
+    # stoji) a merit dany pocet VBL; prepis simuluje stejny pocet tiku
+    stat = 0
+    if "--stat" in args:
+        i = args.index("--stat"); stat = int(args[i + 1]); del args[i:i + 2]
     dist = int(args[0]) if args else 900
 
     if znovu:
@@ -333,7 +346,7 @@ def main():
     else:
         print(f"original (harness vAmiga), {dist} px"
               + (f" od pozice {od}" if od else "") + " ...", flush=True)
-        o = original(dist, tiku, od)
+        o = original(dist, tiku, od, stat)
     if o.get("stoji"):
         print("POZOR: scroll originalu se pri mereni zastavil (pamet/ctec mapy)")
     obt = o.get("obtiznost") if od else None
@@ -342,7 +355,7 @@ def main():
     # Original po dojeti jeste 50 VBL bezi bez strelby (12,5 px), takze
     # prepis musi zacit na SKUTECNE startovni pozici originalu.
     od_r = (o["zero"] & 0xFFFF) if od else 0
-    r = remake(dist, tiku, od_r, obt)
+    r = remake(dist, tiku, od_r, obt, bool(stat), len(o["kamera"]) if stat else 0)
     if ulozit:
         json.dump({"orig": o, "remake": r}, open(ulozit, "w"))
 
