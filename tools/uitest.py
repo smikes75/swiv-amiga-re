@@ -6147,14 +6147,31 @@ def main():
               const raw = blankIntroRaw();
               const head = drawIntroFormatted(prog, raw.pixels, titleOver);
               const tail = drawIntroFormatted(prog, raw.pixels, labels, head);
-              state.highScores = null;
+              state.hiTables = null; state.hiNames = null;
               const gLow = fresh(false, 500);
               beginStatsScreen(gLow);
               const lowTable = statsHighScoreTable().slice();
-              state.highScores = null;
+              state.hiTables = null;
               const gHigh = fresh(false, 12345);
               beginStatsScreen(gHigh);
+              // zapis az v 0x2fe8 (0x3004), ne ve statistice
+              const predZapisem = statsHighScoreTable().slice();
+              beginHiScore(gHigh); hiStartSlot(gHigh, 'heli');
               const highTable = statsHighScoreTable().slice();
+              // 0x3148: '[' (91) nepovolen, Backspace maze, Enter konci;
+              // prazdne jmeno dostane vychozi a zadane se stane vychozim
+              state.hiTables = null; state.hiNames = null;
+              const jmeno = (skore, klavesy) => { const gg = fresh(false, skore);
+                beginHiScore(gg); hiStartSlot(gg, 'heli');
+                const c = gg.hi.cur; c.phase = 'input';
+                c.keys.push(...klavesy); let n = 0;
+                while (gg.hi.cur && n < 10000) { stepHiScore(gg); n++; }
+                return [c.entry.name, c.rank, n]; };
+              const prvni = jmeno(99999, ['a', '[', 'Backspace', 'b', 'Enter']);
+              const druhe = jmeno(99998, ['Enter']);
+              state.hiNames = null; state.hiTables = null;
+              const lazy = jmeno(99997, ['Enter']);
+              const limit = jmeno(99996, []);
               let lowVbl = 0;
               while (!gLow.statsDone && lowVbl < 2000) { stepStatsScreen(gLow); lowVbl++; }
               const gFire = fresh(false, 500);
@@ -6166,7 +6183,7 @@ def main():
                 head: [head.x, head.y, head.color, head.align],
                 tail: [tail.x, tail.y, tail.color, tail.align],
                 defaults: NATIVE_DEFAULT_SCORES.slice(),
-                lowTable, highTable,
+                lowTable, highTable, predZapisem, prvni, druhe, lazy, limit,
                 low: [gLow.statsQualified, gLow.statsHold, lowVbl],
                 high: [gHigh.statsQualified, gHigh.statsHold],
                 pct: [statsPercentage(fresh(false, 0)),
@@ -6198,6 +6215,14 @@ def main():
                    stats["highTable"] == [70000, 60000, 50000, 40000,
                                           30000, 20000, 12345],
                    "0x3004 zapis do tabulky: %r" % (stats["highTable"],))
+            expect(stats["predZapisem"] == stats["defaults"] and
+                   stats["prvni"][:2] == ["B", 0] and
+                   stats["druhe"][:2] == ["B", 1] and
+                   stats["lazy"][:2] == ["Lazy HELI ", 0] and
+                   stats["limit"][2] == 80 * 51,
+                   "0x2fe8/0x3148 zadani jmena: %r" % (
+                       [stats["predZapisem"], stats["prvni"], stats["druhe"],
+                        stats["lazy"], stats["limit"]],))
             expect(stats["low"][2] == 266,
                    "0x27ec ma skoncit na 16+250 VBL, skoncil na %r" %
                    (stats["low"][2],))

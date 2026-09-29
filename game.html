@@ -1482,20 +1482,12 @@ function introHighScoreFile(vehicle, randomWord) {
 }
 
 function drawHighScores(a, vehicle) {
-  const raw = cloneIntroRaw(introRaw("MUSHROOM.RAW"));
+  // Tabulky jsou spolecne se zadanim jmena po hre (0x3314): prvni pruchod
+  // je naplni, dalsi uz ukazuji zapsana skore a jmena.
   const randomWord = vehicle === "heli" ? a.heliHighScoreWord : a.jeepHighScoreWord;
-  const file = introHighScoreFile(vehicle, randomWord);
-  const names = parseHighScoreNames(introFileBytes(file));
-  drawIntroText(state.prog, raw.pixels,
-                "TODAY'S BEST " + vehicle.toUpperCase() + " SCORES",
-                160, 48, 15, 0);
-  for (let i = 0; i < 7; i++) {
-    drawIntroText(state.prog, raw.pixels, names[i] || "", 32, 80 + i * 16, 15, 1);
-    drawIntroText(state.prog, raw.pixels, String((7 - i) * 100000),
-                  290, 80 + i * 16, 15, 2);
-  }
-  a.highScoreFile = file;
-  return raw;
+  ensureHiTables(a.heliHighScoreWord, a.jeepHighScoreWord);
+  a.highScoreFile = introHighScoreFile(vehicle, randomWord);
+  return hiScoreRaw(vehicle, null);
 }
 
 function prepareBlueprint(a, vehicle) {
@@ -5805,6 +5797,7 @@ function shakeInst5(g, s) {                     // 0xc1ba: dva tiky
    Drive prepis bit 3 nikde necetl a hra zustala natrvalo ve tme. */
 const GAME_END_VBL = 40;
 function beginGameEnd(g) {
+  noteSlotBest(g);                              // sloty konci (0x70ac)
   g.nextLife = 0xFFFFFFFF; g.jeepNextLife = 0xFFFFFFFF;    // 0xc1a4
   g.playerPhase = "ended"; g.playerPhaseT = GAME_END_VBL;
   g.joinClosed = true;                          // HUD: "PLEASE WAIT"
@@ -7256,6 +7249,7 @@ function remainingContinues(g) {
 }
 
 function beginContinueWindow(g) {
+  noteSlotBest(g);                             // 0x70ac
   releasePlayerBubble(g);
   g.playerPhase = "continue";
   // 0x1dc8..0x1dd4: s kreditem 300 VBL, bez kreditu jen 100.
@@ -7304,18 +7298,160 @@ function stepPostLifeSequence(g) {
 }
 
 /* ---- 0x0da2: post-game statistika --------------------------------- */
-function statsHighScoreTable() {
-  // 0x3004 zapisuje skore primo do polozky tabulky (+40), takze zmena
-  // prezije do dalsi hry v temze sezeni. Vychozi hodnoty jsou z 0x33fe.
-  if (!state.highScores) state.highScores = NATIVE_DEFAULT_SCORES.slice();
-  return state.highScores;
+/* ---- 0x2fe8..0x33fc: tabulky nejlepsich skore a zadani jmena -------
+   Kazdy slot je hlava kruhoveho seznamu sedmi zaznamu (+0 dalsi, +4
+   predchozi = nejnizsi, +8 jmeno, +40 skore); slot sam ma +40 "HELI " /
+   "JEEP " a +8 vychozi jmeno "Lazy HELI " (0x6f9c..0x6fbc). Seznamy
+   plati po celou relaci; prvni pruchod attractu je naplni jmeny z nahodne
+   vybraneho HS*.TXT (0x2f06) a skore z 0x33fe. */
+const HI_VEHICLES = ["heli", "jeep"];
+function ensureHiTables(wordHeli, wordJeep) {
+  if (state.hiTables) return state.hiTables;
+  const rnd = () => (Math.random() * 65536) | 0;      // mimo simulaci
+  const t = {};
+  for (const v of HI_VEHICLES) {
+    let word = v === "heli" ? wordHeli : wordJeep;
+    if (word === undefined) word = rnd();
+    const names = parseHighScoreNames(introFileBytes(introHighScoreFile(v, word)));
+    t[v] = NATIVE_DEFAULT_SCORES.map((score, i) => ({ name: names[i] || "", score }));
+  }
+  if (!state.hiNames) state.hiNames = { heli: "Lazy HELI ", jeep: "Lazy JEEP " };
+  return (state.hiTables = t);
+}
+function statsHighScoreTable(vehicle = "heli") {    // skore (desetiny)
+  return ensureHiTables()[vehicle].map(e => e.score);
+}
+/* 0x70ac: kdyz slot skonci, +80 = max(+80, +76). */
+function noteSlotBest(g) {
+  g.heliBest = Math.max(g.heliBest | 0, g.score | 0);
+  if (g.player2) g.jeepBest = Math.max(g.jeepBest | 0, g.jeepScore | 0);
+}
+function hiQualifies(g, v) {
+  // 0x3040: zaznam slotu jeste nezapsany (+88 == 0) a nejlepsi skore (+80)
+  // neni unsigned mensi nez nejnizsi polozka (+4 -> +40).
+  if (g.hiWritten && g.hiWritten[v]) return false;
+  const best = v === "heli" ? Math.max(g.heliBest | 0, g.score | 0) : g.jeepBest | 0;
+  const table = ensureHiTables()[v];
+  return (best >>> 0) >= (table[table.length - 1].score >>> 0);
 }
 function statsQualified(g) {
-  // 0xf0c -> 0x3040: zaznam hrace jeste nezapsany (+88 == 0) a jeho skore
-  // (+80) neni unsigned mensi nez skore navazane polozky (+4 -> +40).
-  // Model: navazana polozka je nejnizsi v tabulce.
-  const table = statsHighScoreTable();
-  return (g.score | 0) >= table[table.length - 1];
+  // 0xf0c: fp@(3618) = zapise-li se aspon jeden slot (vybira AMHITUNE).
+  return hiQualifies(g, "heli") || hiQualifies(g, "jeep");
+}
+
+/* Zadani jmena (0x2ff6 pro kazdy slot, nejdriv HELI, pak JEEP):
+   0x32a4 nahradi nejnizsi polozku a zaradi ji pred prvni, ktera neni
+   vetsi; 0x3314 zatmi (0x2856), ukaze MUSHROOM.RAW s tabulkou a nadpisem
+   "TODAY'S BEST HELI SCORES"; 0x305e vypise vyzvu na y 208, roztmi (0x2868)
+   a 0x3148 cte jmeno na radku polozky (x 32, y 80 + 16 * poradi).
+   Klavesy (0x3148): kod 66 maze, 67 a 69 ukonci (zavadec je posila za
+   zvlastni klavesy - Backspace, Esc, Enter), ostatni se prevedou na
+   velka pismena (0x591c) a berou se jen 32..90, nejvys 31 znaku a dokud
+   je jmeno uzsi nez 176 bodu (0x3288). Kurzor "\" blika 25/26 VBL
+   (0x3206); 80 bliknuti bez klavesy (4 080 VBL) jmeno ukonci. Prazdne
+   jmeno dostane vychozi jmeno slotu a zadane jmeno se stane vychozim. */
+const HI_BLINK = 25, HI_IDLE_CYCLES = 80, HI_FADE = 16;
+function beginHiScore(g) {
+  g.hiWritten = g.hiWritten || {};
+  const queue = HI_VEHICLES.filter(v => hiQualifies(g, v));
+  g.hi = queue.length ? { queue, cur: null, done: false, out: 0 } : null;
+}
+function hiStartSlot(g, v) {
+  const table = ensureHiTables()[v];
+  const score = v === "heli" ? Math.max(g.heliBest | 0, g.score | 0) : g.jeepBest | 0;
+  table.pop();                                   // 0x3004: nejnizsi polozka
+  let rank = 0;
+  while (rank < table.length && (score >>> 0) < (table[rank].score >>> 0)) rank++;
+  const entry = { name: "", score };
+  table.splice(rank, 0, entry);
+  g.hiWritten[v] = true;                         // 0x3014: st +88
+  g.hi.cur = { v, rank, entry, name: "", phase: "fadeOut", t: 0,
+               blinkT: 0, cursor: true, idle: 0, keys: [] };
+}
+function hiKey(cur, key) {
+  if (key === "Enter" || key === "Escape") return true;          // 69 / 67
+  if (key === "Backspace") { cur.name = cur.name.slice(0, -1); return false; }
+  if (key.length !== 1) return false;
+  const ch = key.toUpperCase(), code = ch.charCodeAt(0);         // 0x591c
+  if (code < 32 || code > 90 || cur.name.length >= 31) return false;
+  if (hudTextWidth(state.prog, cur.name) >= 176) return false;   // 0x3288
+  cur.name += ch;
+  return false;
+}
+function stepHiScore(g) {
+  const hi = g.hi;
+  if (!hi || hi.done) return;
+  if (hi.out) {                                  // zatmeni pred titulkem
+    if (++hi.out > HI_FADE) hi.done = true;
+    return;
+  }
+  if (!hi.cur) {
+    if (!hi.queue.length) { hi.out = 1; return; }
+    hiStartSlot(g, hi.queue.shift());
+  }
+  const c = hi.cur;
+  c.t++;
+  if (c.phase === "fadeOut") {
+    if (c.t >= HI_FADE) { c.phase = "fadeIn"; c.t = 0; }
+  } else if (c.phase === "fadeIn") {
+    if (c.t >= HI_FADE) { c.phase = "input"; c.t = 0; }
+  } else if (c.phase === "input") {
+    let konec = false;
+    if (c.keys.length) {
+      konec = hiKey(c, c.keys.shift());
+      c.blinkT = 0; c.cursor = true; c.idle = 0;
+    } else if (++c.blinkT >= (c.cursor ? HI_BLINK : HI_BLINK + 1)) {
+      // 0x3206: kurzor 25 VBL, bez nej 25 + 1 (0x5f20) - cyklus 51 VBL
+      c.blinkT = 0; c.cursor = !c.cursor;
+      if (c.cursor && ++c.idle >= HI_IDLE_CYCLES) konec = true;
+    }
+    if (konec) {
+      if (!c.name) c.name = state.hiNames[c.v];   // 0x30b8
+      state.hiNames[c.v] = c.name;               // 0x30c0
+      c.entry.name = c.name;
+      hi.cur = null;
+    }
+  }
+}
+function hiScoreRaw(vehicle, cur) {
+  const prog = state.prog, raw = cloneIntroRaw(introRaw("MUSHROOM.RAW"));
+  const table = ensureHiTables()[vehicle];
+  drawIntroText(prog, raw.pixels,
+                "TODAY'S BEST " + vehicle.toUpperCase() + " SCORES", 160, 48, 15, 0);
+  for (let i = 0; i < table.length; i++) {       // 0x33ba
+    const y = 80 + i * 16, edit = cur && i === cur.rank && cur.phase === "input";
+    const name = cur && i === cur.rank ? cur.name : table[i].name;
+    drawIntroText(prog, raw.pixels, name, 32, y, 15, 1);
+    if (edit && cur.cursor)                      // 0x322e: "\ " za jmenem
+      drawIntroText(prog, raw.pixels, "\\ ",
+                    32 + hudTextWidth(prog, name), y, 15, 1);
+    drawIntroText(prog, raw.pixels, String(table[i].score >>> 0) + "0", 290, y, 15, 2);
+  }
+  if (cur)                                       // 0x305e
+    drawIntroText(prog, raw.pixels, vehicle.toUpperCase() +
+                  " PLAYER PLEASE ENTER YOUR NAME", 160, 208, 15, 0);
+  return raw;
+}
+function renderHiScore(ctx, g) {
+  const hi = g.hi, c = hi.cur;
+  if (!c) {                                      // mezi sloty / pred titulkem
+    ctx.fillStyle = "#000"; ctx.fillRect(0, 0, 320, 256); return;
+  }
+  if (c.phase === "fadeOut") {                   // predchozi obrazovka do cerne
+    if (g.statsRaw && !g.hiShown) {
+      const palette = readProgramPalette(state.prog, ATTRACT_PALETTE_OFFSETS.stats);
+      colorizeAttractRaw(g.statsRaw, palette, Math.min(256, c.t * 16), [], g.statsRgba);
+      ctx.putImageData(new ImageData(g.statsRgba, 320, 256), 0, 0);
+    } else { ctx.fillStyle = "#000"; ctx.fillRect(0, 0, 320, 256); }
+    return;
+  }
+  g.hiShown = true;
+  const raw = hiScoreRaw(c.v, c);
+  const palette = readProgramPalette(state.prog, ATTRACT_PALETTE_OFFSETS.scores);
+  const black = c.phase === "fadeIn" ? Math.max(0, 256 - c.t * 16) : 0;
+  if (!g.hiRgba) g.hiRgba = new Uint8ClampedArray(320 * 256 * 4);
+  colorizeAttractRaw(raw, palette, black, introCopperEvents("heliScores"), g.hiRgba);
+  ctx.putImageData(new ImageData(g.hiRgba, 320, 256), 0, 0);
 }
 function statsPercentage(g) {
   // 0xe06: WORD (0xe9c0 - fp@(3534)), pak unsigned *100 a /26817.
@@ -7352,12 +7488,7 @@ function buildStatsScreen(g) {
 function beginStatsScreen(g) {
   g.statsRaw = buildStatsScreen(g);
   g.statsVbl = 0;
-  g.statsQualified = statsQualified(g);
-  if (g.statsQualified) {                      // 0x3004
-    const table = statsHighScoreTable();
-    table[table.length - 1] = g.score | 0;
-    table.sort((a, b) => b - a);
-  }
+  g.statsQualified = statsQualified(g);        // zapis az v 0x2fe8
   // 0xdb0 -> 0xf2a: fp@(10798) = 1 - fp@(3618), tedy 2 = AMHITUNE pri
   // zapisu do tabulky, jinak zpatky titulni AMTITUNE.
   startModuleMusic(g.statsQualified ? 2 : 1);
@@ -9027,6 +9158,11 @@ if (window.RTCPeerConnection) {
 }
 
 window.addEventListener("keydown", e => {
+  // Zadani jmena do tabulky skore (0x3148) bere klavesy jako text.
+  const hiCur = state.g && state.g.hi && state.g.hi.cur;
+  if (hiCur && hiCur.phase === "input") {
+    hiCur.keys.push(e.key); e.preventDefault(); return;
+  }
   // P = pauza. Zmereno v harnessu: prvni stisk zastavi mapu (25 px za
   // 100 VBL -> 0), druhy ji zase rozjede, mezernik s tim nic nedela.
   // Kod ale nelezi v AMPROG.OBJ (ten cte klavesy jen v level-select
@@ -13130,9 +13266,12 @@ function frame(now) {
       // 0xd90 vola 0xf42 jeste pred statistikou 0xda2
       if (!g.congrat) beginCongrat(g);
       stepCongrat(g);
-    } else stepStatsScreen(g);
+    } else if (g.hi) stepHiScore(g);
+    else stepStatsScreen(g);
   }
-  if (g.statsDone) {                           // 0xda0: zpet na 0x0d64
+  // 0xd98: po statistice 0x2fe8 (tabulky a zadani jmena), pak titulek.
+  if (g.statsDone && !g.hiChecked) { g.hiChecked = true; beginHiScore(g); }
+  if (g.statsDone && (!g.hi || g.hi.done)) {  // 0xda0: zpet na 0x0d64
     PERF.cur = null;
     state.loopRunning = false; state.g = null; showTitle(); return;
   }
@@ -13441,6 +13580,7 @@ function frame(now) {
   // pozdni HW sprity: 0x0da2 kresli na cistou plochu s paletou 0x2a1c.
   if (g.over) {
     if (g.won && g.congrat && !g.congrat.done) renderCongrat(ctx, g);
+    else if (g.hi) renderHiScore(ctx, g);
     else renderStatsScreen(ctx, g);
   }
   if ((g.tick & 31) === 0) updateJumpLabel();

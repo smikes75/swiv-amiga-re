@@ -2107,9 +2107,25 @@ Prepis: `beginGameEnd` - slot opusti hru, bez respawnu, HUD neaktivni,
 po 40 VBL `g.won`/`g.over` a zaverecna sekvence. Mezera +40..+325 je
 nacitani obrazku z diskety a zamerne se neprepisuje. Kontrakt v uitest.
 
-**Chybi: obrazovka nejlepsich skore se zadanim jmena.** Drivejsi zaver
-("SWIV nema zadavani jmena", viz poznamky k AMHITUNE) byl spatny - original
-po statistice ukaze tabulku s jadernym vybuchem a vyzve hrace k zadani
-jmena. Cteni klaves lezi v prilinkovane casti zavadece, proto se v AMPROG
-nenaslo. Neimplementovano.
+**Obrazovka nejlepsich skore se zadanim jmena - doplneno 2026-09-29.**
+Drivejsi zaver ("SWIV nema zadavani jmena") byl spatny. Cela rutina je
+v AMPROG (`0x2fe8`..`0x33fc`), jen klavesy dodava zavadec do `fp@(-4)`:
+
+- slot je hlava kruhoveho seznamu 7 zaznamu (+8 jmeno, +40 skore); slot
+  ma +40 "HELI "/"JEEP " a +8 vychozi jmeno "Lazy HELI " (`0x6f9c`)
+- `0x3040` kvalifikace: +88 == 0 a nejlepsi skore +80 (`0x70ac`: max
+  s +76) >= nejnizsi polozka; `0x3004` ji prepise, `0x32a4` zaradi pred
+  prvni nevetsi
+- `0x3314`: zatmeni, MUSHROOM.RAW, "TODAY'S BEST HELI SCORES", tabulka
+  (jmeno x 32, skore + "0" doprava k x 290, y 80 + 16*i), copper jako
+  v attractu; `0x305e` vyzva "HELI player please enter your name" na y 208
+- `0x3148`: 66 maze, 67/69 konci (Backspace, Esc/Enter), `0x591c` velka
+  pismena, jen 32..90, nejvys 31 znaku a sirka < 176 bodu; kurzor "\"
+  25/26 VBL, 80 cyklu bez klavesy (4 080 VBL) konec; prazdne jmeno ->
+  vychozi, zadane se stane vychozim (`0x30b8`/`0x30c0`)
+- tabulky plati celou relaci a attract je ukazuje (drive tam byla
+  napevno vychozi skore)
+
+Neprepsano: `0x2856` jeste zvysuje `fp@(202)` a vola `0x49ce`/`0x49c8`
+(zvuk/hudba) - nezkoumano.
 
