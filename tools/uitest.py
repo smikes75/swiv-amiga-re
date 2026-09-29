@@ -5570,7 +5570,8 @@ def main():
                    audio_exact["goose"])
             expect(audio_exact["release"] == [[47, True], [0, False]] and
                    audio_exact["clock"] ==
-                   [511, 511, 167175, [4] * 10 + [5]],
+                   # jednorazovy CIAB: 3,98 IRQ na snimek (zmereno)
+                   [497, 497, 9925, [3] + [4] * 10],
                    "CIAB clock/initial yield/0x4bf2 cleanup nesedi: %s" %
                    audio_exact)
             expect(audio_exact["pickupIrqs"] == {
@@ -5658,7 +5659,8 @@ def main():
             expect(smart_web["lengths"] == [8280] * 4 and
                    smart_web["sampleRates"] == [8000] * 4 and
                    smart_web["pans"] == [1, 1, -1, -1] and
-                   all(abs(v - 6928 / 709379) < 1e-12
+                   # druhy IRQ jednorazoveho CIAB: 2 x (0x0D88 + 106) E
+                   all(abs(v - 2 * 3570 * 5 / (50 * 313 * 227)) < 1e-12
                        for v in smart_web["delays"]) and
                    all(abs(v - 3546895 / (p * 8000)) < 1e-12
                        for v, p in zip(smart_web["rates"],

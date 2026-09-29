@@ -2553,7 +2553,7 @@ function shadowOf(spr) {
 
 /* ---- Paula/CIA zvukove efekty (0x4a66..0x56fc) ----
    Efekt neni "prehraj soubor": original arbitruje ctyri persistentni
-   voice struktury, procedurarni zvuky krokuje CIAB ~204.8 Hz a diskove
+   voice struktury, procedurarni zvuky krokuje CIAB ~199 Hz a diskove
    vzorky BIGEXPL.SND/SMART.SND pousti pres Paula DMA. Logicky stav bezi i
    pri mute, aby priority, scratch a RNG zustaly deterministicke. */
 let actx = null;
@@ -2569,11 +2569,22 @@ const PAULA_CLOCK = 3546895;
 const PAULA_PAL_MIN_DMA_PERIOD = 123;
 const PAULA_OUTPUT_GAIN = 0.2048;
 const PAULA_LED_FILTER_ENABLED = false;
-const SFX_CIA_CLOCK = 709379, SFX_CIA_LATCH = 0x0D88;
-const SFX_CIA_HZ = SFX_CIA_CLOCK / SFX_CIA_LATCH;
-const SFX_VBL_DEN = SFX_CIA_LATCH * 50;
-const SFX_TOKEN_CHILD_DELAY = 0.00946;
-const SFX_GOOSE_EXPLOSION_CHILD_DELAY = 0.00921;
+/* 0x4a74 nastavi casovac A CIAB jako JEDNORAZOVY (CRA bit 3) a obsluha
+   0x4abc ho znovu spusti az na 0x4b00, kdyz obehne vsechny ctyri korutiny.
+   Perioda IRQ je tedy latch 0x0D88 plus doba od podteceni do restartu.
+   Zmereno v harnessu (zapis INTREQ na 0x4b08, tools/sfxtrace.py): 3,98 IRQ
+   na snimek, interval 78,2 az 84 radku, prumer 78,6 - to je restart zhruba
+   106 E-cyklu po podteceni. Jmenovitych 204,8 Hz original nikdy nehraje. */
+const SFX_CIA_LATCH = 0x0D88, SFX_CIA_RESTART = 106;
+const SFX_CIA_PERIOD = SFX_CIA_LATCH + SFX_CIA_RESTART;
+const SFX_FRAME_CC = 313 * 227;                 // barevnych taktu na PAL snimek
+const SFX_VBL_DEN = SFX_CIA_PERIOD * 5;         // E takt = barevny takt / 5
+const SFX_CIA_HZ = 50 * SFX_FRAME_CC / SFX_VBL_DEN;
+/* Zmereny nativni nastup child zvuku (docs/SOUND.md) = start ve druhem
+   IRQ + zbytek. Konstanty byly odvozeny pri jmenovitych 2 IRQ = 6928 E,
+   nastup se drzi a zbytek se dopocita z delsi skutecne periody. */
+const SFX_TOKEN_CHILD_DELAY = 0.00946 + 6928 / 709379 - 2 / SFX_CIA_HZ;
+const SFX_GOOSE_EXPLOSION_CHILD_DELAY = 0.00921 + 6928 / 709379 - 2 / SFX_CIA_HZ;
 const SFX_HW_CHANNELS = [3, 2, 1, 0];
 const SFX_FIRE_WAVE = new Int8Array([
   0,16,32,64,127,64,32,16, 0,-64,-96,-112,-127,-112,-96,-64,
@@ -3149,7 +3160,7 @@ function advanceTownSfxIrq(g) {
 }
 function advanceTownSfxClock(g) {
   const sfx = ensureTownSfx(g);
-  sfx.phase += SFX_CIA_CLOCK;
+  sfx.phase += SFX_FRAME_CC;
   let ticks = 0;
   while (sfx.phase >= SFX_VBL_DEN) {
     sfx.phase -= SFX_VBL_DEN; ticks++;
@@ -4266,7 +4277,7 @@ function fireHoming(g, x, y, a, parentVx = 0, parentVy = 0,
 /* ---- prelozene vzdusne formace ---- */
 /* 0x883c: 32bitovy stav se zdvoji; pri carry nebo nulovem vysledku se
    XORne $1d872b41, prohodi poloviny a tato hodnota se vrati i ulozi.
-   Zvukovy CIAB IRQ 0x4abc (~204.8 Hz) navic ADD.W VHPOSR do horniho wordu
+   Zvukovy CIAB IRQ 0x4abc (~199 Hz) navic ADD.W VHPOSR do horniho wordu
    (big-endian adresa zacatku LONGu), bez prenosu do dolniho.
    Browser nema beam counter, proto je vychozi VHPOSR prispevek nula;
    zachyceny trace lze vlozit do rngVhposTrace bez zmeny algoritmu. */

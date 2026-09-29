@@ -6,10 +6,18 @@ transcription contract, not a list of approximate WebAudio replacements.
 ## Runtime architecture
 
 `0x4A66` programs CIAB timer A with latch `0x0D88` and installs interrupt
-`0x4ABC`. With the PAL E-clock this advances the sound scheduler at about
-204.8 Hz, independently of the 50 Hz game step. The interrupt also performs
-the `ADD.W VHPOSR` perturbation of the global PRNG before resuming the four
-sound coroutines.
+`0x4ABC`. The timer runs in **one-shot** mode (`0x4A74` sets CRA bit 3,
+RUNMODE), and the interrupt restarts it only at `0x4B00`, after all four
+sound coroutines have run. One IRQ period is therefore the latch plus the
+time from underflow to that restart, not the nominal 204.8 Hz of the latch
+alone. Measured in the vAmiga harness from the `INTREQ` write at `0x4B08`
+(2 000 TOWN frames each): 3.98 IRQs per frame, interval 78.2 to 84 raster
+lines, mean 78.6 without and 78.7 with player fire, i.e. about 199 Hz. The
+browser models it as a constant restart of 106 E-clocks
+(`SFX_CIA_RESTART`, period 3 570 E, 497 IRQs per 125 frames); until
+2026-09-29 it used 204.8 Hz, so every effect ran about 3 % too fast. The
+interrupt also performs the `ADD.W VHPOSR` perturbation of the global PRNG
+before resuming the four sound coroutines.
 
 The four 268-byte voice structures map, in memory order, to Paula channels
 `AUD3, AUD2, AUD1, AUD0`. A request stores `priority * 4` as its guard. Every
@@ -163,6 +171,52 @@ conditional post-game `CONGRAT2.RAW` branch `0xF42..0x1042` — not the loader,
 as this file first stated. It waits for `fp@(12352)` and belongs to the
 post-game flow that has no runtime scene yet (docs/GAPS.md section 8).
 
+## Verification against the original, state by state (2026-09-29)
+
+Periods and volumes are written straight to Paula and are not kept in the
+voice structures, so the comparison works on register writes.
+`tools/sfxtrace.py` drives the original through TOWN, DESERT, GRASS and
+RIVER with fire and sideways sweeps, records every `AUD0..AUD3` write
+together with the writing PC (`tools/vamiga-regtrace.patch`), splits the
+stream into effect instances (an `AUDxLCH` write starts one, its PC names
+the routine, the `0x4C00` volume write of `0x4BF2` ends it) and compares
+each instance with the timeline the browser builds for the same effect:
+effective Paula volume, period and state length in IRQs.
+
+| effect | instances (complete) | differences |
+|---|---:|---:|
+| player volley `0x4F3E` | 10 000 (9 690) | 0 |
+| default hit `0x5070` | 454 (378) | 0 |
+| cannon `0x53BE` | 792 (554) | 0 |
+| HOMING `0x528A` | 134 (121) | 0 |
+| BLACKJET `0x52E8` | 104 (3) | 0 |
+| GOOSE hit / installation hit `0x4E5E` | 77 / 10 | 0 |
+| opening `0x5138` (both voices) | 22 | 0 |
+| FLAME puff `0x50D0` | 24 | 0 |
+| MINE shield `0x500E` | 3 | 0 |
+| XEVIOUS bomb `0x4D08` | 138 | 0 |
+| XEVIOUS bolt ping `0x55BC` | 21 | 0 |
+| PLAT hatch `0x4D7A` | 39 | 0 |
+| egg / walker pods `0x5456` | 213 | 0 |
+| factory / INST2 beam `0x5456` | 30 | 0 |
+| `_CORN` launch `0x54C8` (both voices) | 2 | 0 |
+
+An incomplete instance was pre-empted by another effect and is compared
+over the states it reached. Sample voices are checked by period and
+length: `BIGEXPL` (`AUDLEN` 4 243) at 592..623 for the standard explosion,
+768 and 776 for the `+376` big death, 1024/1032/1152/1160 for the player
+burst, and `SMART` (`AUDLEN` 4 140) at 1040/1025/1010/996 - all as
+transcribed. The geyser `0x536E`, the TOKEN and extra-life notes `0x5672`
+did not sound in this run (the geyser's zone is past the ICE lock the
+harness cannot pass, and the drive picks up no TOKEN); TOKEN notes were
+already checked by the earlier PC/audio captures.
+
+Two comparison rules keep the check honest rather than lenient: adjacent
+states with the same volume and period are merged (the browser's opening
+hold is a separate state, the original simply does not rewrite), and a
+state longer than 40 IRQs may differ by one IRQ per 40 because the
+one-shot timer drifts with load.
+
 ## Attract music and verified A500 output path
 
 The browser loads `AMTITUNE.MOD` from the inserted disk, starts it after the
@@ -206,7 +260,8 @@ an exact reuse pattern still needs scanline DMA-slot phase.
   pre-second-IRQ preemption cases;
 - PAL period-below-123 effective address-rate clamp in the GOOSE renderer;
 - cold and persistent `0x56E6` scratch bytes;
-- exact rational CIAB accumulation (511 IRQs in 125 browser VBLs from phase 0);
+- CIAB accumulation with the measured one-shot restart (497 IRQs in 125
+  browser VBLs from phase 0);
 - two BIGEXPL RNG advances even with four blocked voices;
 - the player four-layer periods and the principal TOWN gameplay hooks.
 

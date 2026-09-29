@@ -39,7 +39,19 @@ Otevrene zustava:
 
 - ~~extra life z `awardScore()`~~ presunuto na `0x710c` (2026-09-24);
   tabulka efektu je kompletni (docs/SOUND.md "Still open");
-- efekty specificke pro pozdejsi levely.
+- ~~efekty specificke pro pozdejsi levely~~ **overeno 2026-09-29**
+  `tools/sfxtrace.py`: zapisy do registru Paula originalu (TOWN, DESERT,
+  GRASS, RIVER) proti timeline prepisu, 15 efektu a vsech 12 063 instanci
+  stav po stavu bez rozdilu (hlasitost, perioda, delka), vzorky BIGEXPL a
+  SMART v periodach i delce. Neoverene zustavaji jen gejzir `0x536e` (jeho
+  zona je za zamkem ICE, kam harness nedojede) a noty zivota `0x5672`
+  (jizda nic nesebere; TOKEN noty overilo drivejsi mereni).
+- **Nalez pri tom: CIAB je jednorazovy.** `0x4a74` nastavi RUNMODE,
+  obsluha ho restartuje az na `0x4b00`, takze IRQ chodi ~199 Hz (3,98 na
+  snimek), ne 204,8 Hz. Prepis ted pocita s restartem 106 E-cyklu
+  (`SFX_CIA_RESTART`); drive hraly vsechny efekty asi o 3 % rychleji.
+  Zbyva kolisani pod zatezi (interval 78,2 az 84 radku), ktere prepis
+  nemodeluje - stejne jako delku kola planovace.
 
 Gameplay hudba v TOWN neni mezera: original drzi tracker modul na titulku a
 pri startu hry jej uvolni; samotny level je postaveny na zvukovych efektech.
@@ -648,7 +660,13 @@ strane od x = 160 nez v originale - ne kvuli casovani (tvar drah y sedi).
 Kod pokusu vracen; zustava jen robustnejsi vyber tanku v kontraktu
 "tank po nacteni pozice" (drive mohl vybrat tank na okraji mimo obraz).
 - Drobnost nalezena cestou: GOOSE se v prepisu rodi o 2 px niz (ys0 286
-  proti 284) a pri naletu zastavi o ~4 px pozdeji.
+  proti 284) a pri naletu zastavi o ~4 px pozdeji. **Premereno
+  2026-09-29, neni to chyba prepisu:** original ho po `+288` hned posune
+  o `-2 x fp@(-76)` (prvni kolo trvalo 3 VBL: 288 - 6 = 282) a test
+  `0xc81c` (`sy <= 72`) dela jen na hranici kola; posledni kolo pred
+  zastavenim melo 3 VBL, takze skocil ze 76 na 70. Pri kolech po 2 VBL
+  (model prepisu) vychazi 288, 284 ... 76, 72 - prepis zastavi presne
+  na 72. Rozdil je tedy jen promenna delka kola originalu.
 
 ### Rozhodnuti, ktere to chce
 

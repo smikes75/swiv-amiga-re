@@ -137,7 +137,7 @@ must be charged even when the total temporarily exceeds 160.
 
 ## Paula voices and the CIAB sound scheduler
 
-`0x4a66` installs a roughly 204.8 Hz CIAB interrupt which resumes four
+`0x4a66` installs a one-shot CIAB interrupt (about 199 Hz, see SOUND.md) which resumes four
 persistent sound coroutines in Paula order AUD3/AUD2/AUD1/AUD0. Requests use
 `priority*4` guards, strict unsigned replacement and an x-selected stereo
 pair with fallback to the opposite pair. Procedural waveforms, per-voice
@@ -148,7 +148,7 @@ The two disk samples use that same allocator rather than a separate mixer:
 `BIGEXPL.SND` supplies explosions and `SMART.SND` is submitted four times by
 the white-flash task. TOKEN pickup is a two-level scheduler case: a 50 Hz
 priority-100 task attempts notes at VBL 0/5/10/15, while each accepted note is
-then advanced by its own 204.8 Hz sound coroutine. `0x5614` only captures the
+then advanced by its own ~199 Hz sound coroutine. `0x5614` only captures the
 TOKEN side and enqueues that task; it does not play the first note inline.
 Equal-priority insertion is strict creation FIFO, including existing object
 callbacks, fresh `0x894a` explosions and the separate SMART `0x885a` start.
