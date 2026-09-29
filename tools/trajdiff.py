@@ -74,7 +74,13 @@ ORIG_JS = """(cfg) => {
       VA.run(1, null);
     }
     VA.fn.joy(2, 13); VA.fn.joy(2, 10);
-    for (let i = 0; i < 50; i++) { H[hold] &= ~0x08; VA.run(1, null); }
+    // --stat (arena): bit 3 jsme pri jizde mazali a INST4 ho uz znovu
+    // nenastavi; ve skutecne hre ale arena FINAL scroll drzi.
+    if (cfg.stat) H[hold] |= 0x08;
+    for (let i = 0; i < 50; i++) {
+      if (!cfg.stat) H[hold] &= ~0x08;
+      VA.run(1, null);
+    }
   }
   const obtiznost = W(cfg.a6 + 182);
   const zero = cam();
@@ -133,9 +139,11 @@ REMAKE_JS = """(cfg) => {
     // tataz pozice v retezu (radek = pozice - K); zamek tovarny obejit jako
     // spawncheck, obtiznost prevzit z originalu (fp@(182) v okamziku startu)
     let guard = 0;
+    g.ignoreInstLock = true;                   // jako harness: jen bit 3
     while (Math.floor(g.scroll) > cfg.od - cfg.K && guard++ < 400000) {
-      g.inst1Factories = 0; step(g); g.lives = 99;
+      step(g); g.lives = 99;
     }
+    if (cfg.stat) g.ignoreInstLock = false;
   }
   if (cfg.obtiznost !== null && cfg.obtiznost !== undefined) {
     const D = cfg.obtiznost;
@@ -146,8 +154,14 @@ REMAKE_JS = """(cfg) => {
   const KIND_GFX = { fod: 0x0404, yel: 0x0014, bird: 0x0015, jet: 0x0020 };
   const live = new Map(), tracks = [];
   let tik = 0, guard = 0;
+  // Hazardy (casti slozenych objektu, deti) nesou graficke slovo v
+  // NODE_GRAPHIC: soubor + snimek -> index souboru | snimek << 9 (+368).
+  const hazGfx = h => { const ng = NODE_GRAPHIC[h.nodeKey || h.kind];
+    if (!ng) return -1; const fid = state.order.indexOf(ng[0]);
+    return fid < 0 ? -1 : (fid | (ng[1] << 9)); };
   const gfxOf = o => o.gfx !== undefined ? o.gfx
-                   : KIND_GFX[o.kind] !== undefined ? KIND_GFX[o.kind] : -1;
+                   : KIND_GFX[o.kind] !== undefined ? KIND_GFX[o.kind]
+                   : o.kind ? hazGfx(o) : -1;
   const scan = () => {
     const c = scrollTop(g);
     const seen = new Set();
@@ -167,12 +181,12 @@ REMAKE_JS = """(cfg) => {
     };
     for (const o of g.spawns) vezmi(o, "spawn");
     for (const o of g.air || []) vezmi(o, "air");
+    if (cfg.hazardy) for (const o of g.hazards || []) vezmi(o, "hazard");
     for (const [o, t] of live) if (!seen.has(o)) { t.konec = tik; live.delete(o); }
   };
   scan();
   while (zero - scrollTop(g) < cfg.dist && guard++ < 400000 &&
          (!cfg.maxTik || tik < cfg.maxTik)) {
-    if (cfg.od && !cfg.stat) g.inst1Factories = 0;
     step(g); tik++;
     g.lives = 99;
     scan();
@@ -207,7 +221,8 @@ def original(dist, tiku, od=0, stat=0):
     return res
 
 
-def remake(dist, tiku, od=0, obtiznost=None, stat=False, max_tik=0):
+def remake(dist, tiku, od=0, obtiznost=None, stat=False, max_tik=0,
+           hazardy=False):
     with sync_playwright() as pw:
         br = pw.chromium.launch()
         page = br.new_page()
@@ -218,7 +233,8 @@ def remake(dist, tiku, od=0, obtiznost=None, stat=False, max_tik=0):
         page.evaluate("window.requestAnimationFrame = () => 0")
         res = page.evaluate(REMAKE_JS, {"dist": dist, "tiku": tiku, "od": od,
                                         "K": K_RETEZ, "obtiznost": obtiznost,
-                                        "stat": stat, "maxTik": max_tik})
+                                        "stat": stat, "maxTik": max_tik,
+                                        "hazardy": hazardy})
         br.close()
     return res
 
@@ -335,6 +351,10 @@ def main():
         i = args.index("--od"); od = int(args[i + 1]); del args[i:i + 2]
     # --stat VBL: po dojeti zamky nechat byt (napr. arena FINAL, kde scroll
     # stoji) a merit dany pocet VBL; prepis simuluje stejny pocet tiku
+    # --hazardy: sledovat i hazardy prepisu (casti bossu, deti)
+    hazardy = "--hazardy" in args
+    if hazardy:
+        args.remove("--hazardy")
     stat = 0
     if "--stat" in args:
         i = args.index("--stat"); stat = int(args[i + 1]); del args[i:i + 2]
@@ -355,7 +375,8 @@ def main():
     # Original po dojeti jeste 50 VBL bezi bez strelby (12,5 px), takze
     # prepis musi zacit na SKUTECNE startovni pozici originalu.
     od_r = (o["zero"] & 0xFFFF) if od else 0
-    r = remake(dist, tiku, od_r, obt, bool(stat), len(o["kamera"]) if stat else 0)
+    r = remake(dist, tiku, od_r, obt, bool(stat),
+               len(o["kamera"]) if stat else 0, hazardy)
     if ulozit:
         json.dump({"orig": o, "remake": r}, open(ulozit, "w"))
 

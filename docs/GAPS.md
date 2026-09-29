@@ -2064,7 +2064,22 @@ Prepis pricital +4 pri kazdem vystrelu. DESERT husy 0/16 -> 11/16.
 - Kola jsou v ICE a na konci SCIFI delsi (nejcasteji 4 az 5 VBL misto 2),
   takze tam se chovani pocitana na kola od prepisu rozchazeji vic.
 
-**Otevrene:** GRASS VTOL (3) a PLAT (2) rozebrat; FINAL arena
-(`--od 32995 --stat`) - prepis sleduje jen mapove objekty a letce, casti
-INST5 jsou hazardy a do srovnani se zatim nedostanou.
+**Rozebrano dal:**
+
+- GRASS VTOL (3): vsechny tri byly aktivni uz na startu mereni (aktivace
+  na 0 px), jejich casovace ovlivnila jizda se strelbou - nesrovnatelne.
+- GRASS PLAT (2): posun o bod za KOLO (etapa 1); original ma kola delsi
+  nez 2 VBL, za stejny cas ujede mene (5 proti 7 px). Model, ne chyba.
+- FINAL arena (`--od 32995 --stat 2000 --hazardy`): `--hazardy` sleduje
+  i hazardy prepisu (graficke slovo z `NODE_GRAPHIC`), `--stat` v originale
+  vrati bit 3 zamku (INST4 ho nastavi jen jednou a my ho pri jizde mazali)
+  a v prepisu obejde zamek jen pri jizde (`g.ignoreInstLock`, ktery na
+  rozdil od nulovani `inst1Factories` nechava aktivaci INST5). Lampy, boss
+  INST4 sedi; nosice INST5 (INSECTS#23) jedou shodne do 1-2 px, "rozchody"
+  jsou tolerance 1 px proti obnove originalu po 2-4 VBL. `activeCost`
+  originalu v arene 70 az 120, naziva 1-2 weaveri, 1-3 hunteri.
+
+Pozor pri vlastnich sondach: nesmrtelny hrac (`inv`) v prepisu brani
+tomu, aby se o nej weaveri rozbili - krouzi kolem nej a `activeCost`
+vyleti na 300. Harness ma jen nekonecne zivoty.
 

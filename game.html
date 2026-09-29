@@ -9628,7 +9628,11 @@ function step(g) {
   // 0x3cbe: scroll task scrolluje jen pri fp@(166) == 0. Bit 3 nastavuje
   // 0xb6ae (aktivni instalace nebo boss) a uvolni jej 0xb6ba pri
   // poslednim; bit 1 nastavi INST4#0 na konci urovne (0xbed0).
-  g.scrollHeld = (g.inst1Factories | 0) > 0 || !!g.levelEndHold ||
+  // `ignoreInstLock` je jen pro nastroje (trajdiff): obejde zamek scrollu
+  // instalaci jako harness, ktery maze bit 3 fp@(166); citac fp@(140)
+  // (inst1Factories) zustava, na nem visi aktivace INST5.
+  g.scrollHeld = ((g.inst1Factories | 0) > 0 && !g.ignoreInstLock) ||
+                 !!g.levelEndHold ||
                  (g.tick | 0) < (g.scrollLockUntil | 0);
   if (!g.scrollHeld) {
     const step = SCROLL * TICK * (g.scrollMul ?? 1);
