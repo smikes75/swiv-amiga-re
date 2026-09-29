@@ -2373,7 +2373,7 @@ function composeTownBobs(g, top) {
       : a.kind === "yel" ? "YELLOW.LIN"
       : a.kind === "jet" ? "BLACKJET.LIN" : "BIRD.LIN";
     bob("air-" + a.kind, file, a.seq[a.apos], a.x, a.y - top, 32,
-        { ordinal: a.bobOrdinal,
+        { ordinal: a.bobOrdinal, rotor: bakedRotorOf(a.seq, file),
           primaryOp: a.hitFlash ? BOB_FILL_INDEX9 : null });
   }
 
@@ -3926,6 +3926,41 @@ const ROTOR_DISC_HELI = { body: 0, parts: [5, 6, 7, 8].map(
   f => { const q = Object.values(HELI_ROTOR_PART).find(v => v[0] === f);
          return [f, q[1], q[2]]; }) };
 const ROTOR_DISC_BASE = 0.14, ROTOR_DISC_BLADE = 0.3;
+/* Vrtulniky se ZAPECENYM rotorem: FODDERA typ 1 (skript 0x080b0) a YELLOW
+   (0x86f2) stridaji s periodou 1 telo s telem+listy [B,C1,B,C2,B,C3,B,C4],
+   takze listy blikaji stejne jako u hrace. Listy jsou body barvy 0, ktere
+   ve snimku Ck pribyly proti telu B; z nich se slozi ctyri samostatne
+   "listove" snimky pro tentyz disk. */
+function bakedRotorOf(seq, file) {
+  if (!seq || seq.length !== 8) return null;
+  const b = seq[0];
+  if (seq[2] !== b || seq[4] !== b || seq[6] !== b) return null;
+  const key = file + ":" + seq.join(",");
+  const cache = bakedRotorOf.cache || (bakedRotorOf.cache = new Map());
+  if (cache.has(key)) return cache.get(key);
+  const body = indexedFrameFor(state, file, b);
+  let rotor = null;
+  if (body) {
+    const parts = [];
+    for (const f of [seq[1], seq[3], seq[5], seq[7]]) {
+      const c = indexedFrameFor(state, file, f);
+      if (!c) { parts.length = 0; break; }
+      const pix = new Uint8Array(c.w * c.h).fill(0xFF);
+      for (let y = 0; y < c.h; y++) for (let x = 0; x < c.w; x++) {
+        if (c.pix[y * c.w + x] !== 0) continue;
+        // tentyz bod v souradnicich tela (spolecna kotva)
+        const bx = x + c.ox - body.ox, by = y + c.oy - body.oy;
+        const bv = bx >= 0 && by >= 0 && bx < body.w && by < body.h
+          ? body.pix[by * body.w + bx] : 0xFF;
+        if (bv !== 0) pix[y * c.w + x] = 0;
+      }
+      parts.push([{ w: c.w, h: c.h, ox: c.ox, oy: c.oy, pix }, 0, 0]);
+    }
+    if (parts.length === 4) rotor = { file, body: b, parts };
+  }
+  cache.set(key, rotor);
+  return rotor;
+}
 /* Rychlost vrtulniku je `+356` = 768 v 16.16, tedy 3 px/tik po ose
    (0x9476). Naklon se tim normuje na plny vychyl pri plne rychlosti. */
 const HELI_TILT_SPEED = 3;
@@ -12022,7 +12057,19 @@ function smoothBobKey(r) {
 /* `fore` je tataz maska jako v klasicke ceste (`blitIndexedOperation`);
    navic potrebuje polohu, protoze se cte z mapy. Maskovane sprity se
    necachuji - maska se s kazdym posunem meni. */
-function smoothSpriteCanvas(spr, palWords, op, c07, fore, left, top) {
+function smoothSpriteCanvas(spr, palWords, op, c07, fore, left, top, S) {
+  /* Maskovany sprite na zlomkove poloze: maska popredi patri k TERENU, ne
+     ke spritu. Vzorkovana na cele poloze (drive Math.round) sedela u stojicich
+     objektu presne, ale u jedoucich cukal okraj popredi o +-0,5 bodu spolu se
+     spritem. Proto se platno slozi rovnou v mrizce displeje (S bodu na herni
+     bod) a maska se cte pro stred kazdeho bodu displeje. */
+  // Kde pod spritem popredi neni, kresli se z bezne cache (stin letce
+  // se pohybuje a bez teto zkratky by se jeho platno i rozmazani stavely
+  // kazdy snimek znovu).
+  if (fore && !coverUnder(fore, left, top, spr.w, spr.h)) fore = null;
+  if (fore && S > 1) return maskedSpriteCanvas(spr, palWords, op, c07, fore,
+                                               left, top, S);
+  if (fore) { left = Math.round(left); top = Math.round(top); }
   // Vyhlazeni Scale2x: pracuje na indexech, takze se jen vymeni snimek
   // a vysledne platno je dvakrat vetsi. Maskovane sprity se nezvetsuji,
   // maska se cti v souradnicich 1:1.
@@ -12079,6 +12126,59 @@ function smoothSpriteCanvas(spr, palWords, op, c07, fore, left, top) {
   }
   cv.getContext("2d").putImageData(img, 0, 0);
   cv._k = k;                      // nasobek proti hernim pixelum
+  cache.set(key, cv);
+  return cv;
+}
+
+/* Je pod obdelnikem spritu (herni body, zlomkova poloha) nejaky bod
+   popredi? */
+function coverUnder(fore, x, y, w, h) {
+  const cm = fore.cover, fW = fore.W, fH = Math.floor(cm.length / fW);
+  const x0 = Math.max(0, Math.floor(x)), x1 = Math.min(fW, Math.ceil(x + w));
+  const y0 = Math.max(0, Math.floor(y)), y1 = Math.min(fH, Math.ceil(y + h));
+  for (let yy = y0; yy < y1; yy++) {
+    const o = yy * fW;
+    for (let xx = x0; xx < x1; xx++) if (cm[o + xx]) return true;
+  }
+  return false;
+}
+function maskedSpriteCanvas(spr, palWords, op, c07, fore, mapX, mapY, S) {
+  // poloha kvantovana na 1/S herniho bodu, aby se stojici objekty cachovaly
+  const qx = Math.round(mapX * S), qy = Math.round(mapY * S);
+  const cache = spr.smoothCache || (spr.smoothCache = new Map());
+  let key = "m" + S + ":" + op + ":" + (c07 === undefined ? "" : c07) + ":";
+  for (let i = 0; i < 16; i++) key += palWords[i].toString(16) + ",";
+  key += "|" + qx + "," + qy + "," + (fore.cover.stamp | 0);
+  let cv = cache.get(key);
+  if (cv) return cv;
+  if (cache.size > 96) cache.clear();
+  const W = spr.w * S, H = spr.h * S;
+  cv = document.createElement("canvas");
+  cv.width = Math.max(1, W); cv.height = Math.max(1, H);
+  const img = cv.getContext("2d").createImageData(cv.width, cv.height);
+  const d = img.data, cm = fore.cover, fW = fore.W;
+  const fH = Math.floor(cm.length / fW);
+  const barvy = new Array(16);
+  for (let i = 0; i < 16; i++) barvy[i] = rgb4(palWords[i]);
+  const c07rgb = c07 !== undefined ? rgb4(c07) : null;
+  for (let v = 0; v < H; v++) {
+    const sy = (v / S) | 0;
+    const my = Math.floor((qy + v + 0.5) / S);         // radek mapy
+    const rowOk = my >= 0 && my < fH;
+    for (let u = 0; u < W; u++) {
+      const c = spr.pix[sy * spr.w + ((u / S) | 0)];
+      if (c === 0xFF) continue;
+      const mx = Math.floor((qx + u + 0.5) / S);
+      if (rowOk && mx >= 0 && mx < fW && cm[my * fW + mx]) continue;
+      const barva = op === BOB_CLEAR_INDEX0 ? barvy[0]
+        : op === BOB_FILL_INDEX9 ? barvy[9]
+        : (c === 7 && c07rgb) ? c07rgb : barvy[c];
+      const o = (v * W + u) * 4;
+      d[o] = barva[0]; d[o + 1] = barva[1]; d[o + 2] = barva[2]; d[o + 3] = 255;
+    }
+  }
+  cv.getContext("2d").putImageData(img, 0, 0);
+  cv._k = S;                      // uz v mrizce displeje
   cache.set(key, cv);
   return cv;
 }
@@ -12496,7 +12596,9 @@ function drawRotorDisc(ctx, rotor, ax, ay, palRow, c07, S, blurDev, faze,
   const a0 = ctx.globalAlpha;
   for (let i = 0; i < rotor.parts.length; i++) {
     const [f, ox, oy] = rotor.parts[i];
-    const spr = indexedFrameFor(state, "JEEPHELI.LIN", f);
+    // cislo snimku JEEPHELI, nebo uz hotovy listovy snimek (bakedRotorOf)
+    const spr = typeof f === "number"
+      ? indexedFrameFor(state, "JEEPHELI.LIN", f) : f;
     if (!spr) continue;
     let d = Math.abs(faze - i) % 4; d = Math.min(d, 4 - d);
     ctx.globalAlpha = a0 * (ROTOR_DISC_BASE +
@@ -12677,16 +12779,17 @@ function renderSmoothField(ctx, g, S, composed, hudCv) {
   // Obeh listu disku: poloha dal po dvou kolech jako v originale, jen
   // plynule. Casem simulace (tik + alfa), takze pauza disk zastavi.
   const rotorFaze = (((g.tick | 0) + alpha) / (2 * ROUND_VBL)) % 4;
-  const heliBody = state.rotorDisc
-    ? indexedFrameFor(state, "JEEPHELI.LIN", ROTOR_DISC_HELI.body) : null;
   for (let r of composed.ordered) {
     if (!r.spr) continue;
     if (state.rotorDisc && r.rotorBlink) continue;   // listy kresli disk
     // Hrac: slozeny snimek s listy (0x945a) se nahradi samotnym telem;
     // stin rotoru se pak nekresli, stejne jako u ostatnich rotoru, ktere
     // stin z listu nemaji nikdy (stin je jen z primarniho snimku).
-    if (heliBody && r.rotor && r.rotor.body !== undefined)
-      r = Object.assign({}, r, { spr: heliBody });
+    if (state.rotorDisc && r.rotor && r.rotor.body !== undefined) {
+      const telo = indexedFrameFor(state, r.rotor.file || "JEEPHELI.LIN",
+                                   r.rotor.body);
+      if (telo) r = Object.assign({}, r, { spr: telo });
+    }
     const key = smoothBobKey(r);
     const p = prev && key !== null ? prev.byKey.get(key) : null;
     // Rohy spritu ze ZLOMKOVYCH poloh: drive se konce zaokrouhlovaly na
@@ -12708,9 +12811,10 @@ function renderSmoothField(ctx, g, S, composed, hudCv) {
     // Maska se cte z mapy, takze potrebuje levy horni roh spritu v jejich
     // souradnicich: vodorovne rovnou dx, svisle dy + prave nakresleny
     // scroll (uvnitr `dy` uz je odectený).
+    // Maskovany sprite: presna (zlomkova) poloha v mape a S, aby okraj
+    // popredi sedel na teren i u jedouciho objektu (viz smoothSpriteCanvas).
     const cv = smoothSpriteCanvas(r.spr, pal.subarray(row * 16, row * 16 + 16),
-                                  r.op, c07, r.fore,
-                                  Math.round(dx), Math.round(dy + scrollF));
+                                  r.op, c07, r.fore, dx, dy + scrollF, S);
     // Volitelne vylepseni (v originale neni): stin objektu, ktery leti
     // vysoko, je na skutecne predloze mekci a svetlejsi. Vysku uz mame -
     // hra ji pouziva k odsazeni stinu (bobShadowAnchor: x + z/2, y + z),

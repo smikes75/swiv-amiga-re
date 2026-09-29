@@ -7136,6 +7136,70 @@ def main():
                    popredi["stinuSMaskou"] == popredi["stinu"],
                    "stiny maji byt vzdy za popredim (0x63da): %r" % (popredi,))
 
+            # Vylepseny rezim: maska popredi patri k terenu. U jedouciho
+            # maskovaneho objektu na zlomkove poloze se drive vzorkovala na
+            # zaokrouhlene poloze spritu a okraj cukal o +-0,5 herniho bodu.
+            # Ted se platno sklada v mrizce displeje: v bodech displeje nad
+            # popredim se s objektem i bez nej musi kreslit presne tytez barvy.
+            okraj = page.evaluate("""() => {
+              startGame(0);
+              const g = state.g; g.lives = 99999;
+              Object.assign(state, { zoom: 5, smooth: true,
+                subpixelSprites: false, depthOfField: false,
+                softShadows: false, blendBg: false, spriteScale: 'bez',
+                heliTilt: false, rotorDisc: false });
+              const cv = document.querySelector('#game');
+              const kresli = alfa => { g.frac = alfa * TICK; g.last = 0;
+                frame(0); return cv.getContext('2d')
+                  .getImageData(0, 0, cv.width, cv.height).data; };
+              const zakryto = (s) => {
+                const sp = indexedFrameFor(state, s.file, s.fr >= 0 ? s.fr : 0);
+                if (!sp) return [0, 0];
+                let a = 0, n = 0;
+                for (let y = 0; y < sp.h; y++) for (let x = 0; x < sp.w; x++) {
+                  if (sp.pix[y * sp.w + x] === 0xFF) continue; n++;
+                  const mx = Math.floor(s.x + sp.ox + x);
+                  const my = Math.floor(s.y + sp.oy + y);
+                  if (g.coverMask[my * g.mapW + mx]) a++; }
+                return [a, n]; };
+              let cil = null;
+              for (let i = 0; i < 4000 && !cil; i++) {
+                g.frac = TICK; g.last = 0; frame(0);
+                g.lives = 99999; g.player.inv = 999;
+                if (i < 200 || i % 3) continue;
+                for (const s of g.spawns) {
+                  if (!s.born || !s.alive || !spawnGroundBit(g, s) ||
+                      s.beh === 'tank') continue;
+                  const sy = s.y - Math.floor(g.scroll);
+                  if (sy < 30 || sy > 200) continue;
+                  const [a, n] = zakryto(s);
+                  if (a > 20 && a < n - 20 && (s.vx || s.vy)) { cil = s; break; }
+                }
+              }
+              if (!cil) return { chybi: true };
+              const S = cv.width / 320;
+              const sOb = kresli(0.5);
+              const scrollF = g.smoothScrollF;
+              cil.hidden = true;
+              const bez = kresli(0.5);
+              cil.hidden = false;
+              let nadPopredim = 0, jinde = 0, zmen = 0;
+              for (let Y = 0; Y < cv.height; Y++) for (let X = 0; X < cv.width; X++) {
+                const i = (Y * cv.width + X) * 4;
+                if (sOb[i] === bez[i] && sOb[i+1] === bez[i+1] &&
+                    sOb[i+2] === bez[i+2]) continue;
+                zmen++;
+                const mx = Math.floor(X / S), my = Math.floor(Y / S + scrollF);
+                if (g.coverMask[my * g.mapW + mx]) nadPopredim++; else jinde++;
+              }
+              return { beh: cil.beh, zmen, nadPopredim, jinde,
+                       frakce: +(scrollF % 1).toFixed(3) };
+            }""")
+            expect(not okraj.get("chybi"),
+                   "nenasel se jedouci maskovany objekt pod popredim")
+            expect(okraj["jinde"] > 100 and okraj["nadPopredim"] == 0,
+                   "maskovany sprite kresli pres popredi: %r" % (okraj,))
+
             # Maska musi platit i na VEZ tanku, ne jen na korbu - jinak
             # zustane vez nad stromy (hlaseno hracem).
             vez = page.evaluate("""() => {
@@ -7208,6 +7272,21 @@ def main():
             expect(disk["bez"]["kolisani"] > 0 and
                    disk["s"]["kolisani"] * 10 < disk["bez"]["kolisani"],
                    "rotorovy disk porad blika mezi koly: %r" % (disk,))
+
+            # Zapecene rotory nepratelskych vrtulniku (FODDERA typ 1, YELLOW):
+            # listy barvy 0 se vyextrahuji proti telu; stihacka [0,1] disk nema.
+            zapec = page.evaluate("""() => {
+              const f = bakedRotorOf([2, 3, 2, 4, 2, 5, 2, 6], 'FODDERA.LIN');
+              const y = bakedRotorOf([0, 1, 0, 2, 0, 3, 0, 4], 'YELLOW.LIN');
+              const j = bakedRotorOf([0, 1], 'FODDERA.LIN');
+              const listu = r => r ? r.parts.map(([s]) =>
+                s.pix.reduce((n, v) => n + (v === 0), 0)) : null;
+              return { f: listu(f), y: listu(y), jet: j, telo: f && f.body };
+            }""")
+            expect(zapec["jet"] is None and zapec["telo"] == 2 and
+                   all(n > 20 for n in zapec["f"]) and
+                   all(n > 20 for n in zapec["y"]),
+                   "zapecene rotory: %r" % (zapec,))
 
             # Varianta (a), etapa 2b: klasicky rezim publikuje obraz jednou
             # za KOLO (0x291e: exg bufferu, latch fp@(3542), 0x41c8 + HW

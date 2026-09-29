@@ -1668,3 +1668,24 @@ Vedlejsi nalez: ve vylepsenem rezimu se porad barvi i klasicke pole
 
 Cisla z headless prohlizece plati jen jako pomery; o WebGL se rozhodne
 podle mereni na hracove stroji.
+
+## Rotorovy disk i u nepratelskych vrtulniku; maska v mrizce displeje (2026-09-29)
+
+**Zapecene rotory.** FODDERA typu 1 (skript `0x080b0`, `[2,3,2,4,2,5,2,6]`)
+a YELLOW (`[0,1,0,2,0,3,0,4]`) nemaji listy jako samostatny snimek - jsou
+nakreslene barvou 0 primo ve snimcich 3..6 resp. 1..4, ktere se s periodou 1
+stridaji se samotnym telem. Disk je z nich slozi (`bakedRotorOf`): listy =
+body barvy 0, ktere proti telu pribyly. Drive jsem tvrdil, ze disk plati
+i pro formace - to nebyla pravda, platil jen pro rotory kreslene
+sekundarni cestou.
+
+**Okraj masky ve vylepsenem rezimu.** Maskovany sprite se skladal v mrizce
+1:1 s maskou vzorkovanou na zaokrouhlene poloze, kreslil se ale na
+zlomkove - u jedoucich objektu (vlak, plosiny) proto okraj popredi cukal
+o +-0,5 herniho bodu. Nove `maskedSpriteCanvas`: platno v mrizce displeje
+(S bodu na herni bod), maska se cte pro stred kazdeho bodu displeje.
+Kontrakt v `uitest.py`: vlak pod popredim, 17 940 zmenenych bodu, **0 nad
+popredim** (stara verze 110). Kde pod spritem popredi neni
+(`coverUnder`), kresli se z bezne cache - jinak by se stin kazdeho letce
+stavel i rozmazaval kazdy snimek. `perf.py --hra`: TOWN 21,78 -> 23,46 ms,
+RIVER 29,72 -> 24,94 ms (na hranici sumu).
