@@ -6921,7 +6921,11 @@ def main():
                 const sy = s.y - scrollTop(h);
                 return s.alive && sy > -20 && sy < 276;
               });
-              const cil = videt.find(s => s.beh === "tank" && s.born);
+              // tank uvnitr obrazovky - na okraji (x < 0, sy 276) by ho
+              // strela nezasahla ani v originale
+              const cil = videt.find(s => s.beh === "tank" && s.born &&
+                s.x >= 16 && s.x < 304 && s.y - scrollTop(h) >= 16 &&
+                s.y - scrollTop(h) < 240);
               let sestreleno = null;
               if (cil) {
                 for (let k = 0; k < 30 && cil.alive; k++) {

@@ -608,14 +608,45 @@ tiku. Nastroje, ktere renderuji stav bez tiku (compare, align, behprobe,
 survey_remake), maji `state.roundDisplay = false`. Kontrakt v `uitest.py`:
 lichy tik kola = 0 px zmeny i po posunu hrace, bez drzeni 38 812 px.
 
-**Etapa 3 - otevrene (simulace po kolech):**
+### Varianta (a), etapa 3: zmereno, zamerne NEzavedeno (2026-09-29)
 
-- `fp@(3542)` (slovo scrollu pro vsechna screen-y) se meni jen za kolo;
-  prepis bere `Math.floor(g.scroll)` po tiku.
-- Fade `0x28b0` je korutina s `0x5f0a` a krokuje -16/+16 za KOLO, ne za
-  VBL; zatmeni tedy trva 32 VBL misto 16. Pred zmenou overit na casovani
-  kongratulaci a startu urovne (mereno v harnessu).
-- Rozhodovani, kolize a RNG jednou za kolo.
+Tri mereni v harnessu vAmiga a jeden pokus v prepisu:
+
+1. **Fade `0x28b0` krokuje KAZDY VBL**, ne za kolo (start urovne: cerna
+   0 -> 256 po 16 za 16 VBL, buffery se pritom prohazuji po 2 VBL).
+   Moje drivejsi tvrzeni "fade za kolo" bylo SPATNE; prepis to ma dobre.
+2. **`fp@(3542)` se zamyka za kolo** - meni se az pri prohozeni bufferu,
+   jeden VBL po zmene kamery `fp@(3530)` (kamera v lichem VBL, zamek
+   v nasledujicim sudem).
+3. **Dve kamery** (rozrazeno podle disassembly): nezamcenou `fp@(3530)`
+   ctou ctec mapy `0x3652..0x3728`, vstupni prahy a2c6 `0x9ad6`/`0x9ac8`,
+   cekani na obrazovku `0x9ae8`/`0x9afa` a scroll task. Zamcenou
+   `fp@(3542)` cte kompenzace bitu 4 `0x6434`/`0x6446`, cull `0x6480`,
+   HW sprity `0x3d66` a prime `cmpw` v chovanich (TRAIN `0x9c76`, FISH
+   `0xb63a`, JUNHATCH `0xa5fc`, INST4 `0xbe30`, GOOSE `0xc81c`, hrac
+   `0x9058`/`0x951e` a dalsi).
+4. **Pokus: zamek + rozdeleni kamer v prepisu.** Technicky slo, ale
+   rozbilo to DESERT: tovarna se aktivovala nezamcenou kamerou (sy -63)
+   a v temze tiku ji cull `0x6480` zamcenou kamerou (sy -64) odstrihl,
+   scroll se nikdy nezastavil. V originale to nastat nemuze: objekty
+   rozhoduji jen na hranici kola, a tam uz je zamek aktualni, takze obe
+   kamery maji tutez hodnotu. Rozdil existuje jen v lichem VBL, kdy
+   objekty stoji.
+
+**Zaver:** zamek scrollu dava smysl jen spolu s presunem VSECH rozhodnuti
+(aktivace, cekani, prahy, kolize) na hranice kol - a pak na nem uz
+nezalezi, protoze na hranici kola jsou obe kamery stejne. Ten presun
+znamena projit ~73 chovani a znovu odvodit stovky presnych ocekavani
+v kontraktech. Prinos je nejvys 1 VBL na rozhodnuti a proti originalu ho
+nelze overit: original ma kola promenna (2 az 5 VBL), takze sam kolisa
+vic. `trajdiff` po etapach 1 a 2 hlasi drahy shodne u vsech chovani
+krome formaci (nezname RNG) a jednoho tanku. YELLOW (2 z 16) se
+rozchazi kvuli jine strane naletu - `0x8712` vybira stranu podle x cile
+`0x72a6` (hrac, po smrti nahradni bod) a ten je v behu prepisu na druhe
+strane od x = 160 nez v originale - ne kvuli casovani (tvar drah y sedi).
+
+Kod pokusu vracen; zustava jen robustnejsi vyber tanku v kontraktu
+"tank po nacteni pozice" (drive mohl vybrat tank na okraji mimo obraz).
 - Drobnost nalezena cestou: GOOSE se v prepisu rodi o 2 px niz (ys0 286
   proti 284) a pri naletu zastavi o ~4 px pozdeji.
 
