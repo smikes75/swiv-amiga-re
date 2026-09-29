@@ -19,10 +19,9 @@ vrstvami; terrain proto nezahrnuje ani jejich pixely. Maska HELI je
 sjednoceni pres vsech osm poloh animace vrtulniku - rotor jinych snimku
 presahuje obrys aktualniho a faze je loterie (kolo originalu 2 az 5 VBL).
 
-Jedina vyjimka z "jen zvedat": t28 96,6 -> 96,3 (2026-09-28). Varianta (a)
-krokuje animaci s periodou 1 jednou za kolo (overeno v harnessu: snimek
-ulohy vrtulniku se meni jen na hranici kola) a rotory formace vpravo maji
-v t28 opacnou fazi nez drive. Posun `ticks` by zmenil radek.
+Jedina vyjimka z "jen zvedat": t28 96,6 -> 96,3 (2026-09-28, faze rotoru
+formace po variante (a)). Od 2026-09-29 (maska popredi z atributu snimku,
+stiny za popredim) je t28 zase 96,8 a prah 96,7.
 
 Zname zbyvajici zdroje rozdilu: sumova textura terenu (nas LCG neni
 generator hry), zbytky profilu/capture (kryje tolerance) a faze animaci
@@ -89,12 +88,12 @@ CHECKPOINTS = {
     # z t18/t19 (257, -13/16). Clen 0 umira kontaktem s hracem: kolizni
     # box FODDERA#2 = 10/20 z hlavicky .LIN a uzel z resume (0x6430) davaji
     # EXPL1#8 na (157,175) proti originalu (157,176).
-    "wave": {"t": 19, "row": 3203, "terrainFloor": 98.9, "ticks": 184,
+    "wave": {"t": 19, "row": 3203, "terrainFloor": 99.1, "ticks": 184,
              "vblBase": 186, "fodder": [{"x": 257, "vx": -0.8125}]},
     # Smrt hrace: clen 2 prvni vlny jej zasahne po vyprseni ochrany (+108
     # = 200), spirala 0x88fc (16x EXPL1 po 2 ticich, uhel dedi +358 = 0,
     # cekani 0x5f22 rychlost neintegruje). Radek 3191 => T 229..232.
-    "death": {"t": 20, "row": 3191, "terrainFloor": 98.1, "ticks": 232,
+    "death": {"t": 20, "row": 3191, "terrainFloor": 98.2, "ticks": 232,
               "vblBase": 186, "fodder": [{"x": 257, "vx": -0.8125}]},
     # Respawn: novy 0x9410 v D+102 (viz killPlayer), ochrana blika po 8
     # VBL (0x92e4, bila silueta = JEEPHELI#3 v t23). Druha vlna jde v
@@ -111,13 +110,13 @@ CHECKPOINTS = {
     # Shoda je nizsi nez u prvnich ctyr, protoze RNG originalu nezname a
     # `fodder` popisuje jen prvni dve vlny - vsechno dalsi, co se rodi
     # losovanim, lezi jinde. Zarazka proto hlida hlavne teren a HUD.
-    "t26": {"t": 26, "row": 3118, "terrainFloor": 93.9, "ticks": 521,
+    "t26": {"t": 26, "row": 3118, "terrainFloor": 94.4, "ticks": 521,
             "vblBase": 186,
             "fodder": [{"x": 257, "vx": -0.8125}, {"x": 195, "vx": 0.7}]},
-    "t28": {"t": 28, "row": 3092, "terrainFloor": 96.3, "ticks": 627,
+    "t28": {"t": 28, "row": 3092, "terrainFloor": 96.7, "ticks": 627,
             "vblBase": 186,
             "fodder": [{"x": 257, "vx": -0.8125}, {"x": 195, "vx": 0.7}]},
-    "t30": {"t": 30, "row": 3066, "terrainFloor": 94.9, "ticks": 729,
+    "t30": {"t": 30, "row": 3066, "terrainFloor": 95.0, "ticks": 729,
             "vblBase": 186,
             "fodder": [{"x": 257, "vx": -0.8125}, {"x": 195, "vx": 0.7}]},
     # PRVNI CHECKPOINT MIMO TOWN. Do DESERTu se baseline dostane jen

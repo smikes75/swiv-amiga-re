@@ -820,7 +820,7 @@ radek, adresu v bitmape) a na `0x3fcc` se provedou **tri pruchody**:
 
 | bit | rutina | vyznam |
 |---:|---|---|
-| 0 | `0x3fe2` | `BLTAPT` maska, `BLTCPT` obrazovka, `BLTDPT` `fp@(252)` (scratch 2002 B), minterm `0xA0` = A AND C → **ulozeni pozadi pod BOBem** |
+| 0 | `0x3fe2` | `BLTAPT` rovina popredi `[fp@(256)]+4`, `BLTCPT` maska spritu, `BLTDPT` `fp@(252)` (scratch 2002 B), minterm `0xA0` = A AND C → **maska kresleni za popredim** (`0x4054` da scratch do `a2`; oprava 2026-09-29, drive chybne "ulozeni pozadi") |
 | 1 | `0x4068` | tyz tvar s mintermem `0x0A` = NOT A AND C |
 | 2 | `0x40a8` | **kolizni test**: minterm `0x50`, rovina podle `fp@(161)`; po `0x41a4` cte bit 13 stavu a nastavi `fp@(162)` |
 | 3 | `0x405a` | jako 1, ale s posunem o rovinu (`+14080`) |

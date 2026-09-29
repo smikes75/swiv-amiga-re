@@ -7080,54 +7080,61 @@ def main():
                    "pauzovy napis neni vystredeny: x=%d, sirka=%d" %
                    (pauza["stred"], pauza["sirka"]))
 
-            # ---- vrstvy: OSTRA nerovnost proti vrstve objektu --------
-            # Dlazdice prekryva objekt prave kdyz ma NIZSI cislo vrstvy.
-            # Zmereno proti originalu (FLATTANK v RIVERu, pozice 45488):
-            # s neostrou nerovnosti 85 % shody obrysu, s ostrou 100 %.
-            # Varianta "popredi je jen vrstva 1" davala na tomhle miste
-            # taky 100 %, ale v TOWN maskovani prakticky vyplo (ve vrstve
-            # 1 je jen sest stromu ze ctyriceti dvou) - proto se tady meri
-            # OBE kriteria zaroven.
-            vrstvy = page.evaluate("""() => {
-              startGame(3);
-              const g = state.g;
-              const t = g.spawns.filter(s => s.beh === "flattank")
-                                .find(s => Math.round(s.x) === 22);
-              if (!t) return { chybi: true };
-              // foreLayer smi obsahovat vrstvy 1..3 (ulozene jako 2..4),
-              // ne vrstvu 0 (ta je razenim uplne vzadu) ani 4 (zem).
-              let mimo = 0;
-              for (let i = 0; i < g.foreLayer.length; i++) {
-                const v = g.foreLayer[i];
-                if (v && (v < 2 || v > 4)) { mimo++; if (mimo > 3) break; }
-              }
-              // kolik bodu obrysu je zakrytych
-              const s = indexedFrameFor(state, 'FLATTANK.LIN', 1);
-              let cel = 0, skryto = 0;
-              for (let sy = 0; sy < s.h; sy++)
-                for (let sx = 0; sx < s.w; sx++) {
-                  if (s.pix[sy * s.w + sx] === 0xFF) continue;
-                  const x = 22 + s.ox + sx;
-                  const y = Math.round(t.y) + s.oy + sy;
-                  if (x < 0 || x >= g.mapW) continue;
-                  cel++;
-                  const v = g.foreLayer[y * g.mapW + x];
-                  if (v && v <= (t.layer | 0)) skryto++;   // ostra nerovnost
-                }
-              return { mimo, cel, skryto, vrstva: t.layer | 0,
-                       maFore: !!g.foreLayer };
+            # ---- popredi: maska z atributu snimku (0x02), ne vrstva ----
+            # Originalni rovina popredi [fp@(256)]+4 se plni ze snimku s
+            # atributem bit 1 (0x4068); cislo vrstvy nehraje roli. Proti
+            # originalu to overuje tools/covercheck.py (harness vAmiga:
+            # TOWN, DESERT, GRASS, RIVER, ICE - 0 odchylek). Tady se hlida
+            # rozsah masky a pravidla +397 bit 0.
+            popredi = page.evaluate("""() => {
+              startGame(0);
+              const g = state.g, cm = g.coverMask;
+              let zakryto = 0;
+              for (let i = 0; i < cm.length; i++) zakryto += cm[i];
+              const top = Math.floor(g.scroll);
+              const recs = () => composeTownBobs(g, top).ordered;
+              // tank s typem bit 3 (0x9efe) masku nema, bez nej ano
+              const t = g.spawns.find(s => s.beh === 'tank');
+              const sv = { typ: t.typ, born: t.born, alive: t.alive,
+                           tankSetup: t.tankSetup, y: t.y, hullF: t.hullF };
+              Object.assign(t, { born: true, alive: true, tankSetup: true,
+                                 y: top + 120, hullF: 0 });
+              t.typ = sv.typ & ~8;
+              const bez3 = recs().filter(r => r.id === 'tank-hull-main')
+                                 .some(r => !!r.fore);
+              t.typ = sv.typ | 8;
+              const s3 = recs().filter(r => r.id === 'tank-hull-main' ||
+                                        r.id === 'tank-turret-main')
+                               .some(r => !!r.fore);
+              Object.assign(t, sv);
+              const tr = { beh: 'trilo', st: 2 }, tr3 = { beh: 'trilo', st: 3 };
+              const pop0 = { beh: 'popup', popupGround: false };
+              const pop1 = { beh: 'popup', popupGround: true };
+              // stin: kazdy zaznam stinu nese masku (0x63da)
+              const stiny = recs().filter(r => r.kind === 'shadow');
+              return { zakryto, delka: cm.length, bez3, s3,
+                trilo: [spawnGroundBit(g, tr), spawnGroundBit(g, tr3)],
+                popup: [spawnGroundBit(g, pop0), spawnGroundBit(g, pop1)],
+                dron: [hazardGroundBit({ kind: 'junhatchdrone', st: 0 }),
+                       hazardGroundBit({ kind: 'junhatchdrone', st: 1 })],
+                stinu: stiny.length,
+                stinuSMaskou: stiny.filter(r => !!r.fore).length };
             }""")
-            expect(not vrstvy.get("chybi"), "FLATTANK v RIVERu se nenasel")
-            expect(vrstvy["maFore"], "renderMap nevraci foreLayer")
-            expect(vrstvy["mimo"] == 0,
-                   "foreLayer obsahuje vrstvu mimo rozsah 1..3 (%d bodu)" %
-                   (vrstvy["mimo"],))
-            expect(vrstvy["vrstva"] == 2,
-                   "FLATTANK ma mit vrstvu 2, ma %r" % (vrstvy["vrstva"],))
-            podil = vrstvy["skryto"] / vrstvy["cel"]
-            expect(0.02 <= podil <= 0.95,
-                   "prekryto %d z %d bodu obrysu (%.0f %%)" %
-                   (vrstvy["skryto"], vrstvy["cel"], 100 * podil))
+            # Zmereno 2026-09-29 pravidlem, ktere v harnessu sedelo na
+            # vsech peti zonach bez odchylky.
+            expect(popredi["zakryto"] == 791921,
+                   "maska popredi ma %d zakrytych bodu, ocekavano 791921"
+                   % popredi["zakryto"])
+            expect(popredi["bez3"] and not popredi["s3"],
+                   "MEDTANK: maska jen pri typu bez bitu 3 (0x9efe): %r"
+                   % (popredi,))
+            expect(popredi["trilo"] == [True, False] and
+                   popredi["popup"] == [False, True] and
+                   popredi["dron"] == [True, False],
+                   "TRILO 0x82be / POPUP 0xa6ca / dron 0xa652: %r" % (popredi,))
+            expect(popredi["stinu"] > 0 and
+                   popredi["stinuSMaskou"] == popredi["stinu"],
+                   "stiny maji byt vzdy za popredim (0x63da): %r" % (popredi,))
 
             # Maska musi platit i na VEZ tanku, ne jen na korbu - jinak
             # zustane vez nad stromy (hlaseno hracem).
@@ -7242,12 +7249,8 @@ def main():
                    drz["dalsi"] > drz["idx7"] + 50,
                    "klasicky obraz neni drzen po kolech: %r" % (drz,))
 
-            # Druhe kriterium, ktere rozlisilo preuceny model: maskovani
-            # musi byt zive i v TOWN, ne jen na referencnim miste.
-            # Zmereno na stejnem behu (291 vzorku objektu ve vrstve > 0):
-            #     ostra nerovnost   97 vzorku pres 10 % zakryti (33 %)
-            #     "jen vrstva 1"    25 vzorku pres 10 % zakryti (9 %)
-            # Prah 20 % obe varianty bezpecne oddeli.
+            # Maskovani musi byt zive v TOWN: objekty s +397 bit 0 v behu
+            # opravdu zajizdeji pod koruny stromu a strechy.
             town = page.evaluate("""() => {
               startGame(0);
               const g = state.g;
@@ -7258,7 +7261,7 @@ def main():
                 if (i % 7) continue;
                 const top = scrollTop(g);
                 for (const s of g.spawns) {
-                  if (!s.born || !s.alive || !(s.layer | 0)) continue;
+                  if (!s.born || !s.alive || !spawnGroundBit(g, s)) continue;
                   const sy = s.y - top;
                   if (sy < 20 || sy > 220) continue;
                   const sp = indexedFrameFor(state, s.file,
@@ -7272,8 +7275,7 @@ def main():
                       const py = Math.round(s.y) + sp.oy + yy;
                       if (px < 0 || px >= g.mapW) continue;
                       cel++;
-                      const v = g.foreLayer[py * g.mapW + px];
-                      if (v && v <= (s.layer | 0)) skr++;
+                      if (g.coverMask[py * g.mapW + px]) skr++;
                     }
                   if (!cel) continue;
                   vzorku++;
@@ -7284,7 +7286,7 @@ def main():
               return { nej: +nej.toFixed(3), nalezu, vzorku };
             }""")
             expect(town["vzorku"] > 100, "v TOWN se nenaslo dost vzorku "
-                   "objektu ve vrstve: %r" % (town,))
+                   "maskovanych objektu: %r" % (town,))
             expect(town["nalezu"] * 5 > town["vzorku"] and town["nej"] > 0.4,
                    "v TOWN se maskuje prilis malo (%d z %d vzorku pres "
                    "10 %%, nejvic %.0f %%) - model je nejspis preuceny" %

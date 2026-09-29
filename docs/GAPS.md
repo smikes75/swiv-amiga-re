@@ -1735,6 +1735,10 @@ Zkousel jsem to take implementovat maskou z control plane (`terrainOpen`)
 a **rozdil v obraze byl temer zadny** - ta maska popisuje prekazky pro
 jeep, ne vizualni popredi. Experiment je vracen.
 
+*Oprava 2026-09-29: `0x3fe2` NENI ulozeni pozadi. Za ni `0x4054` dava
+`fp@(252)` do `a2` a scratch je maskou cookie blitu - viz "Popredi:
+skutecny mechanismus".*
+
 Mechanismus prekryti tedy **zatim neni vysvetlen**. Je to prvni konkretni
 duvod docist blitovaci radu `0x3e0c`..`0x4218` do konce - viz posledni
 otevrena polozka "blitter radek po radku".
@@ -1762,6 +1766,8 @@ vystredeny. Prepis to ted dela taky; drivejsi HTML stitek "PAUZA" je
 zruseny, aby nebyl dvakrat.
 
 ## Vrstvy objektu - VYRESENO (2026-09-12)
+
+*Nahrazeno 2026-09-29 - viz "Popredi: skutecny mechanismus" nize.*
 
 Mapa nese vrstvu i u objektu a prepis ji zahazoval. Podrobne v
 `docs/CHIPSET.md`; zkraceno: dlazdice s nizsim cislem vrstvy lezi bliz
@@ -1796,6 +1802,8 @@ se uklada az do 12), chybela jen tlacitka. Doplnena.
 
 ## Vrstvy: opravy po hracskem testu (2026-09-12)
 
+*Nahrazeno 2026-09-29 - viz "Popredi: skutecny mechanismus" nize.*
+
 Tri veci, ktere prvni verze nemela:
 
 1. **Veze tanku** (`tank-turret` u `tank` i `flattank`) masku nedostavaly,
@@ -1828,6 +1836,8 @@ prepocitanych masek.
 
 
 ## Vrstvy: model zpresnen podle druheho hracskeho testu (2026-09-12)
+
+*Nahrazeno 2026-09-29 - viz "Popredi: skutecny mechanismus" nize.*
 
 Hrac nahlasil, ze u **vyjizdejiciho vlaku** a u **zavor** dela vrstva
 divny prekryv. Mel pravdu a pricina byla v modelu, ne v zapojeni.
@@ -1872,6 +1882,8 @@ nic. To uz pro treti verzi neplati - viz nize.
 
 ## Vrstvy: oprava preuceneho modelu (2026-09-12, treti pokus)
 
+*Nahrazeno 2026-09-29 - viz "Popredi: skutecny mechanismus" nize.*
+
 Model "popredi je jen vrstva 1" byl **preuceny na jediny datovy bod**.
 Hrac ho otestoval a hned nahlasil, ze tanky zase jezdi pres stromy - a
 mel pravdu: v TOWN je ve vrstve 1 jen **sest stromu ze ctyriceti dvou**,
@@ -1900,6 +1912,8 @@ kriteria zaroven a prah 20 % vzorku je od sebe bezpecne oddeli.
 
 
 ## Vrstvy: casti slozenych objektu a strely (2026-09-12)
+
+*Nahrazeno 2026-09-29 - viz "Popredi: skutecny mechanismus" nize.*
 
 Vsech 28 mist, ktera nastavuji `+397` bit 0, je ted prirazeno ke
 korutine, ve ktere lezi (`build/coroutines.json` + `bisect`), a tim
@@ -1941,3 +1955,75 @@ Pri teto revizi se naslo jeste jedno opomenuti: genericka vetev
 kresleni spawnu (`airplane`, `trilo`, `plat`, `juntank`, `junhatch`,
 `swappad0`) masku vubec nedostavala, prestoze v `GROUND_MASKED` jsou.
 Opraveno.
+
+
+## Popredi: skutecny mechanismus (2026-09-29, zmereno v harnessu)
+
+Hrac hlasil, ze prekryvy objektu a terenu na nekterych mistech nesedi.
+Vsechny predchozi modely stavely na cislu vrstvy dlazdice a vrstve
+objektu z mapy. **Original ani jedno nepouziva.**
+
+**Mechanismus (disassembly):**
+
+- Obrazovka ma vedle bitplanu samostatnou **rovinu popredi** na
+  `[fp@(256)]+4` (jedna pro oba buffery, `0x45d38`), kruhovou jako
+  obrazovka: radek = (kamera + sy) mod 320, 44 bajtu na radek.
+- Snimek, ktery ma v hlavicce LIN **atribut bit 1** (bajt `flags` casti,
+  `0x02`; loader ho kopiruje do `+26` zaznamu snimku), dostane od `0x3e38`
+  rutinu `0x4068`: blit `D = NOT A AND C` do roviny - **vymaze ji pod
+  svymi neprusvitnymi body**. To jsou koruny stromu, strechy, horni hrana
+  svodidel; stin stromu je jiny snimek bez atributu, proto zakryty neni.
+- Objekt s `+397` bit 0 kresli `0x3fe2`: `D = rovina AND maska` do scratch
+  `fp@(252)` a `0x4054` ho da do `a2` - scratch je **maskou cookie
+  blitu**. Stary vyklad "ulozeni pozadi" byl spatny.
+- **Stiny maji bit 0 vzdy** (`0x63da orib #33`, `0x6426 bset #0`), telo
+  jen pri `fp@(155)` (`0x63c8`; gejzir `0xaf9c` vypina, ORB `0xb098`
+  zapina).
+- Bit 0 dedi kazde dite zalozene pres `0x617a` (`0x626a`): vybuchy
+  umirajicich objektu (`0x894a` bezi v jejich uloze), strela plosiny,
+  navadena strela POPUPU, bublina jeepu.
+
+**Mereni** (`tools/covercheck.py`, harness vAmiga, rovina originalu proti
+masce prepisu bod po bodu): TOWN ctyri okamziky, DESERT 52000, GRASS
+48788, RIVER 45488, ICE 42735 - **0 odchylek** (v ICE 444 bodu v hornim
+pruhu, kde se prave stavi dalsi pruh terenu). SCIFI a FINAL harness
+nedojede.
+
+**Jak spatne byl stary model** (cela mapa, 791 921 zakrytych bodu):
+objekty s mapovou vrstvou 1 (30 tanku, 33 plamenu...) nebyly zakryte
+nikdy; vrstva 2 zakryvala jen 12 % spravnych mist a 29 874 bodu navic,
+vrstva 3 53 % a 247 878 navic. Stiny, zablesk zasahu, jeep, lod, vybuchy
+a navadene strely se nemaskovaly vubec. `compare.py` se po oprave zlepsil
+na peti checkpointech (wave 99,0 -> 99,2, t26 94,0 -> 94,5, t28 96,4 ->
+96,8) a nikde nezhorsil.
+
+**Prirazeni mist, ktera nastavuji bit 0** (strojove, podle vstupnich bodu
+z dispatch tabulky a `lea %pc@(X)` pred `0x6178`/`0x6144`/`0x6160`).
+Tabulka v predchozi sekci mela radu radku spatne - napr. `0x9e2e` je telo
+FLATTANKu, ne `truckdrop`, `0xa5a4` telo JUNHATCH, `0xaa04` telo PROXMINE,
+`0xab2a` telo FLAME:
+
+| misto | rutina | objekt | poznamka |
+|---|---|---|---|
+| `0x7994` | `0x797e` | letadlo (aktivovana kopie) | |
+| `0x827c` / `0x82be` | `0x826a` | TRILO | maze pri vzletu |
+| `0x9b2e` | `0x9b16` | MINE | jadro `0x987e` maze |
+| `0x9b90`, `0x9c4a` | `0x9b7e`, `0x9c16` | vlak, vagon | |
+| `0x9e2e` | `0x9e04` | FLATTANK | |
+| `0x9f00`, `0x9fc8` | `0x9eca`, `0x9faa` | MEDTANK, vez | jen typ bez bitu 3 |
+| `0xa0e4`, `0xa144` | `0xa0d2`, `0xa12e` | JUNTANK, vez | |
+| `0xa3d8`, `0xa47e`, `0xa4ea` | `0xa3b8`, `0xa462`, `0xa4d6` | PLAT, zavora, vez | strela dedi |
+| `0xa5a4`, `0xa626` / `0xa652` | `0xa592`, `0xa60e` | JUNHATCH, dron | dron maze po vystoupani |
+| `0xa6d0` | `0xa6ae` | POPUP | jen pri fp@(182) != 0 |
+| `0xaa04` | `0xa9e0` | PROXMINE | strepy `0xaab0` maze |
+| `0xab2a`, `0xab8a` | `0xab10`, `0xab78` | FLAME, horak | oblacky dedi |
+| `0xac24` | `0xac12` | CAMOGUN | |
+| `0xac80`, `0xaccc`, `0xad1a` | `0xac6a`, `0xacb6` | SWAP plosiny | |
+| `0x898c` | `0x898c` | dekal | spolu s bitem 6 (do pruhu) |
+| `0x89ee`, `0x8e88`, `0x90f0` | hracske | vez jeepu, lod, jeep | |
+| `0x937a` | `0x9358` | cakance | |
+| `0xad98`, `0xadb0` | `0xad98` | stopy vozidel | |
+
+Nemodelovano: snimky OBJEKTU s atributem bit 1 by rovinu menily taky
+(`0x3e38` plati pro kazdy BOB); stin nakloneneho vrtulniku (volba
+vylepseneho rezimu) masku nema.
