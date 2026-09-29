@@ -4584,10 +4584,17 @@ function damageBoss(g, boss) {
 /* 0xc9a0: po jednom kruhu bonusu za kazdeho zijiciho hrace. Krok uhlu je
    256/pocet, pocatecni uhel nahodny, kazdy bonus je korutina TOKEN 0x96d8. */
 function dropBossTokens(g, boss, perPlayer) {
-  // 0xc9a2/0xc9aa: prispiva kazdy ZIJICI hrac, ne pocet hracu ve hre.
-  const living = (g.player && g.player.alive ? 1 : 0) +
-                 (g.player2 && g.player2.alive ? 1 : 0);
-  const count = perPlayer * living;
+  // 0xc9a2/0xc9aa testuji fp@(11231)/fp@(11411) = bajt +55 zaznamu slotu
+  // (fp@(11176)/fp@(11356)): "slot je ve hre". Nastavi ho vstup za kredit
+  // (0x705e), maze ho cekaci smycka neaktivniho slotu (0x7030). Neni to
+  // `+54` (zivy): mrtvy vrtulnik ceka na respawn a slot se pocita dal.
+  // Pozn.: GOOSE ma 0xc974 na bitu strely i kontaktu (0x653e, 0x6566) a
+  // zabiti se do 0x64b6 vraci (0x6db4 -> fp@(-1414) jen snizi +12), takze
+  // soucasny zasah strelou a kontaktem vysype kruh dvakrat i v originale.
+  const slot1 = g.playerPhase !== "continue" && g.playerPhase !== "closing" &&
+                g.playerPhase !== "stats" ? 1 : 0;
+  const inGame = slot1 + (g.player2 ? 1 : 0);
+  const count = perPlayer * inGame;
   if (count <= 0) return;
   const stepAng = (256 / count) | 0;
   let ang = random32(g) & 255;

@@ -2155,8 +2155,9 @@ def main():
               };
 
               // Sweep N ulozi kontakt obema taskum. V N+1 je player task
-              // prvni: nechranena HELI zemre jeste pred c974, takze living
-              // player count pri dropBossTokens je nula.
+              // prvni: nechranena HELI zemre jeste pred c974. c9a0 ale cte
+              // +55 (slot ve hre), ne +54 (zivy), takze slot 1 se pocita
+              // dal: timer 503 > 500 -> 2 bonusy.
               const cg = makeGame({
                 x: 160, y: 100, inv: 0, bubbleTimer: 0,
                 weaponX: 160, weaponY: 100
@@ -2289,7 +2290,7 @@ def main():
                    % fifo_scheduler_edges["contactQueued"])
             expect(fifo_scheduler_edges["contactResolved"] == {
                      "playerAlive": False, "bossAlive": False,
-                     "bossHp": 0, "tokens": 0, "bossDeath": 2},
+                     "bossHp": 0, "tokens": 2, "bossDeath": 2},
                    "player task nepredbehl GOOSE token callback: %s"
                    % fifo_scheduler_edges["contactResolved"])
             expect(fifo_scheduler_edges["checksumPriority"] == {
