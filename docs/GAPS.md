@@ -946,21 +946,32 @@ Kontrakt v `tools/uitest.py` hlida fazi a jejich hranice (1, 223, 227, 493,
 148, 160, 172 a 184) - tytez tabulky pouziva scena "sales". Bresenham
 `0x14f0` patri emitorum `0x14a2`.
 
-**Co zustava otevrene:**
+**Zmereno v harnessu 2026-09-29.** Konec hry jde vynutit: bit 3
+`fp@(12353)` plus priznak Esc `fp@(160)` (klavesa 0x45, `0x1ee8`) ukonci
+hru a dispatcher `0xd90` spusti `0xf42` (scratchpad sondy `congrat*.py`).
+Nalezy, vsechny uz v prepisu:
 
-- **Emitory kruhu `0x14a2`/`0x14cc`** nejsou prepsane. Geometrie je
-  prectena: stred (98,156), polomer 30, +2 za VBL, orez y < 149; druhy
-  (98,130), polomer 44, +3 za VBL, svisle zplosteny `asr 4`, kazdy 16.
-  radek (maska 15), orez 256. Kresli VYPLNENE elipsy po vodorovnych usecich
-  (`0x423c`) primo do ctyr bitplanu zadniho bufferu - OR s maskou, kterou
-  bere z `fp@(256)@(4)`. Co je tam za data, neni jasne, a bez toho by to
-  byl odhad.
-- **Smer tresu** (`fp@(3530) += r`) je odvozeny (obraz nahoru), na originalu
-  neovereny.
-- `fp@(11164)` raketa nastavuje na 4092 a 4095, ale v AMPROG.OBJ ho nic
-  necte (asi zavadec) - vynechano.
-- Cela sekvence je overena jen proti kodu. Harness se k dohrane hre sam
-  nedostane.
+- **Obrazky byly prohozene.** `0xf50` CONGRAT2 jen prednacte
+  (`fp@(-1510)`), do obrazovky jde CONGRAT1 (`0xf5c -> 0x5ea0`; shoda
+  s obrazovkou originalu az na 1 204 px pod BOBy). Text `0xff4` je na
+  CONGRAT2.
+- **Emitory `0x14a2`**: maska `fp@(256)@(4)` je z `0x4302` = pixely barvy 1
+  obrazku (obloha). Kopule (98,156) a hladina (98,130) presne na pixel
+  (3 824 a 7 259 px v case 40 a 60 VBL po signalu). Krokuji jednou za
+  kolo a kresli az po BOBech.
+- **`0x125e` zvysi `fp@(202)`** (generace uloh z `0x60f8`): reaktor,
+  emitor i castice konci; od VBL 20 po signalu v obrazovce neni BOB.
+- **Casy**: negativ ve VBL 3-4 a 9-10 po signalu, bila ve 13, COLOR01
+  a emitory po kolech, tres od VBL 153 bile faze po kolech, `0xfce` v 202.
+- **Smer tresu**: pozice +d posune obraz o d radku DOLU (drive odhad
+  "nahoru" byl spatne).
+- **HUD** (BPL5) zustava po celou sekvenci nahore, neaktivni sloty
+  stridaji stav a "PLEASE WAIT" po 128 VBL.
+
+Zbyva: v originale jsou kola behem kresleni elips 3 az 4 VBL (zatez), takze
+kopule roste pomaleji nez v prepisu s pevnymi 2 VBL; a text zacina
+o ~86 VBL pozdeji kvuli nacitani CONGRAT2 zavadecem - obojí zamerne
+nemodelovano (HW/disketa). `fp@(11164)` (raketa 4092/4095) nic necte.
 
 ## Pauza na klavesu P - zmerena, ale mimo AMPROG.OBJ (2026-09-09)
 

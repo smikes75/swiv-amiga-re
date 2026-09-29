@@ -6241,7 +6241,7 @@ def main():
             # tok CEKA a teprve pak spusti zvuk 0x51d4; konec prvni faze
             # urcuje raketa (0x1346 st fp@(12352)) - vznikne po 20 detech
             # po 6 VBL (0x137c) a prehraje 0x012F0 a 0x0131C; 2x 0x1044
-            # (NOT palety na 1 VBL); bila faze 200 + 16 (rampa +16 od 8)
+            # (NOT palety na 1 kolo); bila faze 202 + 16 (rampa +16 od 8)
             # + 50; text 1000 + 16 (0x2864 ztmaveni).
             congrat = page.evaluate("""() => {
               const g = state.g;
@@ -6251,7 +6251,8 @@ def main():
               const zvukHned = g.sfx.events.length - before;
               const faze = [], invert = [], bila = {};
               let zvukKdy = null, zvuk = null, raketa = [null, null];
-              let tres = 0, castic = 0, color1 = null;
+              let tres = 0, castic = 0, color1 = null, tresOd = null;
+              const svit = {};
               for (let i = 1; i <= 2000; i++) {
                 stepCongrat(g);
                 const c = g.congrat;
@@ -6266,7 +6267,9 @@ def main():
                 if (!c.rocket && raketa[0] !== null && raketa[1] === null)
                   raketa[1] = i;
                 if (c.invert) invert.push(i);
-                if (c.shake) tres++;
+                if (c.shake) { tres++; if (tresOd === null) tresOd = c.phaseVbl; }
+                if (c.phase === "white" && (c.phaseVbl === 28 || c.phaseVbl === 48))
+                  svit[c.phaseVbl] = c.lit.reduce((n, v) => n + v, 0);
                 castic = Math.max(castic, c.parts.length);
                 if (c.phase === "white" && c.phaseVbl === 1) color1 = c.color1;
                 if (c.phase === "white")
@@ -6279,7 +6282,8 @@ def main():
               drawIntroFormatted(state.prog, raw.pixels, text);
               return { zvukHned, zvukKdy, zvuk, faze, raketa, invert, tres,
                        castic, color1, pruhy: (g.congrat.bands || []).length,
-                       bila: [bila.w1, bila.w64, bila.w200, bila.w216, bila.t16],
+                       bila: [bila.w1, bila.w64, bila.w202, bila.w218, bila.t16],
+                       tresOd, svit: [svit[28], svit[48]],
                        textZacatek: text.slice(0, 40),
                        textKonec: text.slice(-24),
                        ink: raw.pixels.reduce((n, v) => n + (v ? 1 : 0), 0),
@@ -6293,22 +6297,29 @@ def main():
             expect([f[0] for f in congrat["faze"]] ==
                    ["reactor", "invert", "white", "text", "done"],
                    "0xf42 poradi fazi: %r" % (congrat["faze"],))
-            expect([f[1] for f in congrat["faze"]] == [1, 223, 227, 493, 1509],
+            # negativ a bila zmereny v harnessu (VBL 3-4, 9-10, bila 13)
+            expect([f[1] for f in congrat["faze"]] == [1, 223, 236, 504, 1520],
                    "0xf42 casovani fazi: %r" % (congrat["faze"],))
             expect(congrat["raketa"] == [121, 223],
                    "raketa 0x12d2 (po 20 detech po 6 VBL, dve animace): %r" %
                    (congrat["raketa"],))
-            expect(congrat["invert"] == [224, 226],
-                   "0x1044 2x NOT palety na jeden VBL: %r" % (congrat["invert"],))
-            expect(congrat["tres"] == 10,
-                   "0x122a: deset posunu mapove pozice: %r" % (congrat["tres"],))
+            expect(congrat["invert"] == [226, 227, 232, 233],
+                   "0x1044 2x NOT palety na jedno kolo: %r" % (congrat["invert"],))
+            # 0x122a: deset posunu po jednom kole, obraz o kolo pozdeji
+            expect(congrat["tres"] == 20 and congrat["tresOd"] == 155,
+                   "0x122a: deset posunu mapove pozice: %r" %
+                   ([congrat["tres"], congrat["tresOd"]],))
+            # 0x14a2: elipsy v masce barvy 1 CONGRAT1, na pixel jako v
+            # harnessu (i=40 a i=60 od signalu = bila VBL 28 a 48)
+            expect(congrat["svit"] == [3824, 7259],
+                   "0x14a2 elipsy (pixely barvy 15): %r" % (congrat["svit"],))
             expect(congrat["castic"] >= 20,
                    "emitor 0x134e vypustil malo castic: %r" % (congrat["castic"],))
             expect(congrat["color1"] == 0x340,
                    "0x12a2: COLOR01 zacina na 0x340 (832): %r" %
                    (congrat["color1"],))
             # bila: 256 s krokem -4 (0xc9a) -> 252 v 1., 0 v 64.; rampa +16
-            # od 8 (0xfd2) -> 256 v 216.; v textu -16 -> 0 v 16.
+            # od 8 (0xfd2, VBL 202) -> 256 v 218.; v textu -16 -> 0 v 16.
             expect(congrat["bila"] == [252, 0, 8, 256, 0],
                    "bila uroven fp@(11166): %r" % (congrat["bila"],))
             # 0x11d4: tabulka 0x2C0F na radku 40 + 11x 0x2BFF (56..184)

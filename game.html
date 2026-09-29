@@ -7530,7 +7530,9 @@ function renderStatsScreen(ctx, g) {
    Prepsano podle disassembly 2026-09-24 (drivejsi verze drzela pevne delky
    a castice/raketa se hybaly odhadem):
 
-     0xf50  CONGRAT2.RAW, paleta 0x2abc, zamek grafiky REACTOR (0x1c55)
+     0xf50  CONGRAT2.RAW jen prednacte (fp@(-1510)); do obrazovky jde
+            CONGRAT1.RAW (0xf5c -> 0x5ea0), 0x4302 z nej udela masku
+            barvy 1, paleta 0x2abc, zamek grafiky REACTOR (0x1c55)
      0xf80  ulohy 0x13ea (staticky dil #13 na 102,126) a 0x134e (emitor)
      0xf90  0x2868 = roztmeni; hlavni tok CEKA, az dobehne (fp@(142))
      0xf94  teprve pak zvuk 0x51d4
@@ -7541,7 +7543,7 @@ function renderStatsScreen(ctx, g) {
             uloha 0x122a (tres mapove pozice), wait 200
      0xfce  st fp@(149) zastavi emitory; krok +16 od 8, ceka na 256 (16 VBL)
      0xfea  0x4b4a utisi vsechny ctyri hlasy, wait 50
-     0xff4  CONGRAT1.RAW, paleta 0x2abc, text 0x1058, copperove pruhy 0x11d4,
+     0xff4  CONGRAT2.RAW, paleta 0x2abc, text 0x1058, copperove pruhy 0x11d4,
             COLOR01 = 0x332 (818), krok -16 (z bile), wait 1000, krok -4,
             0x2864 = ztmaveni (hlavni tok ceka), uvolneni
 
@@ -7549,8 +7551,13 @@ function renderStatsScreen(ctx, g) {
    je zapis copperovych zmen barev (tabulky 0x2C0F na radku 40 a 0x2BFF na
    radcich 56..184). Bresenham 0x14f0 patri emitorum 0x14a2 a ty kresli
    ROZPINAJICI SE VYPLNENE ELIPSY po vodorovnych usecich (0x423c) primo do
-   bitplanu - ty prepis zatim nema (neni jasne, odkud 0x423c bere vzor:
-   `fp@(256)@(4)`). Viz docs/GAPS.md. */
+   bitplanu: OR vsech ctyr rovin (barva 15) pres masku `fp@(256)@(4)`, do
+   ktere 0x4302 zapsal pixely barvy 1 obrazku CONGRAT1 (obloha).
+
+   Zmereno v harnessu 2026-09-29 (konec hry vynucen bitem 3 fp@(12353)
+   a priznakem Esc fp@(160)): obrazovka = CONGRAT1 (1 204 rozdilu jen pod
+   BOBy), elipsy na pixel (i=40: 3 580 px, i=60: 7 015 px, 0 rozdilu),
+   casy negativu, bile, COLOR01, tresu a 0xfce viz congratInvertAt. */
 const CONGRAT_TEXT = 0x1058;
 const CONGRAT_FADE = 16;                        // 0x2868/0x2864: 16 kroku po 16
 function congratRaw(name) {
@@ -7658,8 +7665,12 @@ function sfxSilenceAll(g) {
 }
 function beginCongrat(g) {
   // 0xf50/0xf6c: CONGRAT2 s paletou 0x2abc, jeste pred roztmenim.
+  const raw = congratRaw("CONGRAT1.RAW");         // 0xf5c
+  const mask = new Uint8Array(raw.pixels.length); // 0x4302: barva 1
+  for (let i = 0; i < mask.length; i++) mask[i] = raw.pixels[i] === 1 ? 1 : 0;
   g.congrat = {
-    phase: "reactor", vbl: 0, raw: congratRaw("CONGRAT2.RAW"),
+    phase: "reactor", vbl: 0, raw, mask, lit: new Uint8Array(mask.length),
+    ellipseN: null, shakeCam: [],
     parts: [], rocket: null, signal: false, sound: false,
     black: 256, white: 0, whiteStep: -4,         // 0xc9a: herni krok -4
     emitter: { x: 99, y: 130, vx: 0, vy: 0, ax: 0, ay: 0, frame: 14,
@@ -7667,6 +7678,56 @@ function beginCongrat(g) {
     color1: null, invert: false, shake: 0, pulseT: null, bands: null,
   };
   rxAnimStart(g.congrat.emitter, RX_EMIT_START);
+}
+/* Zmerene casy (VBL od signalu rakety fp@(12352), harness 2026-09-29):
+   negativ 0x1044 ve VBL 3-4 a 9-10, bila fp@(11166) = 256 ve VBL 13. Kazde
+   `wait 1` (0x5f20) je jedno kolo planovace, proto dvojice VBL. */
+const CONGRAT_INVERT_VBL = [3, 4, 9, 10], CONGRAT_WHITE_VBL = 13;
+/* Bila faze (VBL od 0xfaa): 0x12a2 i emitory 0x14a2 zacinaji ve VBL 1
+   a krokuji jednou za kolo; 0x122a (wait 150) prvni posun ve VBL 153;
+   0xfce (wait 200) ve VBL 202. */
+const CONGRAT_SHAKE_VBL = 153, CONGRAT_FCE_VBL = 202;
+/* 0x14f0: Bresenham kruhu jako v originale (d4 = x, d5 = y, d6 = chyba),
+   kazdy bod predava radek 0x1556: preskoci d5 & maska, svisle d5 >> shift,
+   usek cx-d4..cx+d4 na radcich cy+-y (0x423c: y bez znamenka < limit,
+   x oriznute na 0..319). */
+function congratEllipse(c, cx, cy, r, shift, mask, limit) {
+  const lit = c.lit, cover = c.mask;
+  const plot = (d4, d5) => {
+    if (d5 & mask) return;
+    const yo = d5 >> shift;
+    const x0 = Math.max(cx - d4, 0), x1 = Math.min(cx + d4, 319);
+    for (const y of yo ? [cy + yo, cy - yo] : [cy, cy]) {
+      if (y < 0 || y >= limit || y >= 256) continue;
+      for (let x = x0, o = y * 320 + x0; x <= x1; x++, o++)
+        if (cover[o]) lit[o] = 1;
+    }
+  };
+  let d4 = 0, d5 = r;
+  if (d5 <= 0) { plot(d4, d5); return; }
+  let d6 = 2 * (1 - d5);
+  for (;;) {
+    if (d6 < 0) {
+      if (2 * d6 + 2 * d5 - 1 <= 0) { d4++; d6 += 2 * d4 + 1; continue; }
+    } else if (d6 > 0) {
+      if (2 * d6 - 2 * d4 - 1 > 0) {
+        plot(d4, d5);
+        if (--d5 <= 0) { plot(d4, d5); return; }
+        d6 -= 2 * d5 - 1; continue;
+      }
+    }
+    plot(d4, d5); d4++;
+    if (--d5 <= 0) { plot(d4, d5); return; }
+    d6 += 2 * d4 - 2 * d5 + 2;
+  }
+}
+/* 0x125e: dva emitory 0x14a2. Kulaty (98,156) r 30 +2 za kolo, jen radky
+   pod 149 (kopule nad obzorem); ploska (98,130) r 44 +3, svisle >> 4 a jen
+   kazdy 16. krok (hladina). */
+function congratEmitters(c) {
+  const n = c.ellipseN++;
+  congratEllipse(c, 98, 156, 30 + 2 * n, 0, 0, 149);
+  congratEllipse(c, 98, 130, 44 + 3 * n, 4, 15, 256);
 }
 /* 0x28e2: bila uroven se meni jednou za kolo hlavni smycky, dokud neni 0;
    `cmpiw #256` je bez znamenka, takze se orezava na 256. */
@@ -7679,10 +7740,11 @@ function stepCongrat(g) {
   const c = g.congrat;
   if (!c || c.done) return;
   c.vbl++;
+  g.tick = (g.tick | 0) + 1;                    // fp@(-68) bezi dal (strid. HUD)
   c.phaseVbl = (c.phaseVbl | 0) + 1;
   congratWhiteTick(c);
   if (c.phase === "reactor" || c.phase === "invert" || c.phase === "white") {
-    rxStepEmitter(g, c);
+    if (c.emitter) rxStepEmitter(g, c);
     rxStepRocket(c);
     for (const p of c.parts) rxIntegrate(p);
     c.parts = c.parts.filter(p => p.y < 140 && p.x > -64 && p.x < 384);
@@ -7695,35 +7757,51 @@ function stepCongrat(g) {
     }
     if (c.signal) { c.phase = "invert"; c.phaseVbl = 0; }
   } else if (c.phase === "invert") {
-    // 0x1044 dvakrat: NOT palety, wait 1, NOT zpet, wait 1
-    c.invert = (c.phaseVbl === 1 || c.phaseVbl === 3);
-    if (c.phaseVbl >= 4) {
+    // 0x1044 dvakrat: NOT palety, wait 1, NOT zpet, wait 1 (po kolech)
+    c.invert = CONGRAT_INVERT_VBL.includes(c.phaseVbl);
+    if (c.phaseVbl >= CONGRAT_WHITE_VBL) {
       c.invert = false;
       c.phase = "white"; c.phaseVbl = 0;
       c.white = 256;                             // 0xfaa
       c.pulseT = 0;                              // 0x12a2
+      c.ellipseN = 0;                            // 0x125e: emitory 0x14a2
+      // 0x125e: addq fp@(202) - nova generace uloh. 0x13ea, emitor 0x134e
+      // a jeho deti (0x60f8/0x6178 si pamatuji generaci) konci; elipsy,
+      // COLOR01 a tres vznikly pres fp@(-1474) a bezi dal. Harness: od
+      // VBL 20 po signalu uz v obrazovce neni jediny pixel BOBu.
+      c.emitter = null; c.parts = []; c.rocket = null;
     }
   } else if (c.phase === "white") {
+    const kolo = (c.phaseVbl & 1) === 1;         // ulohy bezi jednou za kolo
     // 0x12a2: COLOR01 = 0x4a40(0x340, t), t += 9 az do 220 (25 hodnot)
-    if (c.pulseT !== null) {
+    if (c.pulseT !== null && kolo) {
       c.color1 = fadeRgb12White(0x340, c.pulseT);
       c.pulseT += 9;
       if (c.pulseT >= 220) c.pulseT = null;
     }
+    // 0x14cc: kresba, wait (0x5f0a), polomer += krok; fp@(149) ukonci
+    if (c.ellipseN !== null && kolo) congratEmitters(c);
     // 0x122a: wait 150, pak 10x posun mapove pozice o (0x2d62 & 3) + 1
-    // na jeden VBL a zpet na dalsi.
-    const t = c.phaseVbl - 150;
-    if (t >= 1 && t <= 20) c.shake = (t & 1) ? (random32(g) & 3) + 1 : 0;
-    else c.shake = 0;
-    if (c.phaseVbl === 200) {                    // 0xfce
+    // na jedno kolo a zpet na dalsi. Obraz bere pozici az pri prohozeni
+    // bufferu (0x291e), tedy o kolo pozdeji.
+    const t = c.phaseVbl - CONGRAT_SHAKE_VBL;
+    let cam = 0;
+    if (t >= 0 && t < 40) {
+      if ((t & 3) === 0) c.shakeD = (random32(g) & 3) + 1;
+      cam = (t & 2) ? 0 : c.shakeD;
+    }
+    c.shakeCam.push(cam);
+    c.shake = c.shakeCam.length > 2 ? c.shakeCam[c.shakeCam.length - 3] : 0;
+    if (c.phaseVbl === CONGRAT_FCE_VBL) {        // 0xfce
+      c.ellipseN = null;                         // st fp@(149)
       c.whiteStep = 16; c.white = 8;
     } else if (c.phaseVbl > 200 && c.white >= 256 && !c.silenced) {
       sfxSilenceAll(g);                          // 0xfea: 0x4b4a
       c.silenced = true; c.silencedAt = c.phaseVbl;
     } else if (c.silenced && c.phaseVbl - c.silencedAt >= 50) {
       c.phase = "text"; c.phaseVbl = 0;          // 0xff4
-      c.parts = []; c.rocket = null;
-      c.raw = congratRaw("CONGRAT1.RAW");
+      c.parts = []; c.rocket = null; c.shake = 0;
+      c.raw = congratRaw("CONGRAT2.RAW");
       drawIntroFormatted(state.prog, c.raw.pixels,
                          programCString(state.prog, CONGRAT_TEXT));
       c.color1 = 0x332;                          // 0x1014: fp@(11136) = 818
@@ -7755,8 +7833,7 @@ function renderCongrat(ctx, g) {
   if (!c.rgba) c.rgba = new Uint8ClampedArray(320 * 256 * 4);
   // REACTOR se kresli do kopie indexu, aby se predloha neposkodila
   let raw = c.raw;
-  const kreslit = c.phase !== "text" &&
-                  (c.parts.length || c.rocket || c.emitter);
+  const kreslit = c.phase !== "text";
   if (kreslit) {
     if (!c.work || c.work.pixels.length !== c.raw.pixels.length)
       c.work = { pixels: new Uint8Array(c.raw.pixels.length),
@@ -7768,24 +7845,36 @@ function renderCongrat(ctx, g) {
                                  spr, Math.floor(x), Math.floor(y));
     };
     // z: emitor a castice 0, staticky dil 1, raketa 2
-    put(c.emitter.frame, c.emitter.x, c.emitter.y);
+    if (c.emitter) put(c.emitter.frame, c.emitter.x, c.emitter.y);
     for (const p of c.parts) put(p.frame, p.x, p.y);
-    put(13, 102, 126);                           // 0x13ea
+    if (c.emitter) put(13, 102, 126);           // 0x13ea (tataz generace)
     if (c.rocket) put(c.rocket.frame, c.rocket.x, c.rocket.y);
+    // Elipsy 0x14a2 kresli ulohy az po BOBech kola: OR barvy 15 prekryje
+    // v masce oblohy i reaktor a castice.
+    const lit = c.lit;
+    for (let i = 0; i < lit.length; i++) if (lit[i]) c.work.pixels[i] = 15;
     raw = c.work;
   }
   // 0x122a posouva mapovou pozici fp@(3530), ze ktere render 0x291e bere
-  // svisly posun obrazu. Smer (nahoru) je ODVOZENY, na originalu neovereny.
+  // svisly posun obrazu. Zmereno v harnessu: pozice +d posune obraz o d
+  // radku DOLU (radek 0 se opakuje nahore).
   if (c.shake) {
     if (!c.shaken || c.shaken.pixels.length !== raw.pixels.length)
       c.shaken = { pixels: new Uint8Array(raw.pixels.length),
                    paletteWords: raw.paletteWords, w: 320, h: 256 };
     const d = c.shake * 320;
-    c.shaken.pixels.fill(0);
-    c.shaken.pixels.set(raw.pixels.subarray(d), 0);
+    c.shaken.pixels.set(raw.pixels.subarray(0, raw.pixels.length - d), d);
+    for (let y = 0; y < c.shake; y++)
+      c.shaken.pixels.set(raw.pixels.subarray(0, 320), y * 320);
     raw = c.shaken;
   }
   colorizeAttractRaw(raw, palette, c.black, c.bands || [], c.rgba, c.white);
+  // Harness: herni HUD (BPL5, COLOR16+) zustava po celou sekvenci nahore -
+  // neaktivni sloty stridaji stav a "PLEASE WAIT" po 128 VBL. Fady 0x4a48 a
+  // 0x4a40 meni jen COLOR00-15, HUD tedy zustava videt.
+  if (!c.hudIndex) c.hudIndex = new Uint8Array(320 * 256);
+  compositeHudPlane(c.hudIndex, 320, c.rgba, hudPlaneForGame(g).bytes, g.tick | 0,
+                    updateRetainedHighColors(g));
   ctx.putImageData(new ImageData(c.rgba, 320, 256), 0, 0);
 }
 
