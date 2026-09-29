@@ -57,6 +57,21 @@ ORIG_JS = """(cfg) => {
                       return hi > 0x7fff ? hi - 0x10000 : hi; };
   let guard = 0;
   while (H[p + cfg.a6 + 166] !== 0 && guard++ < 3000) VA.run(4, null);
+  // --od: dojet na mapovou pozici SE STRELBOU (jinak se pamet zaplni
+  // zivymi objekty a ctec mapy i scroll stoji), kazdy snimek smazat bit 3
+  // zamku instalace (jako zoneshot). Pak strelbu pustit a merit.
+  const hold = p + cfg.a6 + 166;
+  if (cfg.od) {
+    let n = 0;
+    while ((cam() & 0xffff) > cfg.od && n++ < 200000) {   // cam() je se znamenkem
+      H[hold] &= ~0x08;
+      VA.fn.joy(2, (n % 10) < 5 ? 4 : 13);
+      VA.run(1, null);
+    }
+    VA.fn.joy(2, 13);
+    for (let i = 0; i < 50; i++) { H[hold] &= ~0x08; VA.run(1, null); }
+  }
+  const obtiznost = W(cfg.a6 + 182);
   const zero = cam();
   // adresa -> rozpracovana draha; po zmizeni z fronty se uzavre
   const live = new Map(), tracks = [], kamera = [];
@@ -95,17 +110,33 @@ ORIG_JS = """(cfg) => {
     for (const [a, t] of live) if (!seen.has(a)) { t.konec = vbl; live.delete(a); }
   };
   scan();
-  while (zero - cam() < cfg.dist) {
+  let stoji = 0, posledni = cam();
+  while (zero - cam() < cfg.dist && stoji < 3000) {
+    if (cfg.od) H[hold] &= ~0x08;
     VA.run(1, null); vbl++;
+    if (cam() === posledni) stoji++; else { stoji = 0; posledni = cam(); }
     kamera.push(cam());
     scan();
   }
-  return { zero, tracks, kamera };
+  return { zero, tracks, kamera, obtiznost, stoji: stoji >= 3000 };
 }"""
 
 REMAKE_JS = """(cfg) => {
   startGame(0);
   const g = state.g; g.keys = {}; g.lives = 99;
+  if (cfg.od) {
+    // tataz pozice v retezu (radek = pozice - K); zamek tovarny obejit jako
+    // spawncheck, obtiznost prevzit z originalu (fp@(182) v okamziku startu)
+    let guard = 0;
+    while (Math.floor(g.scroll) > cfg.od - cfg.K && guard++ < 400000) {
+      g.inst1Factories = 0; step(g); g.lives = 99;
+    }
+  }
+  if (cfg.obtiznost !== null && cfg.obtiznost !== undefined) {
+    const D = cfg.obtiznost;
+    window.updateDifficulty = gg => { gg.difficulty = D; };
+    g.difficulty = D;
+  }
   const zero = scrollTop(g);
   const KIND_GFX = { fod: 0x0404, yel: 0x0014, bird: 0x0015, jet: 0x0020 };
   const live = new Map(), tracks = [];
@@ -135,6 +166,7 @@ REMAKE_JS = """(cfg) => {
   };
   scan();
   while (zero - scrollTop(g) < cfg.dist && guard++ < 400000) {
+    if (cfg.od) g.inst1Factories = 0;
     step(g); tik++;
     g.lives = 99;
     scan();
@@ -143,7 +175,10 @@ REMAKE_JS = """(cfg) => {
 }"""
 
 
-def original(dist, tiku):
+K_RETEZ = 32826          # radek retezu prepisu = mapova pozice - K (covercheck)
+
+
+def original(dist, tiku, od=0):
     srv, port = vacmp.serve(os.path.join(ROOT, "web"))
     try:
         with sync_playwright() as pw:
@@ -157,14 +192,15 @@ def original(dist, tiku):
                 base64.b64encode(open(vacmp.ADF, "rb").read()).decode()])
             page.evaluate(vacmp.PLAY_PROLOGUE)
             res = page.evaluate(ORIG_JS, {"a6": vacmp.A6_BASE, "mark": MARK,
-                                          "dist": dist, "tiku": tiku})
+                                          "dist": dist, "tiku": tiku,
+                                          "od": od})
             br.close()
     finally:
         srv.shutdown()
     return res
 
 
-def remake(dist, tiku):
+def remake(dist, tiku, od=0, obtiznost=None):
     with sync_playwright() as pw:
         br = pw.chromium.launch()
         page = br.new_page()
@@ -173,7 +209,8 @@ def remake(dist, tiku):
         page.set_input_files("#fpick", os.path.join(ROOT, "SWIVFIX.ADF"))
         page.wait_for_selector("#titlewrap", state="visible")
         page.evaluate("window.requestAnimationFrame = () => 0")
-        res = page.evaluate(REMAKE_JS, {"dist": dist, "tiku": tiku})
+        res = page.evaluate(REMAKE_JS, {"dist": dist, "tiku": tiku, "od": od,
+                                        "K": K_RETEZ, "obtiznost": obtiznost})
         br.close()
     return res
 
@@ -284,16 +321,28 @@ def main():
     znovu = None
     if "--orig" in args:
         i = args.index("--orig"); znovu = args[i + 1]; del args[i:i + 2]
+    # --od POZICE: mereni od mapove pozice (jine zony), viz ORIG_JS
+    od = 0
+    if "--od" in args:
+        i = args.index("--od"); od = int(args[i + 1]); del args[i:i + 2]
     dist = int(args[0]) if args else 900
 
     if znovu:
         o = json.load(open(znovu))["orig"]
         print(f"original z {znovu}", flush=True)
     else:
-        print(f"original (harness vAmiga), {dist} px ...", flush=True)
-        o = original(dist, tiku)
-    print(f"prepis, {dist} px ...", flush=True)
-    r = remake(dist, tiku)
+        print(f"original (harness vAmiga), {dist} px"
+              + (f" od pozice {od}" if od else "") + " ...", flush=True)
+        o = original(dist, tiku, od)
+    if o.get("stoji"):
+        print("POZOR: scroll originalu se pri mereni zastavil (pamet/ctec mapy)")
+    obt = o.get("obtiznost") if od else None
+    print(f"prepis, {dist} px" + (f" od pozice {od}, obtiznost {obt}"
+                                   if od else "") + " ...", flush=True)
+    # Original po dojeti jeste 50 VBL bezi bez strelby (12,5 px), takze
+    # prepis musi zacit na SKUTECNE startovni pozici originalu.
+    od_r = (o["zero"] & 0xFFFF) if od else 0
+    r = remake(dist, tiku, od_r, obt)
     if ulozit:
         json.dump({"orig": o, "remake": r}, open(ulozit, "w"))
 
