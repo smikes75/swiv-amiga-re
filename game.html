@@ -5417,7 +5417,7 @@ function hudTextsForGame(g) {
   if (g.paused) return { left: HUD_PAUSED, right: "", paused: true };
   const inactive = g.playerPhase === "continue" ||
                    g.playerPhase === "closing" ||
-                   g.playerPhase === "stats";
+                   g.playerPhase === "stats" || g.playerPhase === "ended";
   const [heli, jeep] = PLAYER_SLOTS;
   const left = inactive
     ? hudInactiveText(g, heli.hud, g.lives | 0, g.score | 0,
@@ -5796,6 +5796,21 @@ function shakeInst5(g, s) {                     // 0xc1ba: dva tiky
   if (s.shakePhase) { g.scroll += 3; s.shakePhase = 0; }
   else { g.scroll -= 3; s.shakePhase = 1; }
 }
+/* Konec hry po smrti INST5. Zmereno v harnessu (VBL od bitu 3 fp@(12353)):
+   +1 slot hrace opusti hru (+55 = 0, vrtulnik zmizi, HUD "PLEASE WAIT"),
+   +40 hlavni smycka opusti hru (fp@(3530) = 0) a 0xd90 -> 0xf42 zahaji
+   zaverecnou sekvenci; ta naskoci z cerne az v +325 - mezitim se z diskety
+   nacitaji CONGRAT obrazky, coz neprepisujeme (omezeni diskety). Pred
+   bitem 3 jeste 0xc1a4 zablokuje extra zivoty obou slotu (+84 = -1).
+   Drive prepis bit 3 nikde necetl a hra zustala natrvalo ve tme. */
+const GAME_END_VBL = 40;
+function beginGameEnd(g) {
+  g.nextLife = 0xFFFFFFFF; g.jeepNextLife = 0xFFFFFFFF;    // 0xc1a4
+  g.playerPhase = "ended"; g.playerPhaseT = GAME_END_VBL;
+  g.joinClosed = true;                          // HUD: "PLEASE WAIT"
+  if (g.player) { releasePlayerBubble(g); g.player.alive = false; }
+  g.player2 = null;
+}
 function stepInst5Death(g, s) {                 // 0xc13e: konec hry
   if (s.dst === 0) {                            // 0x8852 + zamek
     startWhiteFlash(g); s.deathN = 12; s.shakes = 0; s.dst = 1;
@@ -5819,6 +5834,7 @@ function stepInst5Death(g, s) {                 // 0xc13e: konec hry
       g.gameEnded = true;                       // 0xc1ae: bit 3 fp@(12353)
       s.dying = false;
       killSpawnCredited(g, s);                  // 0xa36a: 20000 bodu
+      beginGameEnd(g);
     }
   }
 }
@@ -7272,6 +7288,10 @@ function beginClosingLevel(g) {
 }
 
 function stepPostLifeSequence(g) {
+  if (g.playerPhase === "ended") {              // viz beginGameEnd
+    if (--g.playerPhaseT <= 0) { g.won = true; g.over = true; g.congrat = null; }
+    return;
+  }
   if (g.playerPhase === "continue") {
     // 0x702c je level-triggered: drzeny fire vezme kredit hned v prvnim
     // continue VBL, bez umeleho browseroveho debounce.
@@ -9672,6 +9692,7 @@ function step(g) {
   // nepratelske tasky behem cekani normalne pokracuji.
   if (!p.alive && g.playerPhase !== "continue" &&
       g.playerPhase !== "closing" && g.playerPhase !== "stats" &&
+      g.playerPhase !== "ended" &&
       (p.respawnT | 0) > 0 && --p.respawnT === 0)
     respawnPlayer(g);
 

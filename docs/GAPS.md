@@ -2083,3 +2083,33 @@ Pozor pri vlastnich sondach: nesmrtelny hrac (`inv`) v prepisu brani
 tomu, aby se o nej weaveri rozbili - krouzi kolem nej a `activeCost`
 vyleti na 300. Harness ma jen nekonecne zivoty.
 
+
+## Konec hry po smrti INST5 (2026-09-29, zmereno v harnessu)
+
+Hrac hlasil: po zniceni finalniho hnizda dlouha cerna obrazovka a pak jen
+zluty text. Prepis nastavil `g.gameEnded` (bit 3 `fp@(12353)`, `0xc1ae`),
+ale nikde ho necetl - hra zustala ve tme se zivym hracem, dokud neprisla
+statistika jinou cestou.
+
+Original (harness, INST5 zniceny strelbou, VBL od bitu 3):
+
+| VBL | co se stane |
+|---:|---|
+| 0 | cerna (fade 256), `0xc1a4` zablokuje extra zivoty obou slotu (+84 = -1) |
+| +1 | slot 1 opusti hru (`+55` = 0), vrtulnik zmizi, HUD "PLEASE WAIT" |
+| +4 | `fp@(158)` nastaven |
+| +40 | hlavni smycka opusti hru (`fp@(3530)` = 0), `0xd90 -> 0xf42` |
+| +325 | scena s reaktorem nabehne z cerne za 16 VBL |
+| dal | bily zablesk, CONGRATULATIONS, statistika GAME COMPLETED |
+| konec | **obrazovka nejlepsich skore s jadernym vybuchem a "HELI PLAYER PLEASE ENTER YOUR NAME"** |
+
+Prepis: `beginGameEnd` - slot opusti hru, bez respawnu, HUD neaktivni,
+po 40 VBL `g.won`/`g.over` a zaverecna sekvence. Mezera +40..+325 je
+nacitani obrazku z diskety a zamerne se neprepisuje. Kontrakt v uitest.
+
+**Chybi: obrazovka nejlepsich skore se zadanim jmena.** Drivejsi zaver
+("SWIV nema zadavani jmena", viz poznamky k AMHITUNE) byl spatny - original
+po statistice ukaze tabulku s jadernym vybuchem a vyzve hrace k zadani
+jmena. Cteni klaves lezi v prilinkovane casti zavadece, proto se v AMPROG
+nenaslo. Neimplementovano.
+

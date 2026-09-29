@@ -7273,6 +7273,26 @@ def main():
                    disk["s"]["kolisani"] * 10 < disk["bez"]["kolisani"],
                    "rotorovy disk porad blika mezi koly: %r" % (disk,))
 
+            # Konec hry po smrti INST5 (zmereno v harnessu): slot opusti hru
+            # hned (vrtulnik zmizi, zadny respawn, HUD neaktivni), po 40 VBL
+            # zacne zaverecna sekvence. Drive hra zustala natrvalo ve tme.
+            konec = page.evaluate("""() => {
+              startGame(0); const g = state.g; g.lives = 5;
+              for (let i = 0; i < 50; i++) step(g);
+              g.gameEnded = true; beginGameEnd(g);
+              const hned = { alive: g.player.alive, faze: g.playerPhase,
+                             hud: hudTextsForGame(g).left };
+              for (let i = 0; i < GAME_END_VBL - 1; i++) step(g);
+              const pred = { over: !!g.over, alive: g.player.alive };
+              step(g);
+              return { hned, pred, po: { over: !!g.over, won: !!g.won } };
+            }""")
+            expect(konec["hned"]["alive"] is False and
+                   konec["hned"]["faze"] == "ended" and
+                   konec["pred"] == {"over": False, "alive": False} and
+                   konec["po"] == {"over": True, "won": True},
+                   "konec hry po INST5: %r" % (konec,))
+
             # Zapecene rotory nepratelskych vrtulniku (FODDERA typ 1, YELLOW):
             # listy barvy 0 se vyextrahuji proti telu; stihacka [0,1] disk nema.
             zapec = page.evaluate("""() => {
