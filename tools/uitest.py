@@ -7428,13 +7428,13 @@ def main():
                    (naklon["plny"],))
 
             # ---- vlnky na vode: sahaji JEN na vodu -------------------
-            # Posouva se TEXTURA vln uvnitr masky vodnich dlazdic.
-            # Meri se na INDEXOVEM poli, ne na hotovych pixelech - tam do
-            # toho mluvi pruhledny HUD a prepocet palety po radcich.
+            # Vlnky se kresli v mrizce displeje (drawWaterWaves): vodorovny
+            # posun textury vody po radcich, orizly maskou vody. Meri se
+            # na hotovem snimku: s vlnkami a bez nich se smi lisit jen body,
+            # jejichz herni bod je voda (barvy 13..15 z _LAKE) - breh a bahno
+            # se nesmi hnout (drive se vlnily, hlaseno hracem).
             #
-            # Radek 13505 je jezero `_LAKE` v RIVERu, nejsirsi misto
-            # hladiny (160 sloupcu). Drive tu bylo 13600, coz vybrala
-            # stara maska, ktera za vodu povazovala i snih `_ARCTIC`.
+            # Radek 13505 je jezero `_LAKE` v RIVERu, nejsirsi misto hladiny.
             vlnky = page.evaluate("""() => {
               startGame(3);
               const g = state.g;
@@ -7446,38 +7446,38 @@ def main():
               state.subpixelSprites = true; state.depthOfField = false;
               state.softShadows = false; state.heliTilt = false;
               state.vehicleTracks = false;
+              const cv = document.querySelector('#game');
               const sejmi = zap => { state.waterWaves = zap;
-                g.frac = 0; g.last = 0; frame(0);
-                return state.smoothState.idx.slice(); };
+                g.frac = 0.5 * TICK; g.last = 0; frame(0);
+                return cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data; };
               sejmi(false);
               const vyp = sejmi(false), zap = sejmi(true);
-              const topI = Math.floor(g.smoothScrollF);
+              const S = cv.width / 320, fyF = g.smoothScrollF;
               const wm = g.waterMask;
               if (!wm) return { maska: false };
               let zmeneno = 0, mimo = 0, breh = 0, maskaMimoVodu = 0;
-              for (let y = 0; y < 256; y++)
-                for (let x = 0; x < 320; x++) {
-                  const i = y * 320 + x;
-                  const m = (y + topI) * 320 + x;
-                  if (wm[m] && g.mapIndex[m] < 13) maskaMimoVodu++;
-                  if (vyp[i] === zap[i]) continue;
+              for (let Y = 0; Y < cv.height; Y++) {
+                const my = Math.floor((Y + 0.5) / S + fyF);
+                for (let X = 0; X < cv.width; X++) {
+                  const i = (Y * cv.width + X) * 4;
+                  const m = my * 320 + Math.floor((X + 0.5) / S);
+                  if (vyp[i] === zap[i] && vyp[i+1] === zap[i+1] &&
+                      vyp[i+2] === zap[i+2]) continue;
                   zmeneno++;
                   if (!wm[m]) mimo++;
-                  // breh/bahno (barvy < 13) se nesmi hnout ani dovnitr vody
-                  if (vyp[i] < 13 || zap[i] < 13) breh++;
+                  if (g.mapIndex[m] < 13) breh++;
                 }
+              }
+              for (let i = 0; i < wm.length; i++)
+                if (wm[i] && g.mapIndex[i] < 13) { maskaMimoVodu++; break; }
               return { maska: true, zmeneno, mimo, breh, maskaMimoVodu };
             }""")
             expect(vlnky.get("maska"), "RIVER nema masku vody")
             expect(vlnky["zmeneno"] > 10000,
                    "vlnky se skoro neprojevily: %r" % (vlnky,))
-            expect(vlnky["mimo"] == 0,
-                   "vlnky sahly mimo vodu na %d bodu - rozvlni se i jil "
-                   "a dzungle, ktere maji tytez indexy" % (vlnky["mimo"],))
-            # Snimky _LAKE obsahuji i brehy (barvy 0, 5, 10..12); drive byly
-            # v masce a vlnily se s vodou (hlaseno hracem 2026-09-29).
-            expect(vlnky["breh"] == 0 and vlnky["maskaMimoVodu"] == 0,
-                   "vlnky hybou brehem: %r" % (vlnky,))
+            expect(vlnky["mimo"] == 0 and vlnky["breh"] == 0 and
+                   vlnky["maskaMimoVodu"] == 0,
+                   "vlnky sahly mimo vodu nebo hybou brehem: %r" % (vlnky,))
 
             # ---- hrany spritu: tri rezimy MUSI davat tri obrazy ------
             # Prvni verze rezimu "vyhlazeno" byla BITOVE shodna s "bez"

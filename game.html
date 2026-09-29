@@ -12334,17 +12334,91 @@ function jeVodniSnimek(owner, fname, frame, pal) {
   return WATER_TILES.has(fname);
 }
 
-/* Vlnky POSOUVANIM TEXTURY (svisle, po pasech radku), ne cyklovanim
-   palety. Prehazovat tri vodni
-   indexy mezi sebou bylo technicky spravne a pritom uplne neviditelne -
-   ty odstiny jsou v cele hre jen krok od sebe ((1,5,6) (1,4,4) (1,3,3)
-   v RIVERu), protoze je jimi nakreslena sama vlnkova textura.
+/* Vlnky na vode (vylepseny rezim, v originale voda stoji).
 
-   Textura uz v dlazdici JE, takze se jen posouva. Pohyb oko zachyti
-   i pri nizkem kontrastu a nepribude ani jedna nova barva. */
-const WATER_BAND = 5;             // radku na jeden krok vlny
-const WATER_SPEED = 4;            // tiku na posun vlny o krok
-const WATER_AMPL = 2;             // px, o kolik se textura nejvic posune
+   Prvni pokusy menily indexy primo v herni mrizce: textura se posouvala
+   po celych bodech mezi tremi polohami (0, +2, -2) skokem kazdych 80 ms
+   a po pasech peti radku. Pri zvetseni 5x to byl skok o 10 bodu displeje
+   a oko to cetlo jako cukani, ne jako vlnu (hlaseno hracem).
+
+   Ted: vodorovny posun textury vody po radcich, ktery se spojite meni
+   s radkem i casem - soucet dvou pomalych sinusovek (hlavni vlna a slabsi
+   kratsi proti ni, aby pohyb nebyl pravidelny). Posun se kresli v mrizce
+   DISPLEJE (zlomky herniho bodu), posunuta vrstva se orizne maskou vody
+   a u brehu plynule slabne (WATER_FADE bodu), takze breh stoji a voda se
+   od nej neodtrhne. Nepribude nova barva - jen se na displeji prolnou
+   sousedni body textury. Cas je cas simulace, pauza vlny zastavi. */
+const WAVE_A1 = 1.0, WAVE_L1 = 28, WAVE_T1 = 2.8;    // px, radku, sekund
+const WAVE_A2 = 0.45, WAVE_L2 = 11, WAVE_T2 = 1.9;
+const WATER_FADE = 3;             // bodu od brehu, kde vlna doznivne
+function waterWaveOffset(row, t) {
+  return WAVE_A1 * Math.sin(2 * Math.PI * (row / WAVE_L1 - t / WAVE_T1)) +
+         WAVE_A2 * Math.sin(2 * Math.PI * (row / WAVE_L2 + t / WAVE_T2) + 1.3);
+}
+/* Vzdalenost od brehu v bodech (0 = sous, 1 = voda hned u brehu),
+   jednou za mapu dvouprochodovou chamfer transformaci (sousedni 4). */
+function waterFadeOf(g) {
+  if (g.waterFade) return g.waterFade;
+  const wm = g.waterMask, W = 320, H = Math.floor(wm.length / W);
+  const d = new Uint8Array(wm.length);
+  for (let i = 0; i < wm.length; i++) d[i] = wm[i] ? 255 : 0;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = y * W + x; if (!d[i]) continue;
+    let v = d[i];
+    if (x > 0 && d[i - 1] + 1 < v) v = d[i - 1] + 1;
+    if (y > 0 && d[i - W] + 1 < v) v = d[i - W] + 1;
+    d[i] = v;
+  }
+  for (let y = H - 1; y >= 0; y--) for (let x = W - 1; x >= 0; x--) {
+    const i = y * W + x; if (!d[i]) continue;
+    let v = d[i];
+    if (x < W - 1 && d[i + 1] + 1 < v) v = d[i + 1] + 1;
+    if (y < H - 1 && d[i + W] + 1 < v) v = d[i + W] + 1;
+    d[i] = v;
+  }
+  return (g.waterFade = d);
+}
+function drawWaterWaves(ctx, g, st, topI, rows, fy, S, t) {
+  const W = 320, wm = g.waterMask, fade = waterFadeOf(g);
+  if (!st.wCv || st.wRows !== rows || st.wS !== S) {
+    st.wRows = rows; st.wS = S;
+    const mk = (w, h) => { const c = document.createElement("canvas");
+                           c.width = w; c.height = h; return c; };
+    st.wCv = mk(W, rows); st.wImg = st.wCv.getContext("2d").createImageData(W, rows);
+    st.mCv = mk(W, rows); st.mImg = st.mCv.getContext("2d").createImageData(W, rows);
+    st.oCv = mk(W * S, rows * S);
+  }
+  const wd = st.wImg.data, md = st.mImg.data, src = st.buf, base = topI * W;
+  let any = false;
+  for (let i = 0, n = W * rows; i < n; i++) {
+    const m = base + i, o = i * 4;
+    if (wm[m]) {
+      any = true;
+      wd[o] = src[o]; wd[o + 1] = src[o + 1]; wd[o + 2] = src[o + 2]; wd[o + 3] = 255;
+      md[o + 3] = Math.min(255, ((fade[m] - 1) * 255 / WATER_FADE) | 0);
+    } else { wd[o + 3] = 0; md[o + 3] = 0; }
+  }
+  if (!any) return;
+  st.wCv.getContext("2d").putImageData(st.wImg, 0, 0);
+  st.mCv.getContext("2d").putImageData(st.mImg, 0, 0);
+  const o = st.oCv.getContext("2d");
+  o.setTransform(1, 0, 0, 1, 0, 0);
+  o.globalCompositeOperation = "source-over";
+  o.clearRect(0, 0, st.oCv.width, st.oCv.height);
+  o.imageSmoothingEnabled = false;
+  // Radky se stejnym posunem (v bodech displeje) jdou jednim kreslenim.
+  for (let y = 0; y < rows;) {
+    const off = Math.round(waterWaveOffset(y + topI, t) * S);
+    let y2 = y + 1;
+    while (y2 < rows && Math.round(waterWaveOffset(y2 + topI, t) * S) === off) y2++;
+    o.drawImage(st.wCv, 0, y, W, y2 - y, off, y * S, W * S, (y2 - y) * S);
+    y = y2;
+  }
+  o.globalCompositeOperation = "destination-in";   // jen voda, u brehu slabne
+  o.drawImage(st.mCv, 0, 0, W * S, rows * S);
+  o.globalCompositeOperation = "source-over";
+  ctx.drawImage(st.oCv, 0, -fy, W, rows);          // ctx je ve scale(S, S)
+}
 
 const TRACK_BEHAVIORS = new Set(["tank", "flattank", "juntank"]);
 /* Rozestup stop. Razitko `#40..#43` je pres dvacet pixelu dlouhe, takze
@@ -12736,32 +12810,6 @@ function renderSmoothField(ctx, g, S, composed, hudCv) {
   // stopy min i telo INST5 v plynulem rezimu chybely.
   if (!st.idx || st.idx.length !== 320 * rows) st.idx = new Uint8Array(320 * rows);
   st.idx.set(g.mapIndex.subarray(topI * 320, (topI + rows) * 320));
-  /* Vlnky na vode (v originale stoji). Prehazuji se VLASTNI indexy vody
-     uvnitr masky `_LAKE`, takze v obraze nepribude ani jedna nova barva
-     a nic mimo hladinu se nehne. Faze jde po radcich i v case, tedy
-     hladinou prochazi pomala vlna dolu. */
-  if (state.waterWaves && g.waterMask) {
-    const wm = g.waterMask, idx = st.idx, mi = g.mapIndex;
-    const faze = (g.tick / WATER_SPEED) | 0;
-    const mapH = Math.floor(mi.length / 320);
-    for (let y = 0; y < rows; y++) {
-      const mradek = (y + topI) * 320;
-      // Trojuhelnikova vlna -AMPL..+AMPL. Pas radku se posune NAHORU nebo
-      // DOLU (hrac si pral svisly pohyb misto vodorovneho) a vlna putuje
-      // dolu po obrazovce, po proudu.
-      const f = (((y + topI) / WATER_BAND | 0) - faze) & 3;
-      const posun = (f === 1 ? WATER_AMPL : f === 3 ? -WATER_AMPL : 0);
-      if (!posun) continue;
-      const zdroj = y + topI + posun;
-      if (zdroj < 0 || zdroj >= mapH) continue;
-      const zradek = zdroj * 320, radek = y * 320;
-      for (let x = 0; x < 320; x++) {
-        // cil i zdroj musi byt voda, jinak by se brehy natahovaly do vody
-        if (!wm[mradek + x] || !wm[zradek + x]) continue;
-        idx[radek + x] = mi[zradek + x];
-      }
-    }
-  }
   // Dekaly (0x898c) i stopy (0xad98) maji +397 bit 0: za popredim.
   const stCover = state.objectLayers !== false && g.coverMask
     ? { cover: g.coverMask, W: g.mapW || 320, top: topI } : null;
@@ -12813,6 +12861,9 @@ function renderSmoothField(ctx, g, S, composed, hudCv) {
       ctx.globalAlpha = 1;
     }
   } else ctx.drawImage(st.cv, 0, -fy);
+  // vlnky nad terenem, jeste pod tymz filtrem hloubky ostrosti
+  if (state.waterWaves && g.waterMask)
+    drawWaterWaves(ctx, g, st, topI, rows, fy, S, ((g.tick | 0) + alpha) * TICK);
   perfMark(ctx, "teren");
   if (state.depthOfField) {                      // objekty uz ostre
     ctx.filter = "none";
