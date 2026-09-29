@@ -7454,15 +7454,19 @@ def main():
               const topI = Math.floor(g.smoothScrollF);
               const wm = g.waterMask;
               if (!wm) return { maska: false };
-              let zmeneno = 0, mimo = 0;
+              let zmeneno = 0, mimo = 0, breh = 0, maskaMimoVodu = 0;
               for (let y = 0; y < 256; y++)
                 for (let x = 0; x < 320; x++) {
                   const i = y * 320 + x;
+                  const m = (y + topI) * 320 + x;
+                  if (wm[m] && g.mapIndex[m] < 13) maskaMimoVodu++;
                   if (vyp[i] === zap[i]) continue;
                   zmeneno++;
-                  if (!wm[(y + topI) * 320 + x]) mimo++;
+                  if (!wm[m]) mimo++;
+                  // breh/bahno (barvy < 13) se nesmi hnout ani dovnitr vody
+                  if (vyp[i] < 13 || zap[i] < 13) breh++;
                 }
-              return { maska: true, zmeneno, mimo };
+              return { maska: true, zmeneno, mimo, breh, maskaMimoVodu };
             }""")
             expect(vlnky.get("maska"), "RIVER nema masku vody")
             expect(vlnky["zmeneno"] > 10000,
@@ -7470,6 +7474,10 @@ def main():
             expect(vlnky["mimo"] == 0,
                    "vlnky sahly mimo vodu na %d bodu - rozvlni se i jil "
                    "a dzungle, ktere maji tytez indexy" % (vlnky["mimo"],))
+            # Snimky _LAKE obsahuji i brehy (barvy 0, 5, 10..12); drive byly
+            # v masce a vlnily se s vodou (hlaseno hracem 2026-09-29).
+            expect(vlnky["breh"] == 0 and vlnky["maskaMimoVodu"] == 0,
+                   "vlnky hybou brehem: %r" % (vlnky,))
 
             # ---- hrany spritu: tri rezimy MUSI davat tri obrazy ------
             # Prvni verze rezimu "vyhlazeno" byla BITOVE shodna s "bez"

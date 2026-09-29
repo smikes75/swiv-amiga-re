@@ -97,7 +97,7 @@ a { color:#cfe0ff }
       pointer-events:none;white-space:pre;border-radius:3px"></pre>
   </div>
   <div id="testbar" style="margin-top:6px;font:12px monospace;color:#9ab">
-    <label><input type="checkbox" id="crtchk"> CRT</label>
+    <label title="Emulace obrazovky prekryvem. Jemne: jedna tenka tmava linka na kazdy radek hry (sedi na herni radky pri kazdem zvetseni), slaba maska RGB a mirna vineta. Vyrazne: puvodni husty raster nezavisly na zvetseni.">CRT <select id="crtsel" style="font:inherit"><option value="vyp">vyp</option><option value="jemne">jemn&#233;</option><option value="vyrazne">v&#253;razn&#233;</option></select></label>
     &nbsp;<label title="Prevod ctyrbitove slozky na barvu. 'hardware' je presne n*17, jak to delaji emulatory i nase baseline snimky - na tom stoji vsechny kontrakty. 'dobovy monitor' je PRIBLIZENI, ne mereni: gama 2,4 podle ITU-R BT.1886 misto 2,2 u sRGB (stredy byly na CRT tmavsi) a bily bod 9300 K misto D65, na ktery spotrebni PAL monitory bezne jely - bila proto byla chladnejsi, ne teplejsi.">paleta <select id="monsel" style="font:inherit"><option value="puvodni">hardware</option><option value="crt">dobov&#253; monitor</option></select></label>
     &nbsp;&middot;&nbsp; <label><input type="radio" name="mode" id="modeorig" checked> origin&#225;l</label>
     <label><input type="radio" name="mode" id="modefx"> vylep&#353;eno</label>
@@ -129,7 +129,7 @@ a { color:#cfe0ff }
   </div>
   <div id="fxbar" hidden style="margin-top:4px;font:12px monospace;color:#9ab">
     <span style="opacity:.7">efekty nad r&#225;mec hardwaru:</span>
-    <label title="Kamera zaostrena na rovinu objektu: teren pod nimi je mirne mekci. Amiga obraz skladala z pevnych bitplanu, zadny filtr mezi nimi a monitorem nebyl."><input type="checkbox" id="dofchk" checked> hloubka ostrosti</label>
+    <label title="Kamera zaostrena na rovinu objektu: teren pod nimi je mirne mekci. Plna: zem i vse, co po ni jezdi (tanky, vlak), je stejne mekke. Mirna: zem polovicne a objekty zustavaji ostre. Amiga obraz skladala z pevnych bitplanu, zadny filtr mezi nimi a monitorem nebyl.">hloubka ostrosti <select id="dofsel" style="font:inherit"><option value="vyp">vyp</option><option value="mirna">m&#237;rn&#225;</option><option value="plna" selected>pln&#225;</option></select></label>
     &nbsp;&middot;&nbsp; <label title="Stin objektu se s vyskou rozostri a zesvetli; blitter zna jen plnou masku, alfu neumi"><input type="checkbox" id="softshchk2" checked> m&#283;kk&#233; st&#237;ny</label>
     &nbsp;&middot;&nbsp; <label title="Pomahá plynulosti pri malem zvetseni: svisle prolnuti mezi dvema polohami. Neni to vizualni efekt, pri 4x a vice je zbytecne."><input type="checkbox" id="blendchk" checked> prolnut&#237; pohybu</label>
     &nbsp;&middot;&nbsp; <label title="Voda v originale stoji. Vlnky vznikaji prehazovanim jejich VLASTNICH tri paletovych indexu uvnitr masky vodnich dlazdic, takze v obraze nepribude zadna nova barva a nic mimo hladinu se nehne. Tak se voda na Amize animovala."><input type="checkbox" id="vlnkychk" checked> vlnky na vod&#283;</label>
@@ -830,7 +830,11 @@ function renderMap(state, lv, withObjects, count = CHAIN_MAPS) {
         if (color === 0xFF) continue;
         const pos = ty * W + tx, o = pos * 4, c = pal[color];
         mapIndex[pos] = color;
-        waterMask[pos] = voda ? 1 : 0;      // dlazdice nad vodou masku rusi
+        // Jen body barev vody 13..15: snimky _LAKE obsahuji i brehy a bahno
+        // (snimky 4, 5, 7, 9, 11 cele, jinde okraje; barvy 0, 5, 10..12),
+        // ty by se jinak vlnily s vodou - hlaseno hracem. Dlazdice nad vodou
+        // masku rusi.
+        waterMask[pos] = voda && color >= 13 ? 1 : 0;
         px[o] = c[0]; px[o + 1] = c[1]; px[o + 2] = c[2];
       }
     }
@@ -8506,8 +8510,48 @@ try {
     setMonitorMode(ulozeno);
   }
 } catch (e) {}
-document.getElementById("crtchk").onchange = e =>
-  document.getElementById("crtfx").style.display = e.target.checked ? "" : "none";
+/* CRT prekryv. "Vyrazne" je puvodni raster: tmava linka kazde 3 CSS body
+   bez ohledu na zvetseni, takze se s radky hry rozchazi. "Jemne" ma
+   periodu presne jeden radek hry (vyska platna / 256) a tmavou linku
+   tlustou jediny bod displeje - radkovani CRT, ne mrizka pres obraz. */
+const CRT_VYRAZNE =
+  "repeating-linear-gradient(to bottom, rgba(0,0,0,0) 0 2px, rgba(0,0,0,.28) 2px 3px)," +
+  "repeating-linear-gradient(to right, rgba(255,0,0,.045) 0 1px, rgba(0,255,0,.045) 1px 2px, rgba(0,0,255,.045) 2px 3px)";
+function applyCrt() {
+  const fx = document.getElementById("crtfx");
+  const mode = state.crtMode || "vyp";
+  if (mode === "vyp") { fx.style.display = "none"; return; }
+  fx.style.display = "";
+  if (mode === "vyrazne") {
+    fx.style.background = CRT_VYRAZNE;
+    fx.style.boxShadow = "inset 0 0 42px rgba(0,0,0,.55)";
+    state.crtRow = 0;
+    return;
+  }
+  const cv = document.getElementById("game");
+  const row = (parseFloat(cv.style.height) || cv.clientHeight || 256) / 256;
+  const dpr = window.devicePixelRatio || 1;
+  const line = Math.min(row / 2, Math.max(1 / dpr, row * 0.18));
+  state.crtRow = row;
+  fx.style.background =
+    "repeating-linear-gradient(to bottom, rgba(0,0,0,0) 0 " +
+    (row - line).toFixed(3) + "px, rgba(0,0,0,.16) " +
+    (row - line).toFixed(3) + "px " + row.toFixed(3) + "px)," +
+    "repeating-linear-gradient(to right, rgba(255,0,0,.02) 0 1px, " +
+    "rgba(0,255,0,.02) 1px 2px, rgba(0,0,255,.02) 2px 3px)";
+  fx.style.boxShadow = "inset 0 0 28px rgba(0,0,0,.35)";
+}
+try {
+  const ulozenoCrt = localStorage.getItem("swivCrt");
+  if (ulozenoCrt) document.getElementById("crtsel").value = ulozenoCrt;
+} catch (e) {}
+state.crtMode = document.getElementById("crtsel").value;
+applyCrt();
+document.getElementById("crtsel").onchange = e => {
+  state.crtMode = e.target.value;
+  try { localStorage.setItem("swivCrt", e.target.value); } catch (e2) {}
+  applyCrt();
+};
 // Rezim "vylepseno": logika zustava 50 Hz jako original, renderer pri kazdem
 // snimku displeje interpoluje scroll i polohy BOBu mezi poslednimi dvema
 // tiky (viz renderSmoothField). Vychozi je original (kontrakty).
@@ -8529,8 +8573,11 @@ function setMode(fx) {
   // Vylepseny rezim zapne vsechny sve podvolby, ktere ma hrac zaskrtnute;
   // v originalnim rezimu je drzi vypnute, at je "original" opravdu
   // original bez ohledu na to, co je v panelu odskrtnute.
-  for (const [id, klic] of [["dofchk", "depthOfField"],
-                            ["softshchk2", "softShadows"],
+  // Hloubka ostrosti je rozbalovatko (vyp / mirna / plna).
+  const dof = document.getElementById("dofsel").value;
+  state.depthOfField = fx && dof !== "vyp";
+  state.dofLevel = dof;
+  for (const [id, klic] of [["softshchk2", "softShadows"],
                             ["tiltchk", "heliTilt"],
                             ["rotorchk", "rotorDisc"],
                             ["subpxchk", "subpixelSprites"],
@@ -8554,8 +8601,16 @@ try {
     setMode(true);
   }
 } catch (e) {}
-document.getElementById("dofchk").onchange = e => {
-  state.depthOfField = state.smooth && e.target.checked;
+try {
+  const ulozenoDof = localStorage.getItem("swivDof");
+  if (ulozenoDof) document.getElementById("dofsel").value = ulozenoDof;
+} catch (e) {}
+state.dofLevel = document.getElementById("dofsel").value;
+state.depthOfField = state.smooth && state.dofLevel !== "vyp";
+document.getElementById("dofsel").onchange = e => {
+  state.dofLevel = e.target.value;
+  state.depthOfField = state.smooth && e.target.value !== "vyp";
+  try { localStorage.setItem("swivDof", e.target.value); } catch (e2) {}
 };
 document.getElementById("softshchk2").onchange = e => {
   state.softShadows = state.smooth && e.target.checked;
@@ -12733,8 +12788,10 @@ function renderSmoothField(ctx, g, S, composed, hudCv) {
   // takoveho neumela - obraz je slozeny z pevnych bitplanu a filtr mezi
   // nimi a monitorem neexistuje. Rozostreni je zamerne male; vic uz
   // rozbiji pixelovy charakter hry.
+  // mirna: zem polovicne, objekty ostre (viz mekkost nize)
+  const dofZem = state.dofLevel === "mirna" ? 0.5 : 1;
   if (state.depthOfField) {
-    ctx.filter = "blur(" + (DOF_BLUR / S).toFixed(3) + "px)";
+    ctx.filter = "blur(" + (DOF_BLUR * dofZem / S).toFixed(3) + "px)";
     ctx.imageSmoothingEnabled = true;
   }
   if (state.blendBg) {
@@ -12824,7 +12881,8 @@ function renderSmoothField(ctx, g, S, composed, hudCv) {
        byt stejne mekke. Drive se rozostril jen teren a tanky, miny nebo
        instalace na nem zustaly ostre - hrac to nahlasil jako nesrovnalost.
        Stinu se to netyka, ten uz ma vlastni rozostreni podle vysky. */
-    const mekkost = state.depthOfField && r.kind !== "shadow"
+    const mekkost = state.depthOfField && state.dofLevel !== "mirna" &&
+                    r.kind !== "shadow"
       ? 1 - Math.min(1, Math.abs(r.z | 0) / DOF_FOCUS_Z) : 0;
     const blurDev = DOF_BLUR * mekkost;          // v bodech displeje
     if (state.softShadows && r.kind === "shadow") {
@@ -13004,6 +13062,8 @@ function frame(now) {
   const z = viewScale(smooth);
   if (cv.width !== 320 * z.S) { cv.width = 320 * z.S; cv.height = 256 * z.S; }
   cv.style.width = z.cssW + "px"; cv.style.height = z.cssH + "px";
+  // jemne CRT ma periodu jednoho herniho radku: po zmene zvetseni prepocitat
+  if (state.crtMode === "jemne" && state.crtRow !== z.cssH / 256) applyCrt();
   const S = z.S;
   ctx.imageSmoothingEnabled = false;
   const top = Math.max(0, Math.min(g.mapH - 256, Math.floor(g.scroll)));
