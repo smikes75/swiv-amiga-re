@@ -74,6 +74,7 @@ EFEKTY = {
     0x54d0: "_CORN 0x54c8",
     0x55c4: "ping XEVIOUS 0x55bc",
     0x5376: "gejzir 0x536e",
+    0x555e: "smrt GOOSE 0x553a",
     0x567a: "nota TOKEN / zivot 0x5672",
 }
 
@@ -97,6 +98,7 @@ REF_JS = """() => {
     corn10000: T(sfxCornTimeline(10000)), corn11000: T(sfxCornTimeline(11000)),
     ping: T(sfxBoltPingTimeline()),
     gejzir: T(sfxGeyserTimeline(0)),
+    goose200: T(sfxBossDeathTimeline(200)), goose202: T(sfxBossDeathTimeline(202)),
     ...Object.fromEntries([159, 212, 141, 424, 336, 266, 168, 133].map(p =>
       ['nota' + p, T(sfxTokenPickupTimeline(p))])),
   };
@@ -221,6 +223,7 @@ def vyber_ref(pc, st, ref):
         0x545e: "vejce" if p0 == 220 else "paprsek",
         0x54d0: "corn10000" if p0 == 10000 else "corn11000",
         0x5376: "gejzir", 0x567a: "nota%d" % p0,
+        0x555e: "goose200" if p0 == 328 else "goose202",
     }.get(pc)
 
 

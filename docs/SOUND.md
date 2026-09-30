@@ -210,9 +210,17 @@ the comparison.
 | `_CORN` launch `0x54C8` (both voices) | 2 | 0 |
 | geyser `0x536E` (three voices) | 172 (65) | 0 (period checked as range 127..254) |
 | extra-life chime `0x5672` (424..133) | 6 | 0 |
+| GOOSE death synth `0x553A` (two layers, base 200/202) | 2 (2) | 0 |
 
-10 851 instances in all, none different. This closes the last effect
-without a native measurement (the geyser).
+10 851 instances in the drive, none different; the GOOSE death synth was
+recorded separately (`tools/survey/goosekill.py`: the drive only passes
+the boss, so this script stops at it, gives the heli a full weapon and
+shoots it down) - both layers, 64 states each, periods 328 down to 72
+alternating with the mirror branch, volume 32..1, three IRQs per state,
+identical to `sfxBossDeathTimeline`. Every effect in the game now has a
+register-level measurement; what remains for `0x553A` is only Paula's
+sample reuse below period 123, which is hardware behaviour, not program
+logic.
 
 An incomplete instance was pre-empted by another effect and is compared
 over the states it reached. Sample voices are checked by period and

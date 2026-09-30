@@ -826,7 +826,13 @@ na nej hned nasedaji dve vrstvy BIGEXPL (`build/sfx-boss/boss-death-REMAKE-CELY.
 Nahravka ze skutecne Amigy zustava vitana jako kontrola, ale uz na ni nevisi
 zadna konkretni konstanta.
 
-Zbyva zmerit zvuk `0x553a`. Prve pokusy: instalace pozadavku primo do
+**2026-09-30 zmereno na urovni registru** (`tools/survey/goosekill.py`,
+`tools/sfxtrace.py`): obe vrstvy `0x553a` po 64 stavech, periody 328 az 72
+stridave se zrcadlem, hlasitost 32 az 1, 3 IRQ na stav - 0 rozdilu proti
+`sfxBossDeathTimeline`. Logika synthu je tedy shodna; pod periodou 123
+zbyva jen hardwarove opakovani vzorku Pauly (viz vyse, HRM).
+
+Puvodni poznamky k mereni zvukem: zbyva zmerit zvuk `0x553a`. Prve pokusy: instalace pozadavku primo do
 hlasove struktury (`fp@(10786)`, ctyri po 268 B) zafunguje, ale zacatek
 efektu vyjde potichu, protoze se preskoci zastaveni DMA z `0x4bca` a novy
 AUDxLC se nezalatchuje. Cista cesta je **prepsat displacement volani
