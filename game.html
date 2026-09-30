@@ -7,36 +7,168 @@
 <style>
 :root { --blue:#0055aa; --white:#fff; --black:#000020; --orange:#ff8800; }
 * { box-sizing:border-box; margin:0; }
-body { background:var(--blue); color:var(--white);
+body { background:#000; color:var(--white);
   font-family:"Courier New",ui-monospace,monospace; font-weight:bold;
   min-height:100vh; display:flex; flex-direction:column; align-items:center;
-  padding:16px; text-align:center; }
-h1 { font-size:22px; margin:10px 0 4px; }
-h1 .x { color:var(--orange); }
+  padding:34px 16px 16px; text-align:center; }
+/* Lista a menu ve stylu Workbenche 1.3: bila obrazovkova lista, modre
+   pismo, menu jako bile krabice s modrym okrajem a inverzni volbou. */
+#wbbar { position:fixed; top:0; left:0; right:0; height:22px; z-index:20;
+  display:flex; align-items:stretch; background:var(--white); color:var(--blue);
+  border-bottom:2px solid var(--blue); font:bold 14px/22px "Courier New",monospace;
+  text-align:left; user-select:none; }
+#wbbar .wbname { padding:0 12px 0 8px; color:var(--blue); }
+.wbmenu { position:relative; }
+.wbtitle { font:inherit; color:inherit; background:none; border:0; height:100%;
+  padding:0 10px; cursor:pointer; }
+.wbtitle:hover, .wbmenu.open > .wbtitle { background:var(--blue); color:var(--white); }
+.wbmenu.ghost > .wbtitle { opacity:.4; }
+.wbpanel { display:none; position:absolute; top:100%; left:0; min-width:270px;
+  padding:4px 0; background:var(--white); color:var(--blue);
+  border:2px solid var(--blue); box-shadow:4px 4px 0 #000;
+  font:bold 13px/1.5 "Courier New",monospace; white-space:nowrap; }
+.wbmenu.open > .wbpanel { display:block; }
+.wbpanel .wbitem, .wbpanel > button, .wbpanel a.wbitem { display:block; width:100%;
+  text-align:left; font:inherit; color:inherit; background:none; border:0;
+  padding:1px 14px; cursor:pointer; text-decoration:none; }
+.wbpanel .wbitem:hover, .wbpanel > button:hover { background:var(--blue); color:var(--white); }
+.wbpanel .wbrow, .wbpanel label { display:flex; align-items:center; gap:6px;
+  padding:1px 14px; }
+.wbpanel label:hover { background:#dde8f4; }
+.wbpanel .wbnote { padding:1px 14px; opacity:.75; font-size:12px; white-space:normal; }
+.wbpanel hr { border:0; border-top:2px dotted var(--blue); margin:4px 8px; }
+.wbpanel select, .wbpanel input[type=number], .wbpanel .wbrow button {
+  font:inherit; color:var(--blue); background:var(--white);
+  border:1px solid var(--blue); border-radius:0; }
+.wbpanel input[type=checkbox], .wbpanel input[type=radio] { accent-color:var(--blue); }
+.wbpanel #fxbar[hidden] { display:none; }
+#wbstatus { margin-left:auto; padding:0 10px; font-size:12px; overflow:hidden;
+  white-space:nowrap; text-overflow:ellipsis; }
+#wbstatus #pauselabel { color:var(--orange); }
+.wbgadget { width:22px; border-left:2px solid var(--blue); position:relative; }
+.wbgadget::before, .wbgadget::after { content:""; position:absolute;
+  border:2px solid var(--blue); width:9px; height:6px; }
+.wbgadget::before { left:3px; top:4px; background:var(--blue); }
+.wbgadget::after { left:7px; top:9px; background:var(--white); }
+.wbwin { background:var(--blue); border:2px solid var(--white);
+  max-width:680px; margin:10px auto; padding:0 12px 10px; }
+.wbwin > .wbwtitle { margin:0 -12px 8px; padding:2px 8px; background:var(--white);
+  color:var(--blue); text-align:left; font-size:14px; }
 p { max-width:640px; margin:6px 0; font-size:14px; }
 .btn { display:inline-block; padding:8px 16px; margin:6px; background:var(--orange);
   color:var(--black); border:2px solid var(--black); box-shadow:3px 3px 0 var(--black);
   text-decoration:none; cursor:pointer; }
 .btn:active { transform:translate(2px,2px); box-shadow:1px 1px 0 var(--black); }
-#game { image-rendering:pixelated; border:3px solid var(--black); background:#000;
+#game { image-rendering:pixelated; border:0; background:#000; outline:0;
   box-sizing:content-box; display:block; }
 #gamewrap { max-width:100%; }
-#zoomrow { display:flex; flex-wrap:wrap; justify-content:center; align-items:center;
-  gap:6px; margin:6px auto 0; font:12px monospace; color:#9ab; }
-#zoomrow button { font:inherit; color:var(--white); background:#003b78;
-  border:1px solid #9ac5ed; border-radius:4px; padding:4px 8px; cursor:pointer; }
-#zoomrow button[aria-pressed="true"] { background:var(--orange); color:var(--black); }
-#testbar label { display:inline-flex; align-items:center; gap:4px; }
-#game:focus-visible, #zoomrow :focus-visible, #testbar :focus-visible {
-  outline:2px solid var(--orange); outline-offset:3px; }
+#zoomrow { display:flex; flex-wrap:wrap; align-items:center; gap:4px;
+  padding:1px 14px; }
+#zoomrow button { font:inherit; color:var(--blue); background:var(--white);
+  border:1px solid var(--blue); padding:0 5px; cursor:pointer; }
+#zoomrow button[aria-pressed="true"] { background:var(--blue); color:var(--white); }
+.wbpanel :focus-visible { outline:2px solid var(--orange); outline-offset:1px; }
 small { opacity:.75 }
 a { color:#cfe0ff }
 </style>
 </head>
 <body>
-<h1>S.W.I.V. <span class="x">playable reconstruction</span></h1>
+<nav id="wbbar" aria-label="Menu">
+  <span class="wbname">S.W.I.V.</span>
+  <div class="wbmenu" id="mnu-proj">
+    <button type="button" class="wbtitle">Projekt</button>
+    <div class="wbpanel">
+      <button type="button" class="wbitem" id="mi-insert">Vlo&#382;it disk&#8230;</button>
+      <hr>
+      <button type="button" class="wbitem" id="btnrestart" title="Zacit aktualni zonu znovu">&#8635; Restart z&#243;ny</button>
+      <button type="button" class="wbitem" id="btnback" title="O pul zony zpet">&#9668;&#9668; O p&#367;l z&#243;ny zp&#283;t</button>
+      <button type="button" class="wbitem" id="btnfwd" title="O pul zony vpred">&#9658;&#9658; O p&#367;l z&#243;ny vp&#345;ed</button>
+      <button type="button" class="wbitem" id="btnend" title="Preskocit na zaverecnou sekvenci (klavesa C)">Konec hry (C)</button>
+      <hr>
+      <div class="wbrow"><span title="Ulozene pozice zustavaji v tomto prohlizeci">Pozice</span>
+        <select id="slotsel"></select></div>
+      <div class="wbrow">
+        <button type="button" id="btnsave" title="Ulozit aktualni pozici do vybraneho slotu">ulo&#382;it</button>
+        <button type="button" id="btnload" title="Nacist pozici z vybraneho slotu">na&#269;&#237;st</button>
+        <button type="button" id="btndel" title="Smazat vybrany slot">smazat</button></div>
+      <div class="wbnote" id="slotinfo"></div>
+      <hr>
+      <a class="wbitem" href="index.html">Disk explorer</a>
+      <a class="wbitem" href="https://github.com/smikes75/swiv-amiga-re">Zdroj a dokumentace</a>
+    </div>
+  </div>
+  <div class="wbmenu" id="mnu-obraz">
+    <button type="button" class="wbtitle">Obraz</button>
+    <div class="wbpanel">
+      <label><input type="radio" name="mode" id="modeorig" checked> origin&#225;l</label>
+      <label><input type="radio" name="mode" id="modefx"> vylep&#353;eno</label>
+      <input type="checkbox" id="smoothchk" hidden>
+      <hr>
+      <label title="Emulace obrazovky prekryvem. Jemne: jedna tenka tmava linka na kazdy radek hry (sedi na herni radky pri kazdem zvetseni), slaba maska RGB a mirna vineta. Vyrazne: puvodni husty raster nezavisly na zvetseni.">CRT <select id="crtsel"><option value="vyp">vyp</option><option value="jemne">jemn&#233;</option><option value="vyrazne">v&#253;razn&#233;</option></select></label>
+      <label title="Prevod ctyrbitove slozky na barvu. 'hardware' je presne n*17, jak to delaji emulatory i nase baseline snimky - na tom stoji vsechny kontrakty. 'dobovy monitor' je PRIBLIZENI, ne mereni: gama 2,4 podle ITU-R BT.1886 misto 2,2 u sRGB (stredy byly na CRT tmavsi) a bily bod 9300 K misto D65, na ktery spotrebni PAL monitory bezne jely - bila proto byla chladnejsi, ne teplejsi.">paleta <select id="monsel"><option value="puvodni">hardware</option><option value="crt">dobov&#253; monitor</option></select></label>
+      <hr>
+      <div class="wbrow">velikost <output id="zoomval" for="zoombox">auto</output></div>
+      <div id="zoomrow" role="group" aria-label="Velikost hern&#237;ho pole">
+        <button type="button" data-zoom="0" aria-pressed="true">do okna</button>
+        <button type="button" data-zoom="2" aria-pressed="false">2&#215;</button>
+        <button type="button" data-zoom="3" aria-pressed="false">3&#215;</button>
+        <button type="button" data-zoom="4" aria-pressed="false">4&#215;</button>
+        <button type="button" data-zoom="5" aria-pressed="false">5&#215;</button>
+        <button type="button" data-zoom="6" aria-pressed="false">6&#215;</button>
+      </div>
+      <div class="wbrow"><input id="zoombox" type="range" min="0" max="12" step="1" value="0"
+        style="width:200px" aria-label="Zv&#283;t&#353;en&#237; hern&#237;ho pole"></div>
+    </div>
+  </div>
+  <div class="wbmenu" id="mnu-fx">
+    <button type="button" class="wbtitle">Efekty</button>
+    <div class="wbpanel">
+      <div class="wbnote" id="fxnote">Efekty nad r&#225;mec hardwaru jsou jen v re&#382;imu vylep&#353;eno (menu Obraz).</div>
+      <div id="fxbar" hidden>
+    <label title="Kamera zaostrena na rovinu objektu: teren pod nimi je mirne mekci. Plna: zem i vse, co po ni jezdi (tanky, vlak), je stejne mekke. Mirna: zem polovicne a objekty zustavaji ostre. Amiga obraz skladala z pevnych bitplanu, zadny filtr mezi nimi a monitorem nebyl.">hloubka ostrosti <select id="dofsel"><option value="vyp">vyp</option><option value="mirna">m&#237;rn&#225;</option><option value="plna" selected>pln&#225;</option></select></label>
+    <label title="Stin objektu se s vyskou rozostri a zesvetli; blitter zna jen plnou masku, alfu neumi"><input type="checkbox" id="softshchk2" checked> m&#283;kk&#233; st&#237;ny</label>
+    <label title="Pomahá plynulosti pri malem zvetseni: svisle prolnuti mezi dvema polohami. Neni to vizualni efekt, pri 4x a vice je zbytecne."><input type="checkbox" id="blendchk" checked> prolnut&#237; pohybu</label>
+    <label title="Voda v originale stoji. Vlnky vznikaji prehazovanim jejich VLASTNICH tri paletovych indexu uvnitr masky vodnich dlazdic, takze v obraze nepribude zadna nova barva a nic mimo hladinu se nehne. Tak se voda na Amize animovala."><input type="checkbox" id="vlnkychk" checked> vlnky na vod&#283;</label>
+    <label title="Vozidla nechavaji stopy i mimo pasmo, ktere pro ne original otevira jen na tech mistech. Kresli se puvodnim dekalem JEEPHELI#40..#43 a jsou ciste zobrazovaci - do simulace ani po siti nezasahuji."><input type="checkbox" id="stopychk" checked> stopy vozidel</label>
+    <label title="Sprity se kladou na zlomkovou polohu jako teren, misto aby skakaly po celych bodech displeje. Bez toho objekty po plynule jedouci zemi podkluzuji. Rozmaze se jen okraj spritu o jeden bod displeje, vnitrek zustava tvrdy."><input type="checkbox" id="subpxchk" checked> podpixelov&#233; sprity</label>
+    <label title="Rotorovy disk se sklopi do smeru letu. Telo zustava pixel po pixelu nedotcene - naklani se jen rotor, ktery je jednobarevna plocha. Original naklonene snimky nema."><input type="checkbox" id="tiltchk"> n&#225;klon vrtuln&#237;ku</label>
+    <label title="Listy rotoru jsou v originale videt jen v kazdem druhem snimku hry, tedy blikaji 12,5x za sekundu. Na CRT je dosvit slil do tmaveho pruhledneho disku, na LCD blikaji. Disk kresli vsechny ctyri polohy listu slabe najednou a jeden silneji obiha stejnou rychlosti jako v originale."><input type="checkbox" id="rotorchk" checked> rotor jako disk</label>
+    <label title="Sprity maji velke jednolite plochy a ostry obrys, takze pri zvetseni vypadaji hranateji nez ditherovany teren. Obe volby stavi na tomtez: Scale2x zdvojnasobi mrizku a schody rozdeli na polovicni, ale hrany nechava tvrde - porad je to pixel art. Vyhlazeno tutez mrizku dotahne na displej bilinearne, je to mekci, ale vzdalenejsi od predlohy. Maskovanych pozemnich objektu se to netyka."> hrany sprit&#367; <select id="sprsel"><option value="bez">bez &#250;prav</option><option value="scale2x">Scale2x</option><option value="vyhlazeno">vyhlazeno</option></select></label>
+      </div>
+    </div>
+  </div>
+  <div class="wbmenu" id="mnu-hra">
+    <button type="button" class="wbtitle">Hra</button>
+    <div class="wbpanel">
+      <label>&#x2665; &#382;ivoty <input type="number" id="livesbox" value="4" min="1" max="99" style="width:3.5em"></label>
+      <label>scroll <input type="range" id="scrollpct" min="25" max="200" step="5"
+        value="100" style="width:130px"><span id="scrollval">100%</span></label>
+      <hr>
+      <div class="wbrow">ovl&#225;d&#225;n&#237;</div>
+      <label>slot 1 <select id="padsel0"></select></label>
+      <label>slot 2 <select id="padsel1"></select></label>
+      <div class="wbnote" id="padinfo">hled&#225;m ovlada&#269;e&#8230;</div>
+    </div>
+  </div>
+  <div class="wbmenu" id="mnu-dbg">
+    <button type="button" class="wbtitle">Lad&#283;n&#237;</button>
+    <div class="wbpanel">
+      <button type="button" class="wbitem" id="btnweapon"
+        title="Vyvojarska zkratka: sebere TOKEN typ 1 az po plnou silu. Neni v originale - tam se zbran zveda sberem bonusu.">&#9889; Zbra&#328; +</button>
+      <button type="button" class="wbitem" id="btnspread"
+        title="TOKEN typ 1 (0x939c): stejna usti, ale strely se rozletnou do vejire misto rovnobezneho letu">&#10021; Rozptyl</button>
+      <div class="wbnote" id="weaponlabel"></div>
+      <hr>
+      <label title="Vyvojarske: obnovovaci frekvence displeje, skutecny interval snimku (median, 95. percentil, vynechane snimky) a rozpad casu snimku na useky. Obraz ani simulaci nemeni."><input type="checkbox" id="perfchk"> m&#283;&#345;en&#237; sn&#237;mk&#367;</label>
+      <label title="Po kazdem useku vynuti vykresleni (getImageData 1x1), takze useky ukazuji i praci rasteru/GPU. Snimek se tim zpomali - meri se cena useku, ne dosazitelne fps."><input type="checkbox" id="perfflush"> s flush&#237;</label>
+    </div>
+  </div>
+  <div id="wbstatus"><span id="jumplabel"></span> <b id="pauselabel"></b></div>
+  <div class="wbgadget" aria-hidden="true"></div>
+</nav>
 
-<div id="intro">
+<div id="intro" class="wbwin">
+  <div class="wbwtitle">S.W.I.V. &mdash; playable reconstruction</div>
   <p><b>IN-PROGRESS RECONSTRUCTION.</b> Maps, graphics, palettes, scroll
   tempo and enemy positions come straight from your original disk.
   All 1497 map objects in 73 kinds are transcribed, TOWN through FINAL,
@@ -55,8 +187,8 @@ a { color:#cfe0ff }
   <p id="titlehint" style="display:none"><b>PRESS FIRE</b> <small>(space / click)</small></p>
 </div>
 
-<div id="netpanel" style="display:none;max-width:640px;margin:12px auto;
-     text-align:left;border:2px solid var(--black);padding:10px">
+<div id="netpanel" class="wbwin" style="display:none;text-align:left">
+  <div class="wbwtitle">S&#237;&#357;</div>
   <p style="margin:0 0 6px"><b>Hra ve dvou po s&#237;ti</b> &mdash; spojen&#237; je
   p&#345;&#237;m&#233;, mezi dv&#283;ma prohl&#237;&#382;e&#269;i. &#381;&#225;dn&#253; server, disk se nikam
   neposíl&#225; &mdash; ka&#382;d&#253; hr&#225;&#269; vkl&#225;d&#225; sv&#367;j vlastn&#237;.</p>
@@ -96,71 +228,8 @@ a { color:#cfe0ff }
       padding:4px 6px;font:11px/1.35 monospace;color:#cfe;background:rgba(0,0,0,.72);
       pointer-events:none;white-space:pre;border-radius:3px"></pre>
   </div>
-  <div id="testbar" style="margin-top:6px;font:12px monospace;color:#9ab">
-    <label title="Emulace obrazovky prekryvem. Jemne: jedna tenka tmava linka na kazdy radek hry (sedi na herni radky pri kazdem zvetseni), slaba maska RGB a mirna vineta. Vyrazne: puvodni husty raster nezavisly na zvetseni.">CRT <select id="crtsel" style="font:inherit"><option value="vyp">vyp</option><option value="jemne">jemn&#233;</option><option value="vyrazne">v&#253;razn&#233;</option></select></label>
-    &nbsp;<label title="Prevod ctyrbitove slozky na barvu. 'hardware' je presne n*17, jak to delaji emulatory i nase baseline snimky - na tom stoji vsechny kontrakty. 'dobovy monitor' je PRIBLIZENI, ne mereni: gama 2,4 podle ITU-R BT.1886 misto 2,2 u sRGB (stredy byly na CRT tmavsi) a bily bod 9300 K misto D65, na ktery spotrebni PAL monitory bezne jely - bila proto byla chladnejsi, ne teplejsi.">paleta <select id="monsel" style="font:inherit"><option value="puvodni">hardware</option><option value="crt">dobov&#253; monitor</option></select></label>
-    &nbsp;&middot;&nbsp; <label><input type="radio" name="mode" id="modeorig" checked> origin&#225;l</label>
-    <label><input type="radio" name="mode" id="modefx"> vylep&#353;eno</label>
-    <input type="checkbox" id="smoothchk" hidden>
-    &nbsp;&middot;&nbsp; &#x2665; <input type="number" id="livesbox" value="4" min="1" max="99"
-      style="width:3.5em;font:inherit">
-    &nbsp;&middot;&nbsp; scroll <input type="range" id="scrollpct" min="25" max="200" step="5"
-      value="100" style="width:130px;vertical-align:middle"><span id="scrollval">100%</span>
-    &nbsp;&middot;&nbsp; <button type="button" id="btnrestart" title="Zacit aktualni zonu znovu">&#8635; restart</button>
-    <button type="button" id="btnback" title="O pul zony zpet">&#9668;&#9668;</button>
-    <button type="button" id="btnfwd" title="O pul zony vpred">&#9658;&#9658;</button>
-    <span id="jumplabel" style="opacity:.8"></span>
-    <b id="pauselabel" style="color:var(--orange)"></b>
-    &nbsp;&middot;&nbsp; <button type="button" id="btnweapon"
-      title="Vyvojarska zkratka: sebere TOKEN typ 1 az po plnou silu. Neni v originale - tam se zbran zveda sberem bonusu.">&#9889; zbra&#328; +</button>
-    <button type="button" id="btnspread"
-      title="TOKEN typ 1 (0x939c): stejna usti, ale strely se rozletnou do vejire misto rovnobezneho letu">&#10021; rozptyl</button>
-    <span id="weaponlabel" style="opacity:.8"></span>
-    &nbsp;&middot;&nbsp; <button type="button" id="btnend" title="Preskocit na zaverecnou sekvenci (klavesa C)">konec hry</button>
-    &nbsp;&middot;&nbsp; <label title="Vyvojarske: obnovovaci frekvence displeje, skutecny interval snimku (median, 95. percentil, vynechane snimky) a rozpad casu snimku na useky. Obraz ani simulaci nemeni."><input type="checkbox" id="perfchk"> m&#283;&#345;en&#237; sn&#237;mku</label>
-    <label title="Po kazdem useku vynuti vykresleni (getImageData 1x1), takze useky ukazuji i praci rasteru/GPU. Snimek se tim zpomali - meri se cena useku, ne dosazitelne fps."><input type="checkbox" id="perfflush"> s flush&#237;</label>
-    <br>
-    <span title="Ulozene pozice zustavaji v tomto prohlizeci">pozice</span>
-    <select id="slotsel" style="font:inherit"></select>
-    <button type="button" id="btnsave" title="Ulozit aktualni pozici do vybraneho slotu">ulozit</button>
-    <button type="button" id="btnload" title="Nacist pozici z vybraneho slotu">nacist</button>
-    <button type="button" id="btndel" title="Smazat vybrany slot">smazat</button>
-    <span id="slotinfo" style="opacity:.8"></span>
-  </div>
-  <div id="fxbar" hidden style="margin-top:4px;font:12px monospace;color:#9ab">
-    <span style="opacity:.7">efekty nad r&#225;mec hardwaru:</span>
-    <label title="Kamera zaostrena na rovinu objektu: teren pod nimi je mirne mekci. Plna: zem i vse, co po ni jezdi (tanky, vlak), je stejne mekke. Mirna: zem polovicne a objekty zustavaji ostre. Amiga obraz skladala z pevnych bitplanu, zadny filtr mezi nimi a monitorem nebyl.">hloubka ostrosti <select id="dofsel" style="font:inherit"><option value="vyp">vyp</option><option value="mirna">m&#237;rn&#225;</option><option value="plna" selected>pln&#225;</option></select></label>
-    &nbsp;&middot;&nbsp; <label title="Stin objektu se s vyskou rozostri a zesvetli; blitter zna jen plnou masku, alfu neumi"><input type="checkbox" id="softshchk2" checked> m&#283;kk&#233; st&#237;ny</label>
-    &nbsp;&middot;&nbsp; <label title="Pomahá plynulosti pri malem zvetseni: svisle prolnuti mezi dvema polohami. Neni to vizualni efekt, pri 4x a vice je zbytecne."><input type="checkbox" id="blendchk" checked> prolnut&#237; pohybu</label>
-    &nbsp;&middot;&nbsp; <label title="Voda v originale stoji. Vlnky vznikaji prehazovanim jejich VLASTNICH tri paletovych indexu uvnitr masky vodnich dlazdic, takze v obraze nepribude zadna nova barva a nic mimo hladinu se nehne. Tak se voda na Amize animovala."><input type="checkbox" id="vlnkychk" checked> vlnky na vod&#283;</label>
-    &nbsp;&middot;&nbsp; <label title="Vozidla nechavaji stopy i mimo pasmo, ktere pro ne original otevira jen na tech mistech. Kresli se puvodnim dekalem JEEPHELI#40..#43 a jsou ciste zobrazovaci - do simulace ani po siti nezasahuji."><input type="checkbox" id="stopychk" checked> stopy vozidel</label>
-    &nbsp;&middot;&nbsp; <label title="Sprity se kladou na zlomkovou polohu jako teren, misto aby skakaly po celych bodech displeje. Bez toho objekty po plynule jedouci zemi podkluzuji. Rozmaze se jen okraj spritu o jeden bod displeje, vnitrek zustava tvrdy."><input type="checkbox" id="subpxchk" checked> podpixelov&#233; sprity</label>
-    &nbsp;&middot;&nbsp; <label title="Rotorovy disk se sklopi do smeru letu. Telo zustava pixel po pixelu nedotcene - naklani se jen rotor, ktery je jednobarevna plocha. Original naklonene snimky nema."><input type="checkbox" id="tiltchk"> n&#225;klon vrtuln&#237;ku</label>
-    &nbsp;&middot;&nbsp; <label title="Listy rotoru jsou v originale videt jen v kazdem druhem snimku hry, tedy blikaji 12,5x za sekundu. Na CRT je dosvit slil do tmaveho pruhledneho disku, na LCD blikaji. Disk kresli vsechny ctyri polohy listu slabe najednou a jeden silneji obiha stejnou rychlosti jako v originale."><input type="checkbox" id="rotorchk" checked> rotor jako disk</label>
-    &nbsp;&middot;&nbsp; <label title="Sprity maji velke jednolite plochy a ostry obrys, takze pri zvetseni vypadaji hranateji nez ditherovany teren. Obe volby stavi na tomtez: Scale2x zdvojnasobi mrizku a schody rozdeli na polovicni, ale hrany nechava tvrde - porad je to pixel art. Vyhlazeno tutez mrizku dotahne na displej bilinearne, je to mekci, ale vzdalenejsi od predlohy. Maskovanych pozemnich objektu se to netyka."> hrany sprit&#367; <select id="sprsel" style="font:inherit"><option value="bez">bez &#250;prav</option><option value="scale2x">Scale2x</option><option value="vyhlazeno">vyhlazeno</option></select></label>
-  </div>
-  <div id="padrow" style="margin-top:4px;font:12px monospace;color:#9ab">
-    <span>ovl&#225;d&#225;n&#237;:</span>
-    <label>slot 1 <select id="padsel0" style="font:inherit"></select></label>
-    &nbsp;<label>slot 2 <select id="padsel1" style="font:inherit"></select></label>
-    &nbsp;<span id="padinfo" style="opacity:.8">hled&#225;m ovlada&#269;e&#8230;</span>
-  </div>
-  <div id="zoomrow" role="group" aria-label="Velikost hern&#237;ho pole">
-    <span>velikost</span>
-    <button type="button" data-zoom="0" aria-pressed="true">do okna</button>
-    <button type="button" data-zoom="2" aria-pressed="false">2&#215;</button>
-    <button type="button" data-zoom="3" aria-pressed="false">3&#215;</button>
-    <button type="button" data-zoom="4" aria-pressed="false">4&#215;</button>
-    <button type="button" data-zoom="5" aria-pressed="false">5&#215;</button>
-    <button type="button" data-zoom="6" aria-pressed="false">6&#215;</button>
-    <input id="zoombox" type="range" min="0" max="12" step="1" value="0"
-      style="width:110px" aria-label="Zv&#283;t&#353;en&#237; hern&#237;ho pole">
-    <output id="zoomval" for="zoombox">auto</output>
-  </div>
 </div>
 
-<p><small><a href="index.html">&larr; disk explorer</a> &middot;
-tools &amp; docs: <a href="https://github.com/smikes75/swiv-amiga-re">swiv-amiga-re</a></small></p>
 <input type="file" id="fpick" accept=".adf" hidden>
 <div id="errbox" style="display:none;position:fixed;left:8px;bottom:8px;right:8px;background:#a00;color:#fff;padding:8px;font:12px monospace;z-index:9;text-align:left"></div>
 <script>
@@ -1156,6 +1225,48 @@ $("#fpick").addEventListener("change", e => {
   if (e.target.files[0]) { unlockAudioContext(); loadFile(e.target.files[0]); }
 });
 $("#insert").onclick = () => { unlockAudioContext(); $("#fpick").click(); };
+/* Menu ve stylu Workbenche: klik na titulek otevre/zavre, klik mimo nebo
+   Esc zavre. Po zavreni se fokus vrati hernimu platnu. */
+(() => {
+  const menus = [...document.querySelectorAll("#wbbar .wbmenu")];
+  const close = () => {
+    const was = menus.some(m => m.classList.contains("open"));
+    menus.forEach(m => m.classList.remove("open"));
+    const cv = document.getElementById("game");
+    if (was && cv && cv.getClientRects().length) cv.focus({ preventScroll: true });
+  };
+  for (const m of menus) {
+    const t = m.querySelector(".wbtitle");
+    t.addEventListener("click", e => {
+      // Klik hned po prepnuti najetim menu nezavira.
+      if (performance.now() - (m.hoverAt || 0) < 500) { e.stopPropagation(); return; }
+      const open = !m.classList.contains("open");
+      menus.forEach(o => o.classList.remove("open"));
+      if (open) m.classList.add("open");
+      e.stopPropagation();
+    });
+    // Najeti mysi na jiny titulek pri otevrenem menu prepne (jako na Amize)
+    t.addEventListener("pointerenter", () => {
+      if (menus.some(o => o.classList.contains("open") && o !== m)) {
+        menus.forEach(o => o.classList.remove("open")); m.classList.add("open");
+        m.hoverAt = performance.now();
+      }
+    });
+    m.querySelector(".wbpanel").addEventListener("click", e => {
+      if (e.target.closest("button.wbitem, a.wbitem")) close();
+      else e.stopPropagation();
+    });
+  }
+  document.addEventListener("click", e => {
+    if (!e.target.closest("#wbbar")) close();
+  });
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape" && menus.some(m => m.classList.contains("open"))) {
+      close(); e.stopPropagation();
+    }
+  }, true);
+  $("#mi-insert").onclick = () => $("#insert").click();
+})();
 
 async function loadFile(file) {
   const adf = new Uint8Array(await file.arrayBuffer());
@@ -8685,14 +8796,10 @@ function bestS(dev) {                   // nejvetsi delitel `dev` do osmi
    game-codex.html): pri zmene ovladacich prvku uz neni co dopocitavat
    a pri skryte strance se drzi posledni znama hodnota. */
 function chromeHeight() {
+  // Ovladani je v menu listy (#wbbar), pod platnem uz nic neni.
   const wrap = document.getElementById("cvwrap");
-  if (!wrap || !wrap.getClientRects().length) return state.chromeH ?? 170;
-  const bar = document.getElementById("testbar");
-  const row = document.getElementById("zoomrow");
-  const foot = document.getElementById("gamewrap").nextElementSibling;
-  const h = wrap.getBoundingClientRect().top + window.scrollY +
-            (bar ? bar.offsetHeight : 0) + (row ? row.offsetHeight : 0) +
-            (foot ? foot.offsetHeight : 0) + 24;
+  if (!wrap || !wrap.getClientRects().length) return state.chromeH ?? 60;
+  const h = wrap.getBoundingClientRect().top + window.scrollY + 16;
   state.chromeH = h;
   return h;
 }
@@ -8821,6 +8928,8 @@ function setMode(fx) {
   state.smooth = fx;
   try { localStorage.setItem("swivMode", fx ? "fx" : "orig"); } catch (e) {}
   document.getElementById("fxbar").hidden = !fx;
+  document.getElementById("fxnote").hidden = fx;
+  document.getElementById("mnu-fx").classList.toggle("ghost", !fx);
   // Vylepseny rezim zapne vsechny sve podvolby, ktere ma hrac zaskrtnute;
   // v originalnim rezimu je drzi vypnute, at je "original" opravdu
   // original bez ohledu na to, co je v panelu odskrtnute.

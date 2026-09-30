@@ -43,9 +43,11 @@ Otevrene zustava:
   `tools/sfxtrace.py`: zapisy do registru Paula originalu (TOWN, DESERT,
   GRASS, RIVER) proti timeline prepisu, 15 efektu a vsech 12 063 instanci
   stav po stavu bez rozdilu (hlasitost, perioda, delka), vzorky BIGEXPL a
-  SMART v periodach i delce. Neoverene zustavaji jen gejzir `0x536e` (jeho
-  zona je za zamkem ICE, kam harness nedojede) a noty zivota `0x5672`
-  (jizda nic nesebere; TOKEN noty overilo drivejsi mereni).
+  SMART v periodach i delce. **2026-09-30 rozsireno na celou hru az po
+  FINAL** (9 495 instanci, i noty extra zivota, 0 rozdilu): "zamek ICE"
+  a "zaseknuti RIVERu" byly konec hry - bezobsluzna jizda prisla o vsechny
+  zivoty. Harness je ted drzi (`vacmp.LIVES`, slovo +68 slotu = -4 x
+  zivoty). Neovereny zustava jen gejzir `0x536e`.
 - **Nalez pri tom: CIAB je jednorazovy.** `0x4a74` nastavi RUNMODE,
   obsluha ho restartuje az na `0x4b00`, takze IRQ chodi ~199 Hz (3,98 na
   snimek), ne 204,8 Hz. Prepis ted pocita s restartem 106 E-cyklu

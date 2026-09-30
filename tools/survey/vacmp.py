@@ -174,6 +174,16 @@ PLAY_PROLOGUE = """() => {
 # Overeno dvema behy s ruznou delkou hry: obe daly stejne hodnoty.
 A6_BASE = 0x17DC          # 6108
 PROG_BASE = 0xEFC0        # 61376
+# Zivoty slotu 1: slovo +68 struktury fp@(11176) drzi -4 x zivoty (0x70a0
+# pricte fp@(12524) = 4 za kazdy spawn, 0x711e ubere 4 za extra zivot).
+# Jizdy harnessem ho kazdy snimek prepisuji na -40, jinak hrac bez rucniho
+# hrani v RIVERu a ICE prijde o vsechny zivoty a mapa stoji na konci hry
+# (drive mylne hlaseno jako "zamek ICE" a "zaseknuti RIVERu na 46159";
+# F1 MEGA TRAINERU tomu nezabrani). Zmereno 2026-09-29: s timto drzenim
+# originál dojede TOWN -> FINAL (32995) za 124 000 snimku.
+LIVES = 11176 + 68
+KEEP_LIVES_JS = "H[p + %d] = 0xff; H[p + %d + 1] = 0xd8;" % (A6_BASE + LIVES,
+                                                          A6_BASE + LIVES)
 FIND_A6_JS = """(frames) => {
   const H = VA.M.HEAPU8, p = VA.fn.chipPtr(), n = VA.fn.chipSize();
   const before = H.slice(p, p + n);

@@ -49,14 +49,18 @@ DRIVE_JS = """(cfg) => {
     // rolovalo do nepostavene mapy. Rusi se proto JEN bit 3, ktery
     // nastavuje ziva instalace (0xb6ae) a uvolnuje az jeji smrt.
     H[hold] &= ~0x08;
+    %s          // zivoty (vacmp.LIVES), jinak konec hry
     // Palba se musi pulzovat, drzeny fire hra ignoruje.
     VA.fn.joy(2, (n %% 10) < 5 ? 4 : 13);
+    // Kmitani vlevo/vpravo: strelba z mista nezasahne nepratele mimo osu
+    // vrtulniku, pamet se zaplni a v RIVERu ctec mapy stoji na 46159.
+    if (n %% 120 === 0) VA.fn.joy(2, (n / 120) %% 2 ? 2 : 3);
     VA.run(1, null);
     n++;
     if (mapPos(pos) <= cfg.target) break;
   }
   return { frames: n, pos: mapPos(pos) };
-}""" % (A6, SCROLL_HOLD, A6, MAP_POS)
+}""" % (A6, SCROLL_HOLD, A6, MAP_POS, vacmp.KEEP_LIVES_JS)
 
 
 def main():

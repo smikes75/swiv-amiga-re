@@ -24,11 +24,11 @@ Efekty s nahodnou periodou (gejzir 0x536e, vybuchy BIGEXPL) se srovnavaji
 jen ve strukture (hlasitost, delka, rozsah period). Sumove efekty maji
 periodu i hlasitost deterministickou, jejich obsah vlny se tu nesrovnava.
 
-Vysledek 2026-09-29 (TOWN, DESERT, GRASS, RIVER): 15 efektu, 12 063 instanci, 0 rozdilu.
-RIVER se pri teto jizde zasekne na 46159 (dalsi zamek), do ICE nedojede.
+Vysledek 2026-09-30 (TOWN az FINAL, zivoty drzene vacmp.LIVES): 15 efektu
+a noty extra zivota, 9 495 instanci, 0 rozdilu. Gejzir nezazni.
 Casovani IRQ viz docs/SOUND.md: CIAB je jednorazovy, median 78,6 radku.
 
-    python3 tools/sfxtrace.py                       # TOWN..RIVER, zaznam + srovnani
+    python3 tools/sfxtrace.py                       # TOWN..FINAL, zaznam + srovnani
     python3 tools/sfxtrace.py --jen-rozbor          # jen srovnani ulozenych zaznamu
     python3 tools/sfxtrace.py 52000 48788           # vlastni cilove pozice
 """
@@ -61,6 +61,7 @@ TRACE_JS = """(cfg) => {
   let k = 0;
   while (U(A6 + 3530) > cfg.od && k++ < cfg.limit) {
     H[p + A6 + 166] &= ~8;
+    KEEP_LIVES
     VA.fn.joy(2, (k % 10) < 5 ? 4 : 13);
     if (k % 120 === 0) VA.fn.joy(2, (k / 120) % 2 ? 2 : 3);
     VA.fn.regTrace(1); VA.fn.step(); VA.fn.regTrace(0);
@@ -73,7 +74,7 @@ TRACE_JS = """(cfg) => {
     }
   }
   return { pos: U(A6 + 3530), k, out };
-}"""
+}""".replace("KEEP_LIVES", vacmp.KEEP_LIVES_JS)
 
 # Rutiny podle PC zapisu AUDxLCH, ktery instanci zaklada.
 EFEKTY = {
@@ -241,9 +242,10 @@ def porovnej(st, cleanup, refst, nahodna=False):
         v, p, d = st[i]
         rv, rp, rd = refst[i]
         last = i == len(st) - 1
-        # Jednorazovy CIAB se pod zatezi opozdi: dlouhy stav (drzeni otevreni
-        # 90 IRQ) smi ujet o jeden IRQ na kazdych 40.
-        if eff(v) != eff(rv) or p != rp or (d is not None and abs(d - rd) > rd // 40 and
+        # Jednorazovy CIAB se pod zatezi opozdi (interval 78,2 az 84 radku
+        # proti medianu 78,6): dlouhy stav (drzeni otevreni 90 IRQ) smi
+        # ujet o 4 %.
+        if eff(v) != eff(rv) or p != rp or (d is not None and abs(d - rd) > rd * 4 // 100 and
                                             not (last and not cleanup)):
             return i, (i, (eff(v), p, d), (eff(rv), rp, rd))
     if cleanup and len(st) != len(refst):
@@ -297,7 +299,7 @@ def rozbor(soubory, ref):
 def main():
     args = sys.argv[1:]
     if "--jen-rozbor" not in args:
-        targets = [int(a) for a in args if a.isdigit()] or [52000, 48788, 45488]
+        targets = [int(a) for a in args if a.isdigit()] or [52000, 48788, 45488, 42000, 37000, 32995]
         zaznam(targets)
     with sync_playwright() as pw:
         b = pw.chromium.launch(); p = b.new_page()

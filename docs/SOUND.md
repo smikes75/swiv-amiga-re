@@ -183,39 +183,44 @@ the routine, the `0x4C00` volume write of `0x4BF2` ends it) and compares
 each instance with the timeline the browser builds for the same effect:
 effective Paula volume, period and state length in IRQs.
 
+Run of 2026-09-30, TOWN through FINAL (the harness holds the player's
+lives, see `vacmp.LIVES`; without that the unattended drive lost every life
+in RIVER or ICE and the map stood still, which had been mistaken for a
+scroll lock):
+
 | effect | instances (complete) | differences |
 |---|---:|---:|
-| player volley `0x4F3E` | 10 000 (9 690) | 0 |
-| default hit `0x5070` | 454 (378) | 0 |
-| cannon `0x53BE` | 792 (554) | 0 |
-| HOMING `0x528A` | 134 (121) | 0 |
-| BLACKJET `0x52E8` | 104 (3) | 0 |
-| GOOSE hit / installation hit `0x4E5E` | 77 / 10 | 0 |
-| opening `0x5138` (both voices) | 22 | 0 |
-| FLAME puff `0x50D0` | 24 | 0 |
-| MINE shield `0x500E` | 3 | 0 |
+| player volley `0x4F3E` | 6 797 (6 378) | 0 |
+| default hit `0x5070` | 619 (533) | 0 |
+| cannon `0x53BE` | 1 006 (734) | 0 |
+| HOMING `0x528A` | 200 (178) | 0 |
+| BLACKJET `0x52E8` | 101 (2) | 0 |
+| GOOSE hit / installation hit `0x4E5E` | 87 / 14 | 0 |
+| opening `0x5138` (both voices) | 68 | 0 |
+| FLAME puff `0x50D0` | 27 | 0 |
+| MINE shield `0x500E` | 4 | 0 |
 | XEVIOUS bomb `0x4D08` | 138 | 0 |
-| XEVIOUS bolt ping `0x55BC` | 21 | 0 |
-| PLAT hatch `0x4D7A` | 39 | 0 |
-| egg / walker pods `0x5456` | 213 | 0 |
-| factory / INST2 beam `0x5456` | 30 | 0 |
+| XEVIOUS bolt ping `0x55BC` | 15 | 0 |
+| PLAT hatch `0x4D7A` | 40 | 0 |
+| egg / walker pods `0x5456` | 235 | 0 |
+| factory / INST2 beam `0x5456` | 136 | 0 |
 | `_CORN` launch `0x54C8` (both voices) | 2 | 0 |
+| extra-life chime `0x5672` (424..133) | 6 | 0 |
 
 An incomplete instance was pre-empted by another effect and is compared
 over the states it reached. Sample voices are checked by period and
 length: `BIGEXPL` (`AUDLEN` 4 243) at 592..623 for the standard explosion,
 768 and 776 for the `+376` big death, 1024/1032/1152/1160 for the player
 burst, and `SMART` (`AUDLEN` 4 140) at 1040/1025/1010/996 - all as
-transcribed. The geyser `0x536E`, the TOKEN and extra-life notes `0x5672`
-did not sound in this run (the geyser's zone is past the ICE lock the
-harness cannot pass, and the drive picks up no TOKEN); TOKEN notes were
+transcribed. Only the geyser `0x536E` did not sound (the drive clears the
+SCIFI arena lock and passes before a geyser erupts); TOKEN notes were
 already checked by the earlier PC/audio captures.
 
 Two comparison rules keep the check honest rather than lenient: adjacent
 states with the same volume and period are merged (the browser's opening
 hold is a separate state, the original simply does not rewrite), and a
-state longer than 40 IRQs may differ by one IRQ per 40 because the
-one-shot timer drifts with load.
+state may run up to 4 % long because the one-shot timer drifts with
+load (the opening hold measured 94 instead of 91 IRQs in RIVER).
 
 ## Attract music and verified A500 output path
 

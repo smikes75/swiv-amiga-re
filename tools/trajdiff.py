@@ -69,6 +69,7 @@ ORIG_JS = """(cfg) => {
     // 3 = PULL_RIGHT, 10 = RELEASE_X).
     while ((cam() & 0xffff) > cfg.od && n++ < 200000) {   // cam() je se znamenkem
       H[hold] &= ~0x08;
+      KEEP_LIVES
       VA.fn.joy(2, (n % 10) < 5 ? 4 : 13);
       if (n % 120 === 0) VA.fn.joy(2, (n / 120) % 2 ? 2 : 3);
       VA.run(1, null);
@@ -124,13 +125,14 @@ ORIG_JS = """(cfg) => {
   let stoji = 0, posledni = cam();
   while (zero - cam() < cfg.dist && stoji < (cfg.stat ? cfg.statVbl : 3000)) {
     if (cfg.od && !cfg.stat) H[hold] &= ~0x08;
+    if (cfg.od) { KEEP_LIVES }
     VA.run(1, null); vbl++;
     if (cam() === posledni) stoji++; else { stoji = 0; posledni = cam(); }
     kamera.push(cam());
     scan();
   }
   return { zero, tracks, kamera, obtiznost, stoji: stoji >= 3000 };
-}"""
+}""".replace("KEEP_LIVES", vacmp.KEEP_LIVES_JS)
 
 REMAKE_JS = """(cfg) => {
   startGame(0);
