@@ -42,6 +42,15 @@ body { background:#000; color:var(--white);
   border:1px solid var(--blue); border-radius:0; }
 .wbpanel input[type=checkbox], .wbpanel input[type=radio] { accent-color:var(--blue); }
 .wbpanel #fxbar[hidden] { display:none; }
+.wbpanel.wbwide { min-width:380px; white-space:normal; }
+.wbpanel textarea { width:100%; height:52px; font:11px monospace; color:var(--blue);
+  background:var(--white); border:1px solid var(--blue); }
+.wbpanel .wbrow.wbbtns { flex-wrap:wrap; gap:4px; }
+.wbpanel .wbrow.wbbtns button { font:inherit; color:var(--blue); background:var(--white);
+  border:1px solid var(--blue); padding:0 6px; cursor:pointer; }
+.wbpanel .wbrow.wbbtns button:hover { background:var(--blue); color:var(--white); }
+.wbpanel .wbrow.wbbtns button.hlavni { background:var(--orange); border-color:var(--orange); color:var(--black); }
+.wbpanel [hidden] { display:none !important; }
 #wbstatus { margin-left:auto; padding:0 10px; font-size:12px; overflow:hidden;
   white-space:nowrap; text-overflow:ellipsis; }
 #wbstatus #pauselabel { color:var(--orange); }
@@ -140,6 +149,10 @@ a { color:#cfe0ff }
   <div class="wbmenu" id="mnu-hra">
     <button type="button" class="wbtitle">Hra</button>
     <div class="wbpanel">
+      <div class="wbrow">Za&#269;&#237;t od z&#243;ny</div>
+      <div id="levelbtns" class="wbrow wbbtns"></div>
+      <div class="wbnote">fire nebo mezern&#237;k na titulce = TOWN; z&#243;ny na sebe navazuj&#237;</div>
+      <hr>
       <label>&#x2665; &#382;ivoty <input type="number" id="livesbox" value="4" min="1" max="99" style="width:3.5em"></label>
       <label>scroll <input type="range" id="scrollpct" min="25" max="200" step="5"
         value="100" style="width:130px"><span id="scrollval">100%</span></label>
@@ -148,6 +161,31 @@ a { color:#cfe0ff }
       <label>slot 1 <select id="padsel0"></select></label>
       <label>slot 2 <select id="padsel1"></select></label>
       <div class="wbnote" id="padinfo">hled&#225;m ovlada&#269;e&#8230;</div>
+    </div>
+  </div>
+  <div class="wbmenu" id="mnu-sit">
+    <button type="button" class="wbtitle">S&#237;&#357;</button>
+    <div class="wbpanel wbwide">
+      <div class="wbnote">Hra ve dvou po s&#237;ti: spojen&#237; je p&#345;&#237;m&#233; mezi dv&#283;ma
+        prohl&#237;&#382;e&#269;i, &#382;&#225;dn&#253; server, disk se nikam nepos&#237;l&#225; &mdash; ka&#382;d&#253;
+        hr&#225;&#269; vkl&#225;d&#225; sv&#367;j vlastn&#237;. Hostitel &#345;&#237;d&#237; vrtuln&#237;k, host jeep.
+        Oba mus&#237; m&#237;t tent&#253;&#382; .adf, jinak se hry rozejdou.</div>
+      <div class="wbnote" id="netnote" hidden></div>
+      <div id="netbody">
+        <div id="netstart" class="wbrow wbbtns">
+          <button type="button" id="nethost" class="hlavni">Vytvo&#345;it hru</button>
+          <button type="button" id="netjoin" class="hlavni">P&#345;ipojit se</button>
+        </div>
+        <div id="netstep" style="display:none">
+          <p id="netlabel" class="wbnote" style="opacity:1"><b></b></p>
+          <div class="wbrow"><textarea id="netout" readonly placeholder="k&#243;d se objev&#237; tady"></textarea></div>
+          <div class="wbrow wbbtns"><button type="button" id="netcopy">Kop&#237;rovat k&#243;d</button></div>
+          <p id="netaskin" class="wbnote" style="opacity:1"><b>Vlo&#382; k&#243;d od protihr&#225;&#269;e:</b></p>
+          <div class="wbrow"><textarea id="netin" placeholder="sem vlo&#382; k&#243;d"></textarea></div>
+          <div class="wbrow wbbtns"><button type="button" id="netgo" class="hlavni">Nav&#225;zat spojen&#237;</button></div>
+        </div>
+      </div>
+      <p id="netstatus" class="wbnote" style="opacity:1"><small></small></p>
     </div>
   </div>
   <div class="wbmenu" id="mnu-dbg">
@@ -185,35 +223,6 @@ a { color:#cfe0ff }
 <div id="titlewrap" style="display:none">
   <canvas id="title" style="image-rendering:pixelated;border:3px solid var(--black);cursor:pointer"></canvas>
   <p id="titlehint" style="display:none"><b>PRESS FIRE</b> <small>(space / click)</small></p>
-</div>
-
-<div id="netpanel" class="wbwin" style="display:none;text-align:left">
-  <div class="wbwtitle">S&#237;&#357;</div>
-  <p style="margin:0 0 6px"><b>Hra ve dvou po s&#237;ti</b> &mdash; spojen&#237; je
-  p&#345;&#237;m&#233;, mezi dv&#283;ma prohl&#237;&#382;e&#269;i. &#381;&#225;dn&#253; server, disk se nikam
-  neposíl&#225; &mdash; ka&#382;d&#253; hr&#225;&#269; vkl&#225;d&#225; sv&#367;j vlastn&#237;.</p>
-  <p style="margin:0 0 8px"><small>Hostitel &#345;&#237;d&#237; vrtuln&#237;k, host jeep.
-  Oba mus&#237; m&#237;t <b>tent&#253;&#382; .adf</b>, jinak se hry rozejdou.</small></p>
-  <div id="netstart">
-    <a class="btn" id="nethost">Vytvo&#345;it hru</a>
-    <a class="btn" id="netjoin">P&#345;ipojit se</a>
-  </div>
-  <div id="netstep" style="display:none;margin-top:8px">
-    <p id="netlabel" style="margin:0 0 4px"><b></b></p>
-    <textarea id="netout" readonly style="width:100%;height:52px;
-      font:11px monospace" placeholder="k&#243;d se objev&#237; tady"></textarea>
-    <a class="btn" id="netcopy">Kop&#237;rovat k&#243;d</a>
-    <p id="netaskin" style="margin:8px 0 4px"><b>Vlo&#382; k&#243;d od protihr&#225;&#269;e:</b></p>
-    <textarea id="netin" style="width:100%;height:52px;font:11px monospace"
-      placeholder="sem vlo&#382; k&#243;d"></textarea>
-    <a class="btn" id="netgo">Nav&#225;zat spojen&#237;</a>
-  </div>
-  <p id="netstatus" style="margin:8px 0 0"><small></small></p>
-</div>
-
-<div id="levelpick" style="display:none">
-  <p>Za&#269;&#237;t od z&#243;ny (fire nebo mezern&#237;k = TOWN, z&#243;ny na sebe navazuj&#237;):</p>
-  <div id="levelbtns"></div>
 </div>
 
 <div id="gamewrap" style="display:none">
@@ -1229,6 +1238,8 @@ $("#insert").onclick = () => { unlockAudioContext(); $("#fpick").click(); };
    Esc zavre. Po zavreni se fokus vrati hernimu platnu. */
 (() => {
   const menus = [...document.querySelectorAll("#wbbar .wbmenu")];
+  window.wbOpenMenu = id => { menus.forEach(o => o.classList.remove("open"));
+    const m = document.getElementById(id); if (m) m.classList.add("open"); };
   const close = () => {
     const was = menus.some(m => m.classList.contains("open"));
     menus.forEach(m => m.classList.remove("open"));
@@ -1265,6 +1276,7 @@ $("#insert").onclick = () => { unlockAudioContext(); $("#fpick").click(); };
       close(); e.stopPropagation();
     }
   }, true);
+  window.wbCloseMenus = close;
   $("#mi-insert").onclick = () => $("#insert").click();
 })();
 
@@ -1905,17 +1917,22 @@ function stopAttract() {
 }
 
 function showDevelopmentLevelPicker() {
-  stopAttract();
-  $("#titlewrap").style.display = "none";
-  $("#levelpick").style.display = "";
+  wbOpenMenu("mnu-hra");                       // vyber zony je v menu Hra
+}
+/* Menu Sit: dostupne z titulni obrazovky (a behem sitove hry pro stav);
+   pri mistni hre a bez WebRTC se misto tlacitek ukaze duvod. */
+function netMenuAvailable(on, why) {
+  $("#netbody").hidden = !on;
+  if (!on && !NET.active) $("#netstatus small").textContent = "";   // opusteny pokus
+  const n = $("#netnote"); n.hidden = on; n.textContent = why || "";
+  $("#mnu-sit").classList.toggle("ghost", !on);
 }
 
 function showTitle() {
   stopAttract();
-  // vyber zony je videt uz pod titulni obrazovkou (hrac nemusi od TOWN)
-  $("#levelpick").style.display = "";
-  // Sitovy panel se ukaze jen kdyz ho prohlizec umi obslouzit.
-  if (window.RTCPeerConnection) $("#netpanel").style.display = "";
+  // Sit jde navazat jen z titulni obrazovky a jen s WebRTC.
+  netMenuAvailable(!!window.RTCPeerConnection,
+                   "Prohl\u00ed\u017ee\u010d neum\u00ed WebRTC.");
   $("#gamewrap").style.display = "none";
   $("#titlewrap").style.display = "";
   const cv = $("#title"); cv.width = 320; cv.height = 256;
@@ -1929,6 +1946,8 @@ function showTitle() {
   const fire = () => { unlockAudioContext(); startGame(0); };
   a.onclick = fire;
   a.onkey = e => {
+    // psani do policek menu (kod site, zivoty) neni povel titulce
+    if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
     if (e.key === " " || e.key === "Enter" || e.key.toLowerCase() === "z") {
       e.preventDefault(); fire();
     } else if (e.key.toLowerCase() === "l") {
@@ -1941,10 +1960,10 @@ function showTitle() {
   requestAnimationFrame(attractFrame);
 }
 for (let lv = 0; lv < 7; lv++) {
-  const b = document.createElement("a");
-  b.className = "btn";
+  const b = document.createElement("button");
+  b.type = "button";
   b.textContent = ["TOWN","DESERT","GRASS","RIVER","ICE","SCIFI","FINAL"][lv];
-  b.onclick = () => startGame(lv);
+  b.onclick = () => { unlockAudioContext(); wbCloseMenus(); startGame(lv); };
   $("#levelbtns").appendChild(b);
 }
 
@@ -8473,7 +8492,7 @@ function netAttachChannel(dc) {
       NET.local.set(t, 0); NET.remote.set(t, 0);
     }
     startGame(NET.level | 0);
-    $("#netpanel").style.display = "none";
+    wbCloseMenus();
   };
   dc.onclose = () => {
     if (NET.active) netStatus("Protihráč se odpojil.", true);
@@ -8761,8 +8780,7 @@ function startGame(lv) {
   { const el = document.getElementById("pauselabel");
     if (el) el.textContent = ""; }
   stopModuleMusic();
-  $("#levelpick").style.display = "none";
-  if (!NET.active) $("#netpanel").style.display = "none";
+  if (!NET.active) netMenuAvailable(false, "S\u00ed\u0165 se navazuje z tituln\u00ed obrazovky, ne b\u011bhem hry.");
   $("#gamewrap").style.display = "";
   if (!state.loopRunning) { state.loopRunning = true; requestAnimationFrame(frame); }
 }

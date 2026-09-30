@@ -429,8 +429,9 @@ def main():
             page.wait_for_selector("#gamewrap", state="visible")
             expect(page.is_visible("#gamewrap"),
                 "fire z attractu nespustil primo TOWN")
-            expect(not page.is_visible("#levelpick"),
-                "nativni fire omylem otevrel vyvojarsky level picker")
+            expect(not page.evaluate(
+                       "document.getElementById('mnu-hra').classList.contains('open')"),
+                "nativni fire omylem otevrel menu Hra (vyber zony)")
 
             # Indexovy renderer je viditelnou cestou statickeho pozadi;
             # zaroven overujeme jeho ciste bloky nad skutecnymi TOWN/.LIN daty.
