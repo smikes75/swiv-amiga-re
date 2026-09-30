@@ -51,6 +51,17 @@ body { background:#000; color:var(--white);
 .wbpanel .wbrow.wbbtns button:hover { background:var(--blue); color:var(--white); }
 .wbpanel .wbrow.wbbtns button.hlavni { background:var(--orange); border-color:var(--orange); color:var(--black); }
 .wbpanel [hidden] { display:none !important; }
+/* Okno "Nacist pozici" (klavesa L) - WB okno nad hernim polem. */
+#loadreq { position:fixed; left:50%; top:64px; transform:translateX(-50%); z-index:30;
+  min-width:360px; background:var(--white); color:var(--blue); border:2px solid var(--blue);
+  box-shadow:4px 4px 0 #000; font:bold 13px/1.6 "Courier New",monospace; text-align:left; }
+#loadreq[hidden] { display:none; }
+#loadreq .wbwtitle { margin:0; padding:2px 8px; background:var(--blue); color:var(--white); }
+#loadreq .wbitem { display:block; width:100%; text-align:left; font:inherit; color:inherit;
+  background:none; border:0; padding:1px 14px; cursor:pointer; }
+#loadreq .wbitem:hover, #loadreq .wbitem:focus { background:var(--blue); color:var(--white); outline:0; }
+#loadreq .wbitem[disabled] { opacity:.4; cursor:default; background:none; color:inherit; }
+#loadreq .wbnote { padding:2px 14px 6px; opacity:.75; font-size:12px; }
 #wbstatus { margin-left:auto; padding:0 10px; font-size:12px; overflow:hidden;
   white-space:nowrap; text-overflow:ellipsis; }
 #wbstatus #pauselabel { color:var(--orange); }
@@ -97,10 +108,11 @@ a { color:#cfe0ff }
       <div class="wbrow"><span title="Ulozene pozice zustavaji v tomto prohlizeci">Pozice</span>
         <select id="slotsel"></select></div>
       <div class="wbrow">
-        <button type="button" id="btnsave" title="Ulozit aktualni pozici do vybraneho slotu">ulo&#382;it</button>
-        <button type="button" id="btnload" title="Nacist pozici z vybraneho slotu">na&#269;&#237;st</button>
+        <button type="button" id="btnsave" title="Ulozit aktualni pozici do vybraneho slotu (klavesa S uklada do dalsiho slotu dokola)">ulo&#382;it</button>
+        <button type="button" id="btnload" title="Nacist pozici z vybraneho slotu (klavesa L otevre seznam)">na&#269;&#237;st</button>
         <button type="button" id="btndel" title="Smazat vybrany slot">smazat</button></div>
       <div class="wbnote" id="slotinfo"></div>
+      <div class="wbnote">kl&#225;vesy: <b>S</b> = ulo&#382;it do dal&#353;&#237; pozice (1&#8211;10 dokola), <b>L</b> = seznam pozic</div>
       <hr>
       <a class="wbitem" href="index.html">Disk explorer</a>
       <a class="wbitem" href="https://github.com/smikes75/swiv-amiga-re">Zdroj a dokumentace</a>
@@ -111,7 +123,7 @@ a { color:#cfe0ff }
     <div class="wbpanel">
       <label><input type="radio" name="mode" id="modeorig" checked> origin&#225;l</label>
       <label><input type="radio" name="mode" id="modefx"> vylep&#353;eno</label>
-      <div class="wbnote">kl&#225;vesy: <b>O</b> = origin&#225;l + CRT v&#253;razn&#233;, <b>E</b> = vylep&#353;eno + CRT jemn&#233;</div>
+      <div class="wbnote">kl&#225;vesy: <b>O</b> = origin&#225;l, <b>E</b> = vylep&#353;eno (ob&#283; s CRT v&#253;razn&#233;)</div>
       <input type="checkbox" id="smoothchk" hidden>
       <hr>
       <label title="Emulace obrazovky prekryvem. Jemne: jedna tenka tmava linka na kazdy radek hry (sedi na herni radky pri kazdem zvetseni), slaba maska RGB a mirna vineta. Vyrazne: puvodni husty raster nezavisly na zvetseni.">CRT <select id="crtsel"><option value="vyp">vyp</option><option value="jemne">jemn&#233;</option><option value="vyrazne">v&#253;razn&#233;</option></select></label>
@@ -202,7 +214,7 @@ a { color:#cfe0ff }
       <label title="Po kazdem useku vynuti vykresleni (getImageData 1x1), takze useky ukazuji i praci rasteru/GPU. Snimek se tim zpomali - meri se cena useku, ne dosazitelne fps."><input type="checkbox" id="perfflush"> s flush&#237;</label>
     </div>
   </div>
-  <div id="wbstatus"><span id="jumplabel"></span> <b id="pauselabel"></b></div>
+  <div id="wbstatus"><span id="savemsg"></span> <span id="jumplabel"></span> <b id="pauselabel"></b></div>
   <div class="wbgadget" aria-hidden="true"></div>
 </nav>
 
@@ -240,6 +252,11 @@ a { color:#cfe0ff }
   </div>
 </div>
 
+<div id="loadreq" hidden role="dialog" aria-label="Na&#269;&#237;st pozici">
+  <div class="wbwtitle">Na&#269;&#237;st pozici</div>
+  <div id="loadlist"></div>
+  <div class="wbnote">&#269;&#237;slice 1&#8211;9, 0 = pozice 10 &middot; &#353;ipky + Enter &middot; Esc zav&#345;e</div>
+</div>
 <input type="file" id="fpick" accept=".adf" hidden>
 <div id="errbox" style="display:none;position:fixed;left:8px;bottom:8px;right:8px;background:#a00;color:#fff;padding:8px;font:12px monospace;z-index:9;text-align:left"></div>
 <script>
@@ -1917,9 +1934,6 @@ function stopAttract() {
   state.attract = null;
 }
 
-function showDevelopmentLevelPicker() {
-  wbOpenMenu("mnu-hra");                       // vyber zony je v menu Hra
-}
 /* Menu Sit: dostupne z titulni obrazovky (a behem sitove hry pro stav);
    pri mistni hre a bez WebRTC se misto tlacitek ukaze duvod. */
 function netMenuAvailable(on, why) {
@@ -1951,8 +1965,6 @@ function showTitle() {
     if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
     if (e.key === " " || e.key === "Enter" || e.key.toLowerCase() === "z") {
       e.preventDefault(); fire();
-    } else if (e.key.toLowerCase() === "l") {
-      e.preventDefault(); showDevelopmentLevelPicker();
     }
   };
   window.addEventListener("keydown", a.onkey);
@@ -8974,12 +8986,12 @@ function setMode(fx) {
 }
 document.getElementById("modeorig").onchange = () => setMode(false);
 document.getElementById("modefx").onchange = () => setMode(true);
-/* Klavesy O a E: totez, co prepnuti v menu Obraz - O = original s CRT
-   vyrazne, E = vylepseno s CRT jemne. */
+/* Klavesy O a E: totez, co prepnuti v menu Obraz - O = original,
+   E = vylepseno, obe s CRT vyrazne. */
 function displayPreset(fx) {
   document.getElementById(fx ? "modefx" : "modeorig").checked = true;
   setMode(fx);
-  setCrt(fx ? "jemne" : "vyrazne");
+  setCrt("vyrazne");
 }
 /* Volba rezimu prezije reload, stejne jako zvetseni. Bez toho se po
    kazdem nacteni vracel "original" a vsechny efekty byly potichu vypnute
@@ -9346,6 +9358,75 @@ function loadFromSlot(i) {
 // mrtve zone a drivejsi volani spadne na "Cannot access before initialization"
 refreshSlots();
 
+/* Klavesa S: ulozi do dalsi pozice dokola (1..10, pak zase 1); poradi
+   prezije reload. Potvrzeni se na 2,5 s ukaze v liste. */
+function quickSave() {
+  const g = state.g;
+  if (!g || g.over) return;
+  let i = 0;
+  try { i = parseInt(localStorage.getItem("swiv.save.next") || "0", 10) || 0; } catch (e) {}
+  i = ((i % SAVE_SLOTS) + SAVE_SLOTS) % SAVE_SLOTS;
+  saveToSlot(i);
+  try { localStorage.setItem("swiv.save.next", String((i + 1) % SAVE_SLOTS)); } catch (e) {}
+  const sel = document.getElementById("slotsel");
+  if (sel) sel.value = String(i);
+  const m = document.getElementById("savemsg");
+  m.textContent = "pozice " + (i + 1) + " ulo\u017eena";
+  clearTimeout(m._t); m._t = setTimeout(() => { m.textContent = ""; }, 2500);
+}
+/* Klavesa L: okno se seznamem pozic; klik nebo cislice nacte, Esc zavre. */
+function loadRequester(open) {
+  const box = document.getElementById("loadreq"), list = document.getElementById("loadlist");
+  if (!open) {
+    box.hidden = true;
+    const cv = document.getElementById("game");
+    if (cv && cv.getClientRects().length) cv.focus({ preventScroll: true });
+    return;
+  }
+  list.innerHTML = "";
+  let prvni = null;
+  for (let i = 0; i < SAVE_SLOTS; i++) {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "wbitem"; b.dataset.slot = String(i);
+    b.textContent = slotLabel(i);
+    if (!saveSlotRead(i)) b.disabled = true;
+    else { b.onclick = () => { loadRequester(false); loadFromSlot(i); }; if (prvni === null) prvni = b; }
+    list.appendChild(b);
+  }
+  if (prvni === null) {
+    const n = document.createElement("div"); n.className = "wbnote";
+    n.textContent = "\u017e\u00e1dn\u00e1 ulo\u017een\u00e1 pozice (S ukl\u00e1d\u00e1 b\u011bhem hry)";
+    list.appendChild(n);
+  }
+  box.hidden = false;
+  if (prvni) prvni.focus();
+}
+function loadRequesterKey(e) {
+  const box = document.getElementById("loadreq");
+  if (box.hidden) return false;
+  const k = e.key;
+  if (k === "Escape" || k.toLowerCase() === "l") { loadRequester(false); return true; }
+  if (/^[0-9]$/.test(k)) {
+    const i = k === "0" ? 9 : +k - 1;
+    if (saveSlotRead(i)) { loadRequester(false); loadFromSlot(i); }
+    return true;
+  }
+  if (k === "ArrowDown" || k === "ArrowUp") {
+    const items = [...box.querySelectorAll(".wbitem:not([disabled])")];
+    if (!items.length) return true;
+    let j = items.indexOf(document.activeElement);
+    j = k === "ArrowDown" ? (j + 1) % items.length : (j - 1 + items.length) % items.length;
+    items[j].focus();
+    return true;
+  }
+  if (k === "Enter" || k === " ") {
+    const b = document.activeElement;
+    if (b && b.classList.contains("wbitem") && !b.disabled) b.click();
+    return true;
+  }
+  return true;                                   // ostatni klavesy okno pohlti
+}
+
 /* ---- ovladani sitoveho panelu -------------------------------------- */
 function netShowStep(label, out, chce) {
   $("#netstart").style.display = "none";
@@ -9407,12 +9488,20 @@ window.addEventListener("keydown", e => {
   // cheatu 0x20e4) - stisk meni pamet kolem fp@(-1260), tedy v knihovne
   // zavadece. Nelze proto rozhodnout, jestli je to puvodni funkce hry,
   // nebo pridavek crackeru; viz docs/GAPS.md.
-  // O / E: prepnuti zobrazeni bez mysi (i na titulce; ne pri psani do
-  // policek menu a ne s modifikatory, at neblokuji zkratky prohlizece).
-  if (!e.ctrlKey && !e.metaKey && !e.altKey &&
+  // Otevrene okno "Nacist pozici" bere klavesy samo.
+  if (loadRequesterKey(e)) { e.preventDefault(); return; }
+  // O / E: prepnuti zobrazeni; S / L: ulozeni a nacteni pozice (i na
+  // titulce; ne pri psani do policek menu a ne s modifikatory, at
+  // neblokuji zkratky prohlizece).
+  if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.repeat &&
       !(e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName))) {
     const k = e.key.toLowerCase();
     if (k === "o" || k === "e") { displayPreset(k === "e"); e.preventDefault(); return; }
+    if (k === "l") { loadRequester(true); e.preventDefault(); return; }
+    // "s" je zaroven WASD dolu: kdyz hraje jeep (nebo sit), patri jemu.
+    if (k === "s" && state.g && !state.g.player2 && !NET.active) {
+      quickSave(); e.preventDefault(); return;
+    }
   }
   if (e.key.toLowerCase() === "p" && state.g && !state.g.over) {
     state.g.paused = !state.g.paused;
