@@ -2101,16 +2101,25 @@ Prepis pricital +4 pri kazdem vystrelu. DESERT husy 0/16 -> 11/16.
   (A500 1 MB) a obe strany cekaji navzajem. Zaseknuti zavisi na prubehu
   hry (drzene zivoty ho neresi, i dva snimky vstupu navic ho vyvolaji nebo
   obejdou). Prepis limit pameti zamerne nemodeluje.
-  **2026-09-30 upresneno, pricina otevrena:** zasekne se i hrac v
-  `tools/hrat.py` (stejne jadro vAmiga 5.0b2), kdezto ve vAmize 4.4 a FS-UAE
-  podle hrace hra jede dal. Zavadec v zaseknutem stavu dokola cte soubor
-  `_JUNGLE.LIN` (stopy 117-120): precte 117, 118, 119, vsechny sektory
-  bez chyby a shodne s ADF, a pak zacne soubor znovu od 117 - ke stope 120
-  se nedostane. Emulace mechaniky (`df0 MECHANICS`), rychlost otaceni,
-  `AUTO_DSKSYNC` ani vymena diskety na to nemaji vliv. Ze stavu
-  `RIVER_46749` se zasekne 1 z 6 ruznych prubehu vstupu (s mechanikou
-  i bez). Odsunuti objektu pod obrazovku nepomaha. Jestli je to chyba jadra
-  5.0b2, nebo pamet zavadece, zustava nerozhodnute.
+  **2026-09-30 vyreseno.** Zasekl se i hrac v `tools/hrat.py`; z jeho
+  ulozeneho stavu: zavadec dokola cte `_JUNGLE.LIN` (dlazdice dzungle,
+  22 720 B, stopy 117-120) - stopy 117, 118, 119 bez chyby, pak znovu od
+  117, protoze alokace cile selze a nahravani se opakuje. Chip RAM ma v tu
+  chvili 51 688 B volnych, ale **nejvetsi souvisly blok 7 176 B** (100
+  kusu); grafika se alokuje jen z chip RAM (`fp@(-1494)`), nic uz
+  nezanika, takze deadlock. Pricina roztristeni: fix wrapper (N.O.M.A.D,
+  blok 0x50000) ma chybu ve skenu pameti (`cmpa.l #0x80000` na 0x5019a),
+  takze zavadec nikdy nedostane slow RAM a vsechny "any" alokace (zaznamy
+  uloh 546 B, soubory, tabulky) jdou do chip RAM - viz LOADER.md. Ve
+  vAmize 4.4 i FS-UAE plati totez (stejna disketa); hrac tam mel jen
+  stesti (ze stavu `RIVER_46749` uvazne 1 z 6 prubehu vstupu). Harness
+  sken zaplatuje (`VA.patchFixScan` v prologu; `SWIV_HARNESS_512K=1`
+  vrati stare rozvrzeni): hra pak lezi ve slow RAM (A6 0xC016DC, AMPROG
+  0xC0A4C0, presne kam miri trainer fixu), po 12 s TOWN je v chip RAM
+  148 KB volnych v jednom bloku a bezobsluzna jizda projede TOWN az FINAL
+  (32995) s postupujicim ctecem mapy. Nastroje ctou pamet pres
+  `VA.mem()` (chip i slow) a rozvrzeni zjistuji `VA.layout()`, takze
+  stare chipove stavy i nove slow stavy funguji.
 - Kola jsou v ICE a na konci SCIFI delsi (nejcasteji 4 az 5 VBL misto 2),
   takze tam se chovani pocitana na kola od prepisu rozchazeji vic.
 

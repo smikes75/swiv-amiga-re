@@ -39,6 +39,26 @@ length)` terminated by `0x8001`. It looks for **type 5**
 `reset`s if neither exists. That is the advertised support for "all
 current memory configs".
 
+**The scan is broken (found 2026-09-30).** The loop at `0x126` probes
+`TypeOfMem` at `0x40000`, then adds 512 KB and compares against
+`0x80000` (`cmpa.l #0x80000,a4; blt`), so it runs exactly once and the
+table only ever holds `[3, 0x100, 0x7FF00]` - chip RAM. The A500's
+trapdoor RAM at `$C00000` (exec lists it as type 5) is never seen, so
+the type-5 branch, the copy of the loader into fast RAM and the TRAP #0
+address `0xC11500` (= `0xC0A4C0 + 0x7040`, exactly where AMPROG lands
+when the loader sits at `0xC00000`) are dead code on every real machine.
+A 1 MB chip A500+ does not help either: the crack layer's fake fast
+header at `0x80000` is equally never probed. The game therefore always
+runs with 512 KB, and the game's own loader keeps its second free list
+(addresses >= `0x80000`, preferred by the "any memory" allocator
+`fp@(-1502)`) empty. The consequence is chip-RAM fragmentation and the
+RIVER deadlock described in GAPS.md. The harness patches the bound to
+16 MB before the wrapper runs (`VA.patchFixScan`, `vacmp.PATCH_SCAN_JS`);
+then the loader lives at `0xC00000` (`A6 = 0xC016DC`), AMPROG at
+`0xC0A4C0`, the trainer patches hit their intended addresses and chip RAM
+keeps one large free block (148 KB after 12 s of TOWN instead of 35 KB
+in 16 pieces).
+
 ## Where the game loads
 
 The `TRAP #0` handler at `0x7FF00` assembles its patch routine **at

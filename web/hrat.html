@@ -17,10 +17,11 @@
 <canvas id="cv" width="716" height="285" style="image-rendering:pixelated;height:calc(100vh - 90px);aspect-ratio:358/285;max-width:100%"></canvas>
 <div style="opacity:.7;margin-top:6px">&#353;ipky = joystick, mezern&#237;k = palba, P = pauza, U = ulo&#382;it stav, L = na&#269;&#237;st vybran&#253; stav &middot; gamepad funguje taky &middot; bez zvuku</div>
 <script src="vamiga.js"></script>
+<script src="vahelpers.js"></script>
 <script>
 const CROP_X = 124, CROP_Y = 26, W = 716, H = 285, STRIDE32 = 1824;
 const $ = id => document.getElementById(id);
-let INFO = null, M = null, fn = null, bezi = false;
+let INFO = null, M = null, fn = null, bezi = false, LAY = null;
 
 /* Zony podle mapove pozice fp@(3530) (hranice odhadnute z harnessu). */
 function zonaPro(p) {
@@ -49,9 +50,13 @@ createVAmiga().then(async mod => {
     snapTake: c('wasm_snapshot_take', 'number', []),
     snapSize: c('wasm_snapshot_size', 'number', []),
     snapLoad: c('wasm_snapshot_load', 'number', ['number', 'number']),
+    chipSize: c('wasm_chip_size', 'number', []), err: c('wasm_error', 'string', []),
+    slowPtr: c('wasm_slow_ptr', 'number', []), slowSize: c('wasm_slow_size', 'number', []),
   };
-  // Stejne API, jake ocekava prolog z tools/survey/vacmp.py (PLAY_PROLOGUE).
-  window.VA = { fn, run: (n) => { for (let i = 0; i < n; i++) fn.step(); } };
+  // Stejne API, jake ocekava prolog z tools/survey/vacmp.py (PLAY_PROLOGUE),
+  // vcetne pomocnych funkci (VA.mem, VA.layout, VA.patchFixScan).
+  window.VA = { M, fn, frames: 0, run: (n) => { for (let i = 0; i < n; i++) VA.frames = fn.step(); } };
+  installVaHelpers(VA);
   INFO = await (await fetch('/info')).json();
   const nahraj = async (url) => {
     const b = new Uint8Array(await (await fetch(url)).arrayBuffer());
@@ -70,6 +75,7 @@ createVAmiga().then(async mod => {
   // tools/hrat.py - stejna sekvence jako v harnessu, proto eval.
   const prolog = eval(await (await fetch('/prologue.js')).text());
   prolog();
+  LAY = VA.layout();
   fn.warp(0);
   $('stav').textContent = 'hraj';
   $('ulozit').disabled = false; $('nacist').disabled = false;
@@ -117,7 +123,7 @@ addEventListener('keyup', e => {
 /* ---- beh v realnem case: 50 snimku za sekundu (x rychlost) ---- */
 const ctx = $('cv').getContext('2d'), obraz = ctx.createImageData(W, H);
 let akum = 0, predtim = performance.now();
-function pozice() { const Hh = M.HEAPU8, p = fn.chipPtr() + INFO.a6 + 3530; return (Hh[p] << 8) | Hh[p + 1]; }
+function pozice() { return LAY ? VA.mem().U(LAY.a6 + 3530) : 0; }
 function smycka(ted) {
   akum = Math.min(akum + (ted - predtim), 200); predtim = ted;
   const rychle = +$('rychlost').value;
@@ -125,10 +131,8 @@ function smycka(ted) {
     akum -= 20;
     poslatJoystick();
     for (let i = 0; i < rychle; i++) {
-      if ($('zivoty').checked) {                   // slot 1 +68 = -4 x zivoty
-        const Hh = M.HEAPU8, p = fn.chipPtr() + INFO.a6 + INFO.lives;
-        Hh[p] = 0xff; Hh[p + 1] = 0xd8;
-      }
+      if ($('zivoty').checked && LAY)             // slot 1 +68 = -4 x zivoty
+        VA.mem().w16(LAY.a6 + INFO.lives, 0xffd8);
       fn.step();
     }
   }
@@ -170,6 +174,7 @@ async function nacist() {
   const b = new Uint8Array(await (await fetch('/stav/' + encodeURIComponent(jmeno))).arrayBuffer());
   const p = M._malloc(b.length); M.HEAPU8.set(b, p);
   const r = fn.snapLoad(p, b.length); M._free(p);
+  LAY = VA.layout();                          // stav muze byt z jineho rozvrzeni
   posledni = { x: 0, y: 0, f: false };
   $('ulozeno').textContent = r === 0 ? 'nacteno: ' + jmeno : 'nacteni selhalo';
 }

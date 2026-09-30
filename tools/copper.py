@@ -79,7 +79,7 @@ def from_original():
             page.evaluate("([r, a]) => VA.boot(r, a)", [
                 base64.b64encode(open(vacmp.ROM, "rb").read()).decode(),
                 base64.b64encode(open(vacmp.ADF, "rb").read()).decode()])
-            page.evaluate(vacmp.PLAY_PROLOGUE)
+            vacmp.prolog(page)
             page.evaluate("() => playFor(20)")
             # COP1LC precteme z trace: posledni zapis do 0x080/0x082
             info = page.evaluate("""() => {

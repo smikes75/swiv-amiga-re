@@ -5,10 +5,12 @@
 <body style="background:#111;color:#ddd;font:12px monospace">
 <div id="log">nacitam jadro...</div>
 <script src="vamiga.js"></script>
+<script src="vahelpers.js"></script>
 <script>
 const CROP_X = 124, CROP_Y = 26, CROP_W = 716, CROP_H = 285;
 const TEX_STRIDE32 = 1824;                 // Texel = u64, 912 texelu na radek
 const VA = window.VA = { ready: false, frames: 0 };
+installVaHelpers(VA);
 
 createVAmiga().then(M => {
   VA.M = M;
@@ -42,19 +44,12 @@ createVAmiga().then(M => {
     regTracePtr: c('wasm_regtrace_ptr', 'number', []),
     regTraceEntrySize: c('wasm_regtrace_entry_size', 'number', []),
     snapLoad: c('wasm_snapshot_load', 'number', ['number', 'number']),
+    slowPtr: c('wasm_slow_ptr', 'number', []),
+    slowSize: c('wasm_slow_size', 'number', []),
   };
   VA.ready = true;
   document.getElementById('log').textContent = 'jadro pripraveno';
 });
-
-/* Nahraje pole bajtu do haldy modulu a vrati ukazatel (volajici uvolni). */
-VA.toHeap = function (b64) {
-  const bin = atob(b64), n = bin.length;
-  const p = VA.M._malloc(n);
-  const H = VA.M.HEAPU8;
-  for (let i = 0; i < n; i++) H[p + i] = bin.charCodeAt(i);
-  return [p, n];
-};
 
 VA.boot = function (romB64, adfB64) {
   if (VA.fn.init() !== 0) return 'init: ' + VA.fn.err();
@@ -141,15 +136,6 @@ VA.regTraceRead = function () {
                hpos: dv.getUint16(o + 12, true) };
   }
   return out;
-};
-
-/* Obnovi stav ze snapshotu jadra (web/hrat.html, tools/hrat.py). Jadro uz
-   musi byt zapnute (VA.boot). */
-VA.loadSnapshot = function (b64) {
-  const [p, n] = VA.toHeap(b64);
-  const r = VA.fn.snapLoad(p, n);
-  VA.M._free(p);
-  return r === 0 ? '' : 'snapshot: ' + VA.fn.err();
 };
 
 /* Kopie zacatku chip RAM (stav hry) jako base64. */

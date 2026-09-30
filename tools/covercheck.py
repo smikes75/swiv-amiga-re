@@ -25,9 +25,9 @@ nedokreslena (ICE: 444 bodu).
 
 Vysledek 2026-09-29: TOWN (start + 3 dalsi okamziky), DESERT 52000, GRASS
 48788, RIVER 45488, ICE 42735 - 0 odchylek mimo horni pruh (ICE 444 bodu
-v nem). "Zamek ICE" a zaseknuti na 46159 byly konec hry a vycerpana
-pamet zavadece; `vacmp.jizda` s drzenymi zivoty a vyprostenim projede
-az do FINAL (docs/GAPS.md).
+v nem). "Zamek ICE" byl konec hry (harness ted drzi zivoty) a zaseknuti
+na 46159 roztristena chip RAM kvuli chybe skenu pameti ve fix wrapperu
+(harness ji zaplatuje, docs/LOADER.md); jizda projede az do FINAL.
 """
 import base64
 import json
@@ -43,18 +43,16 @@ K = 32826               # radek retezu prepisu = mapova pozice - K
 EDGE = 32               # horni pruh: teren se stavi po pruzich 32 radku (0x3422)
 
 DUMP = """(cfg) => {
-  const H = VA.M.HEAPU8, p = VA.fn.chipPtr();
-  const L = a => (H[p+a]<<24|H[p+a+1]<<16|H[p+a+2]<<8|H[p+a+3])>>>0;
-  const U = a => (H[p+a]<<8)|H[p+a+1];
+  const m = VA.mem(), L = m.L, U = m.U;
   if (cfg.start) {                  // start TOWN: az po uvolneni zamku scrollu
     let guard = 0;
-    while (H[p + cfg.a6 + 166] !== 0 && guard++ < 3000) VA.run(4, null);
+    while (m.rd(cfg.a6 + 166) !== 0 && guard++ < 3000) VA.run(4, null);
     VA.run(300, null);
   }
   VA.run(2, null);
-  const st = L(cfg.a6 + 256);
+  const st = L(cfg.a6 + 256);       // popis obrazovky (ve slow RAM), bitplany v chip
   const b64 = (a, n) => { let s = '';
-    for (let i = 0; i < n; i++) s += String.fromCharCode(H[p + a + i]);
+    for (let i = 0; i < n; i++) s += String.fromCharCode(m.rd(a + i));
     return btoa(s); };
   return { cam: U(st + 8), cover: b64(L(st + 4), 14080),
            planes: b64(L(st), 56320) };
@@ -123,7 +121,7 @@ def original(targets):
             page.evaluate("([r, a]) => VA.boot(r, a)", [
                 base64.b64encode(open(vacmp.ROM, "rb").read()).decode(),
                 base64.b64encode(open(vacmp.ADF, "rb").read()).decode()])
-            page.evaluate(vacmp.PLAY_PROLOGUE)
+            vacmp.prolog(page)
             for t in targets:
                 if t:
                     r = vacmp.jizda(page, t)

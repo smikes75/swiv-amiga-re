@@ -4,7 +4,9 @@
 Prvni krok srovnavaciho harnessu: jadro z web/vamiga.js se nabootuje se
 SWIVFIX.ADF a Kickstartem, projede kanonickou vstupni sekvenci (stejnou jako
 tools/baseline.sh) a v zadanem case ulozi snimek. Slouzi k overeni, ze beh
-v prohlizeci je totozny s VAHeadless, a pozdeji ke cteni stavu hry z chip RAM.
+v prohlizeci je totozny s VAHeadless, a pozdeji ke cteni stavu hry z pameti
+(VA.mem: chip i slow RAM; hra po zaplate skenu fixu lezi ve slow RAM, viz
+PATCH_SCAN_JS a docs/LOADER.md).
 
     python3 tools/survey/vacmp.py 17 build/x_t17.raw
 
@@ -146,8 +148,19 @@ def playSequence(page, target):
 TRAINER_KEYS = (0x50, 0x52, 0x53)          # F1, F3, F4
 JOY_UP, JOY_FIRE, JOY_RELEASE_FIRE = 0, 4, 13
 
+# Rozvrzeni pameti: fix wrapper (N.O.M.A.D) ma v skenu pameti chybu (mez
+# 0x80000 na 0x5019a), takze zavadec dostane jen 512 kB chip RAM a hra se
+# pri delsi jizde zablokuje na roztristene pameti (RIVER 46159, docs/GAPS.md).
+# Prolog proto sken zaplatuje (VA.patchFixScan): hra pak lezi ve slow RAM
+# (A6 0xC016DC, AMPROG 0xC0A4C0 - presne kam miri trainer fixu) a chip RAM
+# zustava grafice. SWIV_HARNESS_512K=1 zaplatu vypne (stare rozvrzeni
+# A6 0x17DC, AMPROG 0xEFC0).
+PATCH_SCAN_JS = ("" if os.environ.get("SWIV_HARNESS_512K")
+                 else "VA.run(10*50, null); window.__scanPatched = VA.patchFixScan();")
 PLAY_PROLOGUE = """() => {
-  VA.run(32*50, null); VA.fn.mouse(1,7); VA.run(4,null); VA.fn.mouse(1,16);
+  %s
+  while (VA.frames < 32*50) VA.run(1, null);
+  VA.fn.mouse(1,7); VA.run(4,null); VA.fn.mouse(1,16);
   VA.run(8*50, null);
   const key = c => { VA.fn.key(c,1); VA.run(6,null);
                      VA.fn.key(c,0); VA.run(6,null); };
@@ -157,7 +170,29 @@ PLAY_PROLOGUE = """() => {
   VA.fn.joy(2,4); VA.run(4,null); VA.fn.joy(2,13); VA.run(3*50,null);
   window.playFor = sec => { for (let i = 0; i < sec*50/10; i++) {
     VA.fn.joy(2,4); VA.run(5,null); VA.fn.joy(2,13); VA.run(5,null); } };
-}""" % (list(TRAINER_KEYS),)
+}""" % (PATCH_SCAN_JS, list(TRAINER_KEYS))
+
+
+def prolog(page):
+    """Projede uvod do hry (PLAY_PROLOGUE) a zjisti rozvrzeni pameti."""
+    page.evaluate(PLAY_PROLOGUE)
+    return rozvrzeni(page)
+
+
+def rozvrzeni(page):
+    """Najde zavadec a AMPROG (VA.layout) a nastavi A6_BASE/PROG_BASE modulu,
+    aby nastroje, ktere je ctou az za behu, dostaly skutecne hodnoty."""
+    global A6_BASE, PROG_BASE
+    lay = page.evaluate("() => VA.layout()")
+    if not lay:
+        raise RuntimeError("zavadec hry v pameti nenalezen")
+    A6_BASE, PROG_BASE = lay["a6"], lay["prog"]
+    return lay
+
+
+def mark():
+    """Marker +534 ulohy po a2c6 (spodni slovo navratove adresy 0xa36a)."""
+    return (0xa36a + PROG_BASE) & 0xffff
 
 
 # --- baze A6 a AMPROG.OBJ v chip RAM (zmereno 2026-09-08) ------------------
@@ -172,6 +207,8 @@ PLAY_PROLOGUE = """() => {
 # Baze AMPROG.OBJ se najde podle bajtu rutiny 0x5556 (61 00 f5 88 41 ed ...).
 #
 # Overeno dvema behy s ruznou delkou hry: obe daly stejne hodnoty.
+# Vychozi hodnoty plati pro chip rozvrzeni (bez zaplaty skenu); `prolog`
+# a `nacti_stav` je prepisou podle skutecneho stavu (VA.layout).
 A6_BASE = 0x17DC          # 6108
 PROG_BASE = 0xEFC0        # 61376
 # Zivoty slotu 1: slovo +68 struktury fp@(11176) drzi -4 x zivoty (0x70a0
@@ -182,15 +219,14 @@ PROG_BASE = 0xEFC0        # 61376
 # F1 MEGA TRAINERU tomu nezabrani). Zmereno 2026-09-29: s timto drzenim
 # originál dojede TOWN -> FINAL (32995) za 124 000 snimku.
 LIVES = 11176 + 68
-KEEP_LIVES_JS = "H[p + %d] = 0xff; H[p + %d + 1] = 0xd8;" % (A6_BASE + LIVES,
-                                                          A6_BASE + LIVES)
+# Kusy JS pro jizdy: ocekavaji `m = VA.mem()` a `A6` v rozsahu.
+KEEP_LIVES_JS = "m.w16(A6 + %d, 0xffd8);" % LIVES
 # Sila zbrane: slovo +102 slotu = pocet sebranych TOKENu (0x70d6 deli peti
 # a vybira radek tabulky 0x70c0). Bez silne zbrane bezobsluzna jizda nechava
 # naziva prilis mnoho nepratel, jejich grafika zaplni pamet zavadece a ctec
 # mapy (fp@(3586)) nebo stavitel terenu se zablokuje (viz DRIVE_JS).
 WEAPON = 11176 + 102
-KEEP_WEAPON_JS = "H[p + %d] = 0; H[p + %d + 1] = 15;" % (A6_BASE + WEAPON,
-                                                     A6_BASE + WEAPON)
+KEEP_WEAPON_JS = "m.w16(A6 + %d, 15);" % WEAPON
 
 # Jizda originalem (TOWN -> FINAL). Pri bezobsluzne jizde se muze v RIVERu
 # na 46159 zablokovat zavadec: sest POPUPu (x 34..284, pozice 46214) proslo
@@ -201,16 +237,13 @@ KEEP_WEAPON_JS = "H[p + %d] = 0; H[p + %d + 1] = 15;" % (A6_BASE + WEAPON,
 # fp@(166) = 0) odsune objekty, ktere prosly a2c6 a jsou v obraze, 600 bodu
 # pod obrazovku; cull `0x6480` je pak sam zrusi a uvolni pamet. Pocet
 # zasahu vraci jako `vyprosteni`.
-MARK = (0xa36a + PROG_BASE) & 0xffff
 DRIVE_JS = """(cfg) => {
-  const H = VA.M.HEAPU8, p = VA.fn.chipPtr(), A6 = %d, n = VA.fn.chipSize();
-  const U = a => (H[p+a]<<8)|H[p+a+1];
-  const W = a => { const v = U(a); return v > 0x7fff ? v - 0x10000 : v; };
-  const L = a => (H[p+a]<<24|H[p+a+1]<<16|H[p+a+2]<<8|H[p+a+3])>>>0;
+  const m = VA.mem(), lay = VA.layout(), A6 = lay.a6, H = m.H;
+  const MARK = (0xa36a + lay.prog) & 0xffff, U = m.U, W = m.W, L = m.L;
   // cfg.souvisle: jizda jako trajdiff --od (bez cekani na zamek, citac
   // snimku pokracuje pres zastavky), takze zastavka na vypis prubeh nemeni.
   if (!cfg.souvisle && !window.__lockWait) { let guard = 0;
-    while (H[p + A6 + 166] !== 0 && guard++ < 3000) VA.run(4, null);
+    while (m.rd(A6 + 166) !== 0 && guard++ < 3000) VA.run(4, null);
     window.__lockWait = 1; }
   VA.fn.warp(1);
   let k = cfg.souvisle ? (window.__jizdaK || 0) : 0;
@@ -220,7 +253,7 @@ DRIVE_JS = """(cfg) => {
   const out = [], dv = new DataView(H.buffer),
         size = cfg.trace ? VA.fn.regTraceEntrySize() : 0;
   while (U(A6 + 3530) > cfg.od && k++ - k0 < cfg.limit) {
-    H[p + A6 + 166] &= ~8;
+    m.w8(A6 + 166, m.rd(A6 + 166) & ~8);
     %s
     if (cfg.zbran) { %s }
     VA.fn.joy(2, (k %% 10) < 5 ? 4 : 13);
@@ -237,31 +270,33 @@ DRIVE_JS = """(cfg) => {
     } else VA.fn.step();
     const c = U(A6 + 3530);
     if (c !== posledni) { posledni = c; stoji = 0; continue; }
-    if (++stoji < 1500 || H[p + A6 + 166] || !cfg.vyprostit) continue;
+    if (++stoji < 1500 || m.rd(A6 + 166) || !cfg.vyprostit) continue;
     stoji = 0; vyprosteni++;
     let node = A6 - 698, g = 0; const seen = new Set();
     while (g++ < 800) {
       const nx = L(node + 4);
-      if (!nx || nx >= n || seen.has(nx)) break;
+      if (!nx || !m.platna(nx) || seen.has(nx)) break;
       seen.add(nx); node = nx;
-      if (W(nx + 274) !== 100 || (L(nx + 534) & 0xffff) !== %d) continue;
+      if (W(nx + 274) !== 100 || (L(nx + 534) & 0xffff) !== MARK) continue;
       const sy = W(nx + 324) - c;
       if (sy < -80 || sy > 300) continue;
-      const y = (c + 600) & 0xffff;
-      H[p + nx + 324] = y >> 8; H[p + nx + 325] = y & 255;
+      m.w16(nx + 324, (c + 600) & 0xffff);
     }
   }
   if (cfg.souvisle) window.__jizdaK = k;
-  return { pos: U(A6 + 3530), ctec: U(A6 + 3586), k: k - k0, vyprosteni, out };
-}""" % (A6_BASE, KEEP_LIVES_JS, KEEP_WEAPON_JS, MARK)
+  return { pos: U(A6 + 3530), ctec: U(A6 + 3586), k: k - k0, vyprosteni, out,
+           prog: lay.prog, a6: A6 };
+}""" % (KEEP_LIVES_JS, KEEP_WEAPON_JS)
 
 
 def nacti_stav(page, cesta):
-    """Obnovi stav ulozeny v tools/hrat.py (snapshot jadra .vamiga)."""
+    """Obnovi stav ulozeny v tools/hrat.py (snapshot jadra .vamiga) a zjisti
+    jeho rozvrzeni pameti (stavy z doby pred zaplatou skenu jsou chipove)."""
     err = page.evaluate("(b) => VA.loadSnapshot(b)",
                         base64.b64encode(open(cesta, "rb").read()).decode())
     if err:
         raise RuntimeError(err)
+    return rozvrzeni(page)
 
 
 def jizda(page, cil, limit=120000):

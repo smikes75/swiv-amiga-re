@@ -24,9 +24,11 @@ Efekty s nahodnou periodou (gejzir 0x536e, vybuchy BIGEXPL) se srovnavaji
 jen ve strukture (hlasitost, delka, rozsah period). Sumove efekty maji
 periodu i hlasitost deterministickou, jejich obsah vlny se tu nesrovnava.
 
-Vysledek 2026-09-30 (zivoty drzene vacmp.LIVES): 15 efektu a noty extra
-zivota, 9 495 instanci, 0 rozdilu. Pozor: ctec mapy originalu stal od 44189
-(zacatek ICE), takze to plati jen pro TOWN az RIVER. Jizda vraci `ctec`.
+Vysledek 2026-09-30 (zivoty drzene vacmp.LIVES, chipove rozvrzeni):
+15 efektu a noty extra zivota, 9 495 instanci, 0 rozdilu - ale ctec mapy
+originalu stal od 44189 (zacatek ICE, roztristena pamet), takze to platilo
+jen pro TOWN az RIVER. Od zaplaty skenu pameti (vacmp.PATCH_SCAN_JS) jizda
+projede az do FINAL; jizda vraci `ctec` a zaznam nese bazi AMPROG.
 Casovani IRQ viz docs/SOUND.md: CIAB je jednorazovy, median 78,6 radku.
 
     python3 tools/sfxtrace.py                       # TOWN..FINAL, zaznam + srovnani
@@ -118,11 +120,13 @@ def zaznam(targets):
             page.evaluate("([r, a]) => VA.boot(r, a)", [
                 base64.b64encode(open(vacmp.ROM, "rb").read()).decode(),
                 base64.b64encode(open(vacmp.ADF, "rb").read()).decode()])
-            page.evaluate(vacmp.PLAY_PROLOGUE)
+            vacmp.prolog(page)
             for t in targets:
                 r = page.evaluate(vacmp.DRIVE_JS, {"od": t, "limit": 120000,
                                                    "trace": True})
-                json.dump(r["out"], open(os.path.join(OUT, f"trace_{t}.json"), "w"))
+                # PC zapisu jsou absolutni; AMPROG lezi podle rozvrzeni jinde
+                json.dump({"prog": r["prog"], "zapisy": r["out"]},
+                          open(os.path.join(OUT, f"trace_{t}.json"), "w"))
                 zas = "  ZASEKNUTO" if r["pos"] > t else ""
                 print(f"  original: pozice {r['pos']} (cil {t}), {r['k']} snimku, "
                       f"{len(r['out'])} zapisu, vyprosteni {r['vyprosteni']}{zas}",
@@ -132,13 +136,21 @@ def zaznam(targets):
         srv.shutdown()
 
 
-def instance(trace):
+def nacti_trace(cesta):
+    """Vrati (zapisy, baze AMPROG); stary format byl jen seznam (chip 0xEFC0)."""
+    d = json.load(open(cesta))
+    if isinstance(d, dict):
+        return d["zapisy"], d["prog"]
+    return d, 0xEFC0
+
+
+def instance(trace, prog):
     """Rozlozi zapisy na instance: start = AUDxLCH, dal VOL/PER/LEN kanalu."""
     otevrene, out, prev = {}, [], 0
     for k, vpos, hpos, reg, val, pc in trace:
         if not 0xa0 <= reg < 0xe0:
             continue
-        pc -= vacmp.PROG_BASE
+        pc -= prog
         ch, r = (reg - 0xa0) >> 4, reg & 0xf
         t = k * LINES + vpos + hpos / 227.0
         if t < prev - 50:        # zapis na prelomu snimku hlaseny s vpos 0
@@ -236,8 +248,8 @@ def rozbor(soubory, ref):
     celkem = collections.defaultdict(lambda: [0, 0, 0, None])
     vzorky = collections.defaultdict(collections.Counter)
     for f in soubory:
-        tr = json.load(open(f))
-        for ins in instance(tr):
+        tr, prog = nacti_trace(f)
+        for ins in instance(tr, prog):
             st, cleanup = stavy(ins)
             if ins["pc"] in (0x4c76, 0x4cd6):
                 if st:

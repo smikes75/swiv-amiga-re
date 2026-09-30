@@ -40,7 +40,7 @@ def collect(frames):
             page.evaluate("([r, a]) => VA.boot(r, a)", [
                 base64.b64encode(open(vacmp.ROM, "rb").read()).decode(),
                 base64.b64encode(open(vacmp.ADF, "rb").read()).decode()])
-            page.evaluate(vacmp.PLAY_PROLOGUE)
+            vacmp.prolog(page)
             page.evaluate("() => playFor(20)")
             tr = page.evaluate("""(n) => { VA.regTrace(true); VA.run(n, null);
                 VA.regTrace(false); return VA.regTraceRead(); }""", frames)

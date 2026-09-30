@@ -45,22 +45,18 @@ sys.path.insert(0, os.path.join(ROOT, "tools", "survey"))
 import vacmp                                        # noqa: E402
 from playwright.sync_api import sync_playwright     # noqa: E402
 
-MARK = (0xa36a + vacmp.PROG_BASE) & 0xffff
 TOL = 1                 # px; prepis pocita ve floatech, original 16.16
 
 ORIG_JS = """(cfg) => {
-  const H = VA.M.HEAPU8, p = VA.fn.chipPtr(), n = VA.fn.chipSize();
-  const L = a => (H[p+a]<<24|H[p+a+1]<<16|H[p+a+2]<<8|H[p+a+3])>>>0;
-  const W = a => { const v = (H[p+a]<<8)|H[p+a+1]; return v > 0x7fff ? v-0x10000 : v; };
-  const U = a => (H[p+a]<<8)|H[p+a+1];
-  const cam = () => { let hi = L(cfg.a6 + 3530) >>> 16;
+  const m = VA.mem(), A6 = cfg.a6, L = m.L, W = m.W, U = m.U;
+  const cam = () => { let hi = L(A6 + 3530) >>> 16;
                       return hi > 0x7fff ? hi - 0x10000 : hi; };
   let guard = 0;
-  while (H[p + cfg.a6 + 166] !== 0 && guard++ < 3000) VA.run(4, null);
+  while (m.rd(A6 + 166) !== 0 && guard++ < 3000) VA.run(4, null);
   // --od: dojet na mapovou pozici SE STRELBOU (jinak se pamet zaplni
   // zivymi objekty a ctec mapy i scroll stoji), kazdy snimek smazat bit 3
   // zamku instalace (jako zoneshot). Pak strelbu pustit a merit.
-  const hold = p + cfg.a6 + 166;
+  const zamek = () => m.w8(A6 + 166, m.rd(A6 + 166) & ~8);
   if (cfg.od) {
     let n = 0;
     // Strelba z mista nezasahne nepratele mimo osu vrtulniku; v RIVERu se
@@ -69,7 +65,7 @@ ORIG_JS = """(cfg) => {
     // Proto vrtulnik kmita vlevo/vpravo (GamePadAction 2 = PULL_LEFT,
     // 3 = PULL_RIGHT, 10 = RELEASE_X).
     while ((cam() & 0xffff) > cfg.od && n++ < 200000) {   // cam() je se znamenkem
-      H[hold] &= ~0x08;
+      zamek();
       KEEP_LIVES
       VA.fn.joy(2, (n % 10) < 5 ? 4 : 13);
       if (n % 120 === 0) VA.fn.joy(2, (n / 120) % 2 ? 2 : 3);
@@ -78,13 +74,13 @@ ORIG_JS = """(cfg) => {
     VA.fn.joy(2, 13); VA.fn.joy(2, 10);
     // --stat (arena): bit 3 jsme pri jizde mazali a INST4 ho uz znovu
     // nenastavi; ve skutecne hre ale arena FINAL scroll drzi.
-    if (cfg.stat) H[hold] |= 0x08;
+    if (cfg.stat) m.w8(A6 + 166, m.rd(A6 + 166) | 0x08);
     for (let i = 0; i < 50; i++) {
-      if (!cfg.stat) H[hold] &= ~0x08;
+      if (!cfg.stat) zamek();
       VA.run(1, null);
     }
   }
-  const obtiznost = W(cfg.a6 + 182);
+  const obtiznost = W(A6 + 182);
   const zero = cam();
   // adresa -> rozpracovana draha; po zmizeni z fronty se uzavre
   const live = new Map(), tracks = [], kamera = [];
@@ -92,10 +88,10 @@ ORIG_JS = """(cfg) => {
   const scan = () => {
     const c = cam();
     const seen = new Set();
-    let node = cfg.a6 - 698, g = 0;
+    let node = A6 - 698, g = 0;
     while (g++ < 500) {
       const nx = L(node + 4);
-      if (!nx || nx >= n || seen.has(nx)) break;
+      if (!nx || !m.platna(nx) || seen.has(nx)) break;
       seen.add(nx);
       if (W(nx + 274) === 100 && (L(nx + 534) & 0xffff) === cfg.mark) {
         let t = live.get(nx);
@@ -125,7 +121,7 @@ ORIG_JS = """(cfg) => {
   scan();
   let stoji = 0, posledni = cam();
   while (zero - cam() < cfg.dist && stoji < (cfg.stat ? cfg.statVbl : 3000)) {
-    if (cfg.od && !cfg.stat) H[hold] &= ~0x08;
+    if (cfg.od && !cfg.stat) zamek();
     if (cfg.od) { KEEP_LIVES }
     VA.run(1, null); vbl++;
     if (cam() === posledni) stoji++; else { stoji = 0; posledni = cam(); }
@@ -213,8 +209,8 @@ def original(dist, tiku, od=0, stat=0):
             page.evaluate("([r, a]) => VA.boot(r, a)", [
                 base64.b64encode(open(vacmp.ROM, "rb").read()).decode(),
                 base64.b64encode(open(vacmp.ADF, "rb").read()).decode()])
-            page.evaluate(vacmp.PLAY_PROLOGUE)
-            res = page.evaluate(ORIG_JS, {"a6": vacmp.A6_BASE, "mark": MARK,
+            vacmp.prolog(page)
+            res = page.evaluate(ORIG_JS, {"a6": vacmp.A6_BASE, "mark": vacmp.mark(),
                                           "dist": dist, "tiku": tiku,
                                           "od": od, "stat": bool(stat),
                                           "statVbl": stat or 0})

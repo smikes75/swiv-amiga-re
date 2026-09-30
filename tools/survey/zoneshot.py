@@ -30,37 +30,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import vacmp                                             # noqa: E402
 from playwright.sync_api import sync_playwright          # noqa: E402
 
-A6 = vacmp.A6_BASE
-SCROLL_HOLD = 166                    # fp@(166): bity drzi scroll
 MAP_POS = 3530                       # fp@(3530): mapova pozice 16.16
 
-# Kazdy krok: nekolik snimku hry, mezi nimi pulz palby a vynulovani zamku.
-DRIVE_JS = """(cfg) => {
-  const H = VA.M.HEAPU8, p = VA.fn.chipPtr();
-  const hold = p + %d + %d;
-  const pos = p + %d + %d;
-  // fp@(3530) je 16.16; cela cast je horni slovo.
-  const mapPos = a => ((H[a]<<8 | H[a+1]) & 0xffff);
-  let n = 0;
-  while (n < cfg.limit) {
-    // Zamek se musi mazat KAZDY snimek - scroll task ho cte kazdy VBL.
-    // Mazat cely fp@(166) nelze: bit 1 drzi scroll, dokud stavitel
-    // terennich pruhu (0x3422) neni 32 radku napred, a bez nej by se
-    // rolovalo do nepostavene mapy. Rusi se proto JEN bit 3, ktery
-    // nastavuje ziva instalace (0xb6ae) a uvolnuje az jeji smrt.
-    H[hold] &= ~0x08;
-    %s          // zivoty (vacmp.LIVES), jinak konec hry
-    // Palba se musi pulzovat, drzeny fire hra ignoruje.
-    VA.fn.joy(2, (n %% 10) < 5 ? 4 : 13);
-    // Kmitani vlevo/vpravo: strelba z mista nezasahne nepratele mimo osu
-    // vrtulniku, pamet se zaplni a v RIVERu ctec mapy stoji na 46159.
-    if (n %% 120 === 0) VA.fn.joy(2, (n / 120) %% 2 ? 2 : 3);
-    VA.run(1, null);
-    n++;
-    if (mapPos(pos) <= cfg.target) break;
-  }
-  return { frames: n, pos: mapPos(pos) };
-}""" % (A6, SCROLL_HOLD, A6, MAP_POS, vacmp.KEEP_LIVES_JS)
+# Jizda je spolecna (vacmp.DRIVE_JS: zamek instalace, zivoty, vyprosteni);
+# tady jen prevod parametru {target, limit} -> {od, limit} a vysledku.
+DRIVE_JS = ("(cfg) => { const r = (" + vacmp.DRIVE_JS +
+            ")({ od: cfg.target, limit: cfg.limit });"
+            " return { frames: r.k, pos: r.pos, ctec: r.ctec }; }")
 
 
 def main():
@@ -94,11 +70,10 @@ def main():
         if err:
             b.close(); srv.shutdown(); sys.exit("boot: " + err)
         # Trainer (nekonecne zivoty) + vstup do hry.
-        page.evaluate(vacmp.PLAY_PROLOGUE)
+        vacmp.prolog(page)
         start = page.evaluate(
-            "([a, o]) => { const H = VA.M.HEAPU8, p = VA.fn.chipPtr() + a + o;"
-            "return ((H[p]<<8 | H[p+1]) & 0xffff); }",
-            [A6, MAP_POS])
+            "([a, o]) => VA.mem().U(a + o)",
+            [vacmp.A6_BASE, MAP_POS])
         print(f"start mapove pozice: {start} (0x{start:x})", flush=True)
 
         for t in targets:

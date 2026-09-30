@@ -58,8 +58,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             jmeno = os.path.basename(urllib.parse.unquote(self.path[6:]))
             return self.posli(open(os.path.join(STAVY, jmeno), "rb").read())
         if self.path == "/info":
-            return self.posli(json.dumps({"a6": vacmp.A6_BASE,
-                                          "lives": vacmp.LIVES}).encode(),
+            return self.posli(json.dumps({"lives": vacmp.LIVES}).encode(),
                               "application/json")
         return super().do_GET()
 

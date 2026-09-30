@@ -72,24 +72,20 @@ from playwright.sync_api import sync_playwright     # noqa: E402
 
 CHECKPOINTS = (300, 600, 900, 1200, 1500)   # ujete pixely mapy
 TOL = 3                                     # tolerance polohy pri parovani
-MARK = (0xa36a + vacmp.PROG_BASE) & 0xffff
 
 # Rezim udalosti: misto snimku v pevnych bodech sledujeme OKAMZIK AKTIVACE
 # kazdeho objektu. Ten je invariantni vuci pohybu - objekt se rodi na danem
 # miste mapy, at uz pak jede kamkoli - a tim padne slabina parovani podle
 # polohy. Krok je 4 VBL = presne 1 px scrollu.
 EVENTS_ORIG_JS = """(cfg) => {
-  const H = VA.M.HEAPU8, p = VA.fn.chipPtr(), n = VA.fn.chipSize();
-  const L = a => (H[p+a]<<24|H[p+a+1]<<16|H[p+a+2]<<8|H[p+a+3])>>>0;
-  const W = a => { const v = (H[p+a]<<8)|H[p+a+1]; return v > 0x7fff ? v-0x10000 : v; };
-  const U = a => (H[p+a]<<8)|H[p+a+1];
+  const m = VA.mem(), L = m.L, W = m.W, U = m.U;
   const cam = () => { let hi = L(cfg.a6 + 3530) >>> 16;
                       return hi > 0x7fff ? hi - 0x10000 : hi; };
   // Bez palby: kdyz obe strany strili, objekty umiraji v jinych okamzicich
   // a porovnani vzniku se v tom ztraci. Hrac tu jen sedi (trainer ma
   // nekonecne zivoty), takze se meri ciste chovani mapy.
   let guard = 0;
-  while (H[p + cfg.a6 + 166] !== 0 && guard++ < 3000) VA.run(4, null);
+  while (m.rd(cfg.a6 + 166) !== 0 && guard++ < 3000) VA.run(4, null);
   const zero = cam();
   const seen = new Set(), events = [];
   const scan = () => {
@@ -97,7 +93,7 @@ EVENTS_ORIG_JS = """(cfg) => {
     let node = cfg.a6 - 698, g = 0;
     while (g++ < 500) {
       const nx = L(node + 4);
-      if (!nx || nx >= n) break;
+      if (!nx || !m.platna(nx)) break;
       if (W(nx + 274) === 100 && (L(nx + 534) & 0xffff) === cfg.mark &&
           !seen.has(nx)) {
         seen.add(nx);
@@ -116,7 +112,7 @@ EVENTS_ORIG_JS = """(cfg) => {
       const live = new Set();
       let node = cfg.a6 - 698, g = 0;
       while (g++ < 500) { const nx = L(node + 4);
-        if (!nx || nx >= n || live.has(nx)) break; live.add(nx); node = nx; }
+        if (!nx || !m.platna(nx) || live.has(nx)) break; live.add(nx); node = nx; }
       for (const a of Array.from(seen)) if (!live.has(a)) seen.delete(a);
     }
   }
@@ -144,15 +140,12 @@ EVENTS_REMAKE_JS = """(cfg) => {
 }"""
 
 ORIG_JS = """(cfg) => {
-  const H = VA.M.HEAPU8, p = VA.fn.chipPtr(), n = VA.fn.chipSize();
-  const L = a => (H[p+a]<<24|H[p+a+1]<<16|H[p+a+2]<<8|H[p+a+3])>>>0;
-  const W = a => { const v = (H[p+a]<<8)|H[p+a+1]; return v > 0x7fff ? v-0x10000 : v; };
-  const U = a => (H[p+a]<<8)|H[p+a+1];
+  const m = VA.mem(), L = m.L, W = m.W, U = m.U;
   const cam = () => { let hi = L(cfg.a6 + 3530) >>> 16;
                       return hi > 0x7fff ? hi - 0x10000 : hi; };
   // rozjezd: drz palbu pulzovane a cekej, az se uvolni zamek scrollu
   let guard = 0;
-  while (H[p + cfg.a6 + 166] !== 0 && guard++ < 3000) {
+  while (m.rd(cfg.a6 + 166) !== 0 && guard++ < 3000) {
     VA.fn.joy(2, 4); VA.run(2, null); VA.fn.joy(2, 13); VA.run(2, null);
   }
   const zero = cam();
@@ -166,7 +159,7 @@ ORIG_JS = """(cfg) => {
     let node = cfg.a6 - 698, g3 = 0;
     while (g3++ < 500) {
       const nx = L(node + 4);
-      if (!nx || nx >= n || tasks.some(t => t.adr === nx)) break;
+      if (!nx || !m.platna(nx) || tasks.some(t => t.adr === nx)) break;
       if (W(nx + 274) === 100 && (L(nx + 534) & 0xffff) === cfg.mark)
         tasks.push({ adr: nx, gfx: U(nx + 368), x: W(nx + 320),
                      ys: W(nx + 324) - c, z: W(nx + 328),
@@ -232,8 +225,8 @@ def original(points):
             page.evaluate("([r, a]) => VA.boot(r, a)", [
                 base64.b64encode(open(vacmp.ROM, "rb").read()).decode(),
                 base64.b64encode(open(vacmp.ADF, "rb").read()).decode()])
-            page.evaluate(vacmp.PLAY_PROLOGUE)
-            res = page.evaluate(ORIG_JS, {"a6": vacmp.A6_BASE, "mark": MARK,
+            vacmp.prolog(page)
+            res = page.evaluate(ORIG_JS, {"a6": vacmp.A6_BASE, "mark": vacmp.mark(),
                                           "points": list(points)})
             browser.close()
     finally:
@@ -291,9 +284,9 @@ def events_original(dist):
             page.evaluate("([r, a]) => VA.boot(r, a)", [
                 base64.b64encode(open(vacmp.ROM, "rb").read()).decode(),
                 base64.b64encode(open(vacmp.ADF, "rb").read()).decode()])
-            page.evaluate(vacmp.PLAY_PROLOGUE)
+            vacmp.prolog(page)
             res = page.evaluate(EVENTS_ORIG_JS,
-                                {"a6": vacmp.A6_BASE, "mark": MARK, "dist": dist})
+                                {"a6": vacmp.A6_BASE, "mark": vacmp.mark(), "dist": dist})
             browser.close()
     finally:
         srv.shutdown()

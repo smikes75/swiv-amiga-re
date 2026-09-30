@@ -24,25 +24,21 @@ import vacmp                                             # noqa: E402
 import zoneshot                                          # noqa: E402
 from playwright.sync_api import sync_playwright          # noqa: E402
 
-A6 = vacmp.A6_BASE
 BOB_HEAD = 208            # fp@(208)
 TILE_HEAD = 3564          # fp@(3564)
 
 DUMP_JS = """(cfg) => {
-  const H = VA.M.HEAPU8, p = VA.fn.chipPtr();
-  const be16 = a => (H[a] << 8) | H[a + 1];
-  const s16 = a => { const v = be16(a); return v & 0x8000 ? v - 0x10000 : v; };
-  const be32 = a => ((H[a]<<24 | H[a+1]<<16 | H[a+2]<<8 | H[a+3]) >>> 0);
+  const m = VA.mem(), be16 = m.U, s16 = m.W, be32 = m.L;
   const out = [];
   const hlava = cfg.head;                 // amigovska adresa hlavy seznamu
-  let uzel = be32(p + hlava);
+  let uzel = be32(hlava);
   let n = 0;
   while (uzel && uzel !== hlava && n < cfg.limit) {
-    const a = p + uzel;
+    const a = uzel;
     out.push({ adr: uzel,
                klic: be16(a + 8), gfx: be16(a + 10),
                x: s16(a + 12), radek: s16(a + 14),
-               f20: H[a + 20], f21: H[a + 21] });
+               f20: m.rd(a + 20), f21: m.rd(a + 21) });
     uzel = be32(a);
     n++;
   }
@@ -65,22 +61,20 @@ def main():
         err = page.evaluate("([r, a]) => VA.boot(r, a)", [rom, adf])
         if err:
             b.close(); srv.shutdown(); sys.exit("boot: " + err)
-        page.evaluate(vacmp.PLAY_PROLOGUE)
+        vacmp.prolog(page)
+        A6 = vacmp.A6_BASE
         r = page.evaluate(zoneshot.DRIVE_JS, {"target": cil, "limit": 200000})
         print(f"mapova pozice {r['pos']} (cil {cil}) po {r['frames']} snimcich",
               flush=True)
 
         glob = page.evaluate("""(a6) => {
-          const H = VA.M.HEAPU8, p = VA.fn.chipPtr();
-          const be16 = a => (H[a] << 8) | H[a + 1];
-          const s16 = a => { const v = be16(a); return v & 0x8000 ? v - 65536 : v; };
-          const be32 = a => ((H[a]<<24|H[a+1]<<16|H[a+2]<<8|H[a+3])>>>0);
-          const g = o => s16(p + a6 + o);
-          const desc = o => { const b = be32(p + a6 + o); return {
-            adr: b, bitmapa: be32(p + b), radek: be16(p + b + 8),
-            obnovCitac: be16(p + b + 16), obnovPtr: be32(p + b + 18) }; };
+          const m = VA.mem(), be16 = m.U, s16 = m.W, be32 = m.L;
+          const g = o => s16(a6 + o);
+          const desc = o => { const b = be32(a6 + o); return {
+            adr: b, bitmapa: be32(b), radek: be16(b + 8),
+            obnovCitac: be16(b + 16), obnovPtr: be32(b + 18) }; };
           return { kamera: g(3530), stavitel: g(3538), ctec: g(3586),
-                   zamek: H[p + a6 + 166],
+                   zamek: m.rd(a6 + 166),
                    obrazovka: desc(256), druhy: desc(260), strip: desc(264) };
         }""", A6)
         print("\nglobaly:")

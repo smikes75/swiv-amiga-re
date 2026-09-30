@@ -55,15 +55,12 @@ FIELDS = {"x": 320, "y": 324, "z": 328, "vx": 332, "vy": 336,
           "hp": 360, "cull": 364, "flags": 367, "trida": 504}
 
 WALK_JS = """(cfg) => {
-  const H = VA.M.HEAPU8, p = VA.fn.chipPtr(), n = VA.fn.chipSize();
-  const L = a => (H[p+a]<<24|H[p+a+1]<<16|H[p+a+2]<<8|H[p+a+3])>>>0;
-  const W = a => { const v = (H[p+a]<<8)|H[p+a+1];
-                   return v > 0x7fff ? v - 0x10000 : v; };
+  const m = VA.mem(), L = m.L, W = m.W;
   const out = [];
   let node = cfg.a6 + cfg.head, guard = 0;
   while (guard++ < 500) {
     const nx = L(node + cfg.next);
-    if (!nx || nx >= n) break;
+    if (!nx || !m.platna(nx)) break;
     if (out.some(t => t.adr === nx)) break;
     const h = L(nx + cfg.smart);
     const rec = { adr: nx, prio: W(nx + cfg.prio), pc: L(nx + cfg.pc),
@@ -81,7 +78,7 @@ def live_tasks(page, head=HEAD_MAIN):
     return page.evaluate(WALK_JS, {"a6": vacmp.A6_BASE, "head": head,
                                    "next": NEXT, "prio": PRIO, "pc": PC,
                                    "smart": SMART, "fields": FIELDS,
-                                   "mark": (0xa36a + vacmp.PROG_BASE) & 0xffff})
+                                   "mark": vacmp.mark()})
 
 
 def behaviour_index(root):
@@ -118,7 +115,7 @@ def main():
             page.evaluate("([r, a]) => VA.boot(r, a)", [
                 base64.b64encode(open(vacmp.ROM, "rb").read()).decode(),
                 base64.b64encode(open(vacmp.ADF, "rb").read()).decode()])
-            page.evaluate(vacmp.PLAY_PROLOGUE)
+            vacmp.prolog(page)
             page.evaluate(f"() => playFor({seconds})")
             tasks = live_tasks(page)
             browser.close()
