@@ -2137,6 +2137,18 @@ Prepis pricital +4 pri kazdem vystrelu. DESERT husy 0/16 -> 11/16.
   INST4 sedi; nosice INST5 (INSECTS#23) jedou shodne do 1-2 px, "rozchody"
   jsou tolerance 1 px proti obnove originalu po 2-4 VBL. `activeCost`
   originalu v arene 70 az 120, naziva 1-2 weaveri, 1-3 hunteri.
+- **2026-09-30, hra s celou pameti** (zaplata skenu fixu, LOADER.md):
+  arena je mnohem tezsi (3 851 drah originalu, kola 4 az 8 VBL misto 2 az
+  4). Boss INST4, obe lampy a bomby INST5 sedi po celou delku; z 22
+  utocniku INST5 (`0x2e57`) 8 shodnych, 14 se rozejde v tiku 9 az 23
+  o 4 az 5 px v x (symetricke dvojice) - jejich zataceni se rozhoduje po
+  kolech a original ma ted kola dvakrat delsi; stejny model jako
+  u CAMOGUN v TOWN (sekce "Kadence planovace"), zamerne nemodelovano.
+  "Chybejici" `0x7`/`0x802` na x 229 az 337 jsou prstence tela bosse,
+  ktere prepis klade jako dekaly, ne objekty. ICE 43600 s celou pameti:
+  1 147 drah originalu (drive 6 - pamet mu dosla), 8 sparovanych
+  mapovych objektu, 6 shodnych, 2 tryskace (RNG); deti a rozdilny dojezd
+  nastroj neparuje.
 
 Pozor pri vlastnich sondach: nesmrtelny hrac (`inv`) v prepisu brani
 tomu, aby se o nej weaveri rozbili - krouzi kolem nej a `activeCost`
