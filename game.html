@@ -1267,8 +1267,10 @@ $("#insert").onclick = () => { unlockAudioContext(); $("#fpick").click(); };
   for (const m of menus) {
     const t = m.querySelector(".wbtitle");
     t.addEventListener("click", e => {
-      // Klik hned po prepnuti najetim menu nezavira.
-      if (performance.now() - (m.hoverAt || 0) < 500) { e.stopPropagation(); return; }
+      // Klik hned po prepnuti najetim menu nezavira. (Jen kdyz k najeti
+      // doslo: WebKit hlasi performance.now() od zacatku stranky v radu
+      // stovek ms, takze "0" by tu spolkla prvni kliknuti.)
+      if (m.hoverAt && performance.now() - m.hoverAt < 500) { e.stopPropagation(); return; }
       const open = !m.classList.contains("open");
       menus.forEach(o => o.classList.remove("open"));
       if (open) m.classList.add("open");
