@@ -245,7 +245,7 @@ a { color:#cfe0ff }
     <div id="crtfx" style="display:none;position:absolute;inset:0;pointer-events:none;
       background:repeating-linear-gradient(to bottom, rgba(0,0,0,0) 0 2px, rgba(0,0,0,.28) 2px 3px),
                  repeating-linear-gradient(to right, rgba(255,0,0,.045) 0 1px, rgba(0,255,0,.045) 1px 2px, rgba(0,0,255,.045) 2px 3px);
-      box-shadow:inset 0 0 42px rgba(0,0,0,.55);border-radius:6px"></div>
+"></div>
     <pre id="perfhud" hidden style="position:absolute;left:4px;top:4px;margin:0;
       padding:4px 6px;font:11px/1.35 monospace;color:#cfe;background:rgba(0,0,0,.72);
       pointer-events:none;white-space:pre;border-radius:3px"></pre>
@@ -8912,9 +8912,10 @@ function applyCrt() {
   const mode = state.crtMode || "vyp";
   if (mode === "vyp") { fx.style.display = "none"; return; }
   fx.style.display = "";
+  // Bez vinety: ztmaveni okraju hraci vadilo, zustavaji jen radky a maska.
+  fx.style.boxShadow = "none";
   if (mode === "vyrazne") {
     fx.style.background = CRT_VYRAZNE;
-    fx.style.boxShadow = "inset 0 0 42px rgba(0,0,0,.55)";
     state.crtRow = 0;
     return;
   }
@@ -8929,7 +8930,6 @@ function applyCrt() {
     (row - line).toFixed(3) + "px " + row.toFixed(3) + "px)," +
     "repeating-linear-gradient(to right, rgba(255,0,0,.02) 0 1px, " +
     "rgba(0,255,0,.02) 1px 2px, rgba(0,0,255,.02) 2px 3px)";
-  fx.style.boxShadow = "inset 0 0 28px rgba(0,0,0,.35)";
 }
 try {
   const ulozenoCrt = localStorage.getItem("swivCrt");
