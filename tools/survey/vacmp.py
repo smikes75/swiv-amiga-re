@@ -249,8 +249,10 @@ DRIVE_JS = """(cfg) => {
   let k = cfg.souvisle ? (window.__jizdaK || 0) : 0;
   const k0 = k;
   let stoji = 0, posledni = U(A6 + 3530), vyprosteni = 0;
-  // cfg.trace: zapisy do registru Paula (AUD0..AUD3) s PC, tools/sfxtrace.py
-  const out = [], dv = new DataView(H.buffer),
+  // cfg.trace: zapisy do registru Paula (AUD0..AUD3) s PC a potvrzeni
+  // zvukoveho IRQ (INTREQ z 0x4b08) - delka stavu se pak pocita v IRQ,
+  // ne v case (jednorazovy CIAB se pod zatezi opozduje), tools/sfxtrace.py
+  const out = [], dv = new DataView(H.buffer), IRQPC = lay.prog + 0x4b08,
         size = cfg.trace ? VA.fn.regTraceEntrySize() : 0;
   while (U(A6 + 3530) > cfg.od && k++ - k0 < cfg.limit) {
     m.w8(A6 + 166, m.rd(A6 + 166) & ~8);
@@ -262,10 +264,10 @@ DRIVE_JS = """(cfg) => {
       VA.fn.regTrace(1); VA.fn.step(); VA.fn.regTrace(0);
       const m = VA.fn.regTraceCount(), base = VA.fn.regTracePtr();
       for (let i = 0; i < m; i++) {
-        const o = base + i * size, r = dv.getUint16(o, true);
-        if (r >= 0xa0 && r < 0xe0)
+        const o = base + i * size, r = dv.getUint16(o, true), pc = dv.getUint32(o + 4, true);
+        if ((r >= 0xa0 && r < 0xe0) || (r === 0x9c && pc === IRQPC))
           out.push([k, dv.getUint16(o + 10, true), dv.getUint16(o + 12, true),
-                    r, dv.getUint16(o + 2, true), dv.getUint32(o + 4, true)]);
+                    r, dv.getUint16(o + 2, true), pc]);
       }
     } else VA.fn.step();
     const c = U(A6 + 3530);

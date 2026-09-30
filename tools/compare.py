@@ -146,16 +146,21 @@ CHECKPOINTS = {
     # dane urovne, scroll na nalezeny radek a ZADNE objekty (korutiny se
     # nespousti). Rozdil je tedy presne tam, kde original nejake objekty ma,
     # plus pripadna chyba terenu - a prave tu ma zarazka hlidat.
-    "grass": {"prefix": "zone", "pos": 48788, "terrainFloor": 92.9,
+    # Snimky zon znovu porizeny 2026-09-30 po zaplate skenu pameti ve fix
+    # wrapperu (docs/LOADER.md): original ma ted celou pamet a na obrazovce
+    # vic zivych objektu, takze shoda "bez objektu" klesla (ICE 89 -> 63 %,
+    # FINAL 72 -> 62 %). Diff obrazky ukazuji rozdil jen v objektech, teren
+    # sedi; presny teren hlida tools/covercheck.py (indexy bitplanu).
+    "grass": {"prefix": "zone", "pos": 48788, "terrainFloor": 92.4,
               "level": 2, "row": 15963, "onlyTerrain": True},
-    "river": {"prefix": "zone", "pos": 45488, "terrainFloor": 93.4,
+    "river": {"prefix": "zone", "pos": 45488, "terrainFloor": 93.1,
               "level": 3, "row": 12663, "onlyTerrain": True},
     # ICE i SCIFI musely dostat jinou pozici nez prvni pokus: 40688 padlo
     # do otevrene vody mezi SWAP plosinami, kde vypada kazdy radek stejne,
     # a 35488 do opakujicich se sestiuhelniku. Viz docs/GAPS.md.
-    "ice": {"prefix": "zone", "pos": 42000, "terrainFloor": 89.0,
+    "ice": {"prefix": "zone", "pos": 42000, "terrainFloor": 62.7,
             "level": 4, "row": 9176, "onlyTerrain": True},
-    "scifi": {"prefix": "zone", "pos": 37000, "terrainFloor": 95.2,
+    "scifi": {"prefix": "zone", "pos": 37000, "terrainFloor": 94.5,
               "level": 5, "row": 4175, "onlyTerrain": True},
     # FINAL: bossova arena. Radek nasel `tools/align.py --snimek --uroven 6`
     # (65,9 % hrube -> 71,9 % po zjemneni; tataz sonda dala proti urovni 5
@@ -164,7 +169,7 @@ CHECKPOINTS = {
     # INST5#17 jako dekaly), nepratele i vybuchy, kdezto prepis se sem stavi
     # bez objektu. Zarazka tedy hlida, ze se nerozbije dekodovani mapy,
     # palety a dlazdic FINALu - ne chovani.
-    "final": {"prefix": "zone", "pos": 32950, "terrainFloor": 71.8,
+    "final": {"prefix": "zone", "pos": 32950, "terrainFloor": 61.6,
               "level": 6, "row": 126, "onlyTerrain": True},
     # Puvodni poznamka, proc to dlouho nebylo (plati jako varovani):
     # Zona je uzka: `FINAL.PAM` ma 384 radku a v retezu od urovne 5 zacina

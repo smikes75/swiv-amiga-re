@@ -183,48 +183,52 @@ the routine, the `0x4C00` volume write of `0x4BF2` ends it) and compares
 each instance with the timeline the browser builds for the same effect:
 effective Paula volume, period and state length in IRQs.
 
-Run of 2026-09-30. The harness holds the player's lives (`vacmp.LIVES`;
-without that the unattended drive lost every life in RIVER or ICE and the
-map stood still, which had been mistaken for a scroll lock). **Caution:**
-the drive reached map position 32995, but the original's map reader
-(`fp@(3586)`) stopped at 44189, at the start of ICE - the loader ran out
-of memory for further graphics (docs/GAPS.md) - so from there on no new
-objects appeared and the screen repeated one strip. The table below is
-therefore a verification of TOWN, DESERT, GRASS and RIVER only:
+Run of 2026-09-30, TOWN through FINAL, with the game given its full
+memory (the harness patches the crack's broken memory scan, see
+docs/LOADER.md; before that the loader starved from the start of ICE and
+nothing new appeared there). State lengths are counted in sound IRQs
+(the `INTREQ` acknowledge at `0x4B08` is traced along with the audio
+registers), which removes the one-shot timer's load-dependent drift from
+the comparison.
 
 | effect | instances (complete) | differences |
 |---|---:|---:|
-| player volley `0x4F3E` | 6 797 (6 378) | 0 |
-| default hit `0x5070` | 619 (533) | 0 |
-| cannon `0x53BE` | 1 006 (734) | 0 |
-| HOMING `0x528A` | 200 (178) | 0 |
-| BLACKJET `0x52E8` | 101 (2) | 0 |
-| GOOSE hit / installation hit `0x4E5E` | 87 / 14 | 0 |
-| opening `0x5138` (both voices) | 68 | 0 |
-| FLAME puff `0x50D0` | 27 | 0 |
-| MINE shield `0x500E` | 4 | 0 |
-| XEVIOUS bomb `0x4D08` | 138 | 0 |
-| XEVIOUS bolt ping `0x55BC` | 15 | 0 |
-| PLAT hatch `0x4D7A` | 40 | 0 |
-| egg / walker pods `0x5456` | 235 | 0 |
-| factory / INST2 beam `0x5456` | 136 | 0 |
+| player volley `0x4F3E` | 5 107 (4 347) | 0 |
+| default hit `0x5070` | 800 (619) | 0 |
+| cannon `0x53BE` | 2 230 (1 685) | 0 |
+| HOMING `0x528A` | 782 (543) | 0 |
+| BLACKJET `0x52E8` | 179 (6) | 0 |
+| GOOSE hit / installation hit `0x4E5E` | 173 / 177 | 0 |
+| opening `0x5138` (both voices) | 254 | 0 |
+| FLAME puff `0x50D0` | 152 | 0 |
+| MINE shield `0x500E` | 7 | 0 |
+| XEVIOUS bomb `0x4D08` | 393 | 0 |
+| XEVIOUS bolt ping `0x55BC` | 18 | 0 |
+| PLAT hatch `0x4D7A` | 47 | 0 |
+| egg / walker pods `0x5456` | 254 | 0 |
+| factory / INST2 beam `0x5456` | 98 | 0 |
 | `_CORN` launch `0x54C8` (both voices) | 2 | 0 |
+| geyser `0x536E` (three voices) | 172 (65) | 0 (period checked as range 127..254) |
 | extra-life chime `0x5672` (424..133) | 6 | 0 |
+
+10 851 instances in all, none different. This closes the last effect
+without a native measurement (the geyser).
 
 An incomplete instance was pre-empted by another effect and is compared
 over the states it reached. Sample voices are checked by period and
 length: `BIGEXPL` (`AUDLEN` 4 243) at 592..623 for the standard explosion,
 768 and 776 for the `+376` big death, 1024/1032/1152/1160 for the player
 burst, and `SMART` (`AUDLEN` 4 140) at 1040/1025/1010/996 - all as
-transcribed. Only the geyser `0x536E` did not sound (the drive clears the
-SCIFI arena lock and passes before a geyser erupts); TOKEN notes were
-already checked by the earlier PC/audio captures.
+transcribed. TOKEN notes were already checked by the earlier PC/audio
+captures.
 
 Two comparison rules keep the check honest rather than lenient: adjacent
 states with the same volume and period are merged (the browser's opening
 hold is a separate state, the original simply does not rewrite), and a
-state may run up to 4 % long because the one-shot timer drifts with
-load (the opening hold measured 94 instead of 91 IRQs in RIVER).
+state length is the number of sound IRQs between its writes, not elapsed
+time (measured in time, the one-shot timer's drift under load made 4-IRQ
+geyser states look like 5 in SCIFI and FINAL). A duplicated `INTREQ`
+trace entry at the same instant (26 of 84 533 in FINAL) is dropped.
 
 ## Attract music and verified A500 output path
 

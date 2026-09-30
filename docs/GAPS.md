@@ -47,9 +47,10 @@ Otevrene zustava:
   RIVERu" byly konec hry - bezobsluzna jizda prisla o vsechny zivoty.
   Harness je ted drzi (`vacmp.LIVES`, slovo +68 slotu = -4 x zivoty).
   Jizda pak sice dojela na pozici 32995, ale ctec mapy originalu stal od
-  44189 (zacatek ICE, vycerpana pamet zavadece), takze **overeni plati jen
-  po zacatek ICE** (9 495 instanci, i noty extra zivota, 0 rozdilu). ICE,
-  SCIFI, FINAL a gejzir `0x536e` zustavaji neoverene.
+  44189 (zacatek ICE, vycerpana pamet zavadece - chyba skenu pameti ve
+  fix wrapperu, viz LOADER.md). **Po zaplate skenu (hra s celou pameti)
+  je overena cela hra TOWN az FINAL: 16 efektu vcetne gejziru, 10 851
+  instanci, 0 rozdilu**; delky stavu se pocitaji v zvukovych IRQ.
 - **Nalez pri tom: CIAB je jednorazovy.** `0x4a74` nastavi RUNMODE,
   obsluha ho restartuje az na `0x4b00`, takze IRQ chodi ~199 Hz (3,98 na
   snimek), ne 204,8 Hz. Prepis ted pocita s restartem 106 E-cyklu
@@ -2019,8 +2020,7 @@ objektu z mapy. **Original ani jedno nepouziva.**
 **Mereni** (`tools/covercheck.py`, harness vAmiga, rovina originalu proti
 masce prepisu bod po bodu): TOWN ctyri okamziky, DESERT 52000, GRASS
 48788, RIVER 45488, ICE 42735 - **0 odchylek** (v ICE 444 bodu v hornim
-pruhu, kde se prave stavi dalsi pruh terenu). SCIFI a FINAL harness
-nedojede.
+pruhu, kde se prave stavi dalsi pruh terenu). **2026-09-30, hra s celou pameti (zaplata skenu fixu):** ICE 42000 (bez popredi), SCIFI 37000 (2 786 zakrytych bodu) a FINAL 33100 (2 827) - **0 odchylek**; popredi tedy sedi ve vsech sedmi zonach.
 
 **Jak spatne byl stary model** (cela mapa, 791 921 zakrytych bodu):
 objekty s mapovou vrstvou 1 (30 tanku, 33 plamenu...) nebyly zakryte

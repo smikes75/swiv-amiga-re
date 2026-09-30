@@ -13,8 +13,9 @@ instrukce, ktera ho provedla:
    mapove pozice; zapisy se ukladaji do `build/vacmp/sfx/trace_<pozice>.json`;
 2. zapisy se rozlozi na instance efektu: instance zacina zapisem `AUDxLCH`
    a PC teto instrukce urcuje rutinu (`0x4d10` = bomba `0x4d08` atd.);
-   zapisy `VOL`/`PER` v tomtez IRQ tvori jeden stav, mezera k dalsimu stavu
-   je jeho delka v IRQ (CIAB 204.8 Hz = 76,3 radku);
+   zapisy `VOL`/`PER` v tomtez IRQ tvori jeden stav, jeho delka je pocet
+   zvukovych IRQ (potvrzeni INTREQ z 0x4b08 v zaznamu) do dalsiho stavu;
+   starsi zaznamy bez IRQ pouzivaji cas (78,6 radku na IRQ);
 3. kazda instance se porovna s timeline, kterou pro tentyz efekt sklada
    prepis (`sfxBombTimeline()` ...): efektivni hlasitost Paula (bit 6 =
    64), perioda a delka stavu. Instance prerusena jinym efektem se srovna
@@ -24,11 +25,9 @@ Efekty s nahodnou periodou (gejzir 0x536e, vybuchy BIGEXPL) se srovnavaji
 jen ve strukture (hlasitost, delka, rozsah period). Sumove efekty maji
 periodu i hlasitost deterministickou, jejich obsah vlny se tu nesrovnava.
 
-Vysledek 2026-09-30 (zivoty drzene vacmp.LIVES, chipove rozvrzeni):
-15 efektu a noty extra zivota, 9 495 instanci, 0 rozdilu - ale ctec mapy
-originalu stal od 44189 (zacatek ICE, roztristena pamet), takze to platilo
-jen pro TOWN az RIVER. Od zaplaty skenu pameti (vacmp.PATCH_SCAN_JS) jizda
-projede az do FINAL; jizda vraci `ctec` a zaznam nese bazi AMPROG.
+Vysledek 2026-09-30 (hra s celou pameti, vacmp.PATCH_SCAN_JS): TOWN az
+FINAL, 16 efektu vcetne gejziru a noty extra zivota, 10 851 instanci,
+0 rozdilu. Jizda vraci `ctec` (ctec mapy) a zaznam nese bazi AMPROG.
 Casovani IRQ viz docs/SOUND.md: CIAB je jednorazovy, median 78,6 radku.
 
     python3 tools/sfxtrace.py                       # TOWN..FINAL, zaznam + srovnani
@@ -144,10 +143,25 @@ def nacti_trace(cesta):
     return d, 0xEFC0
 
 
+IRQ_CASY = []            # casy potvrzeni zvukoveho IRQ v aktualnim zaznamu
+
+
 def instance(trace, prog):
-    """Rozlozi zapisy na instance: start = AUDxLCH, dal VOL/PER/LEN kanalu."""
+    """Rozlozi zapisy na instance: start = AUDxLCH, dal VOL/PER/LEN kanalu.
+    Zapisy INTREQ z 0x4b08 (jeden na kazdy zvukovy IRQ) jdou do IRQ_CASY."""
     otevrene, out, prev = {}, [], 0
+    IRQ_CASY.clear()
     for k, vpos, hpos, reg, val, pc in trace:
+        if reg == 0x9c:
+            t = k * LINES + vpos + hpos / 227.0
+            if t < prev - 50:
+                t += LINES
+            prev = t
+            # Tyz zapis se v zaznamu obcas objevi dvakrat v temze okamziku
+            # (26x z 84 533 v FINAL); skutecny interval je vzdy >= 78 radku.
+            if not IRQ_CASY or t - IRQ_CASY[-1] > 20:
+                IRQ_CASY.append(t)
+            continue
         if not 0xa0 <= reg < 0xe0:
             continue
         pc -= prog
@@ -188,7 +202,7 @@ def stavy(inst):
     res = []
     for i, g in enumerate(skup):
         konec = skup[i + 1][0] if i + 1 < len(skup) else (g[3] if len(g) > 3 else None)
-        d = None if konec is None else round((konec - g[0]) / IRQ)
+        d = None if konec is None else delka_irq(g[0], konec)
         if d != 0:               # zapis tesne pred cleanupem (_CORN 0x552e) nezni
             res.append([g[1], g[2], d])
     return res, cleanup
@@ -208,6 +222,14 @@ def vyber_ref(pc, st, ref):
         0x54d0: "corn10000" if p0 == 10000 else "corn11000",
         0x5376: "gejzir", 0x567a: "nota%d" % p0,
     }.get(pc)
+
+
+def delka_irq(od, do_):
+    """Pocet zvukovych IRQ mezi dvema zapisy; bez zaznamu IRQ podle casu."""
+    if not IRQ_CASY:
+        return round((do_ - od) / IRQ)
+    import bisect
+    return bisect.bisect_left(IRQ_CASY, do_) - bisect.bisect_left(IRQ_CASY, od)
 
 
 def slouc(st):

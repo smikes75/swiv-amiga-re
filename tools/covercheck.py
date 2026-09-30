@@ -25,7 +25,9 @@ nedokreslena (ICE: 444 bodu).
 
 Vysledek 2026-09-29: TOWN (start + 3 dalsi okamziky), DESERT 52000, GRASS
 48788, RIVER 45488, ICE 42735 - 0 odchylek mimo horni pruh (ICE 444 bodu
-v nem). "Zamek ICE" byl konec hry (harness ted drzi zivoty) a zaseknuti
+v nem). 2026-09-30 (hra s celou pameti): ICE 42000 (bez popredi), SCIFI
+37000 (2 786 zakrytych bodu) a FINAL 33100 (2 827) - 0 odchylek; retez
+map a posun radku si skript vybira sam podle shody indexu terenu. "Zamek ICE" byl konec hry (harness ted drzi zivoty) a zaseknuti
 na 46159 roztristena chip RAM kvuli chybe skenu pameti ve fix wrapperu
 (harness ji zaplatuje, docs/LOADER.md); jizda projede az do FINAL.
 """
@@ -167,7 +169,9 @@ def main():
               f"zakryto v obou {r['obojeZakryto']:6d}, jen original "
               f"{r['jenOriginal']}, jen prepis {r['jenPrepis']}"
               f"  (horni pruh: {r['okrajJenOriginal']} / {r['okrajJenPrepis']})")
-        if r["shodaTerenu"] < 85:
+        # FINAL ma v arene telo bosse jako dekaly (~68 %), jinde je shoda
+        # indexu pres 85 %; pod 55 % uz je zarovnani spatne.
+        if r["shodaTerenu"] < 55:
             print("  POZOR: teren nesedi - zarovnani (K) je nejspis spatne")
     print("COVERCHECK OK" if not spatne else f"COVERCHECK: {spatne} odchylek")
     sys.exit(1 if spatne else 0)
