@@ -64,7 +64,8 @@ ORIG_JS = """(cfg) => {
   if (cfg.od) {
     let n = 0;
     // Strelba z mista nezasahne nepratele mimo osu vrtulniku; v RIVERu se
-    // pak pamet zaplni a ctec mapy (a s nim teren i scroll) stoji na 46159.
+    // pak pamet zavadece dojde a ctec mapy (a s nim teren i scroll) stoji
+    // na 46159 (viz vacmp.DRIVE_JS a docs/GAPS.md).
     // Proto vrtulnik kmita vlevo/vpravo (GamePadAction 2 = PULL_LEFT,
     // 3 = PULL_RIGHT, 10 = RELEASE_X).
     while ((cam() & 0xffff) > cfg.od && n++ < 200000) {   // cam() je se znamenkem

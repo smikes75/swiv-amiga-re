@@ -183,10 +183,14 @@ the routine, the `0x4C00` volume write of `0x4BF2` ends it) and compares
 each instance with the timeline the browser builds for the same effect:
 effective Paula volume, period and state length in IRQs.
 
-Run of 2026-09-30, TOWN through FINAL (the harness holds the player's
-lives, see `vacmp.LIVES`; without that the unattended drive lost every life
-in RIVER or ICE and the map stood still, which had been mistaken for a
-scroll lock):
+Run of 2026-09-30. The harness holds the player's lives (`vacmp.LIVES`;
+without that the unattended drive lost every life in RIVER or ICE and the
+map stood still, which had been mistaken for a scroll lock). **Caution:**
+the drive reached map position 32995, but the original's map reader
+(`fp@(3586)`) stopped at 44189, at the start of ICE - the loader ran out
+of memory for further graphics (docs/GAPS.md) - so from there on no new
+objects appeared and the screen repeated one strip. The table below is
+therefore a verification of TOWN, DESERT, GRASS and RIVER only:
 
 | effect | instances (complete) | differences |
 |---|---:|---:|

@@ -24,8 +24,9 @@ Efekty s nahodnou periodou (gejzir 0x536e, vybuchy BIGEXPL) se srovnavaji
 jen ve strukture (hlasitost, delka, rozsah period). Sumove efekty maji
 periodu i hlasitost deterministickou, jejich obsah vlny se tu nesrovnava.
 
-Vysledek 2026-09-30 (TOWN az FINAL, zivoty drzene vacmp.LIVES): 15 efektu
-a noty extra zivota, 9 495 instanci, 0 rozdilu. Gejzir nezazni.
+Vysledek 2026-09-30 (zivoty drzene vacmp.LIVES): 15 efektu a noty extra
+zivota, 9 495 instanci, 0 rozdilu. Pozor: ctec mapy originalu stal od 44189
+(zacatek ICE), takze to plati jen pro TOWN az RIVER. Jizda vraci `ctec`.
 Casovani IRQ viz docs/SOUND.md: CIAB je jednorazovy, median 78,6 radku.
 
     python3 tools/sfxtrace.py                       # TOWN..FINAL, zaznam + srovnani
@@ -49,32 +50,9 @@ LINES = 313                              # PAL bez prokladu: vpos 0..312
 IRQ_NOM = 3464 / 709379 * 3546895 / 227  # radku na jmenovity CIAB IRQ (76,3)
 IRQ = 78.6              # zmereny median: casovac je jednorazovy (viz rozbor)
 
-TRACE_JS = """(cfg) => {
-  const H = VA.M.HEAPU8, p = VA.fn.chipPtr(), A6 = cfg.a6;
-  const U = a => (H[p+a]<<8)|H[p+a+1];
-  const dv = new DataView(H.buffer);
-  if (!window.__lockWait) { let guard = 0;
-    while (H[p + A6 + 166] !== 0 && guard++ < 3000) VA.run(4, null);
-    window.__lockWait = 1; }
-  VA.fn.warp(1);
-  const out = [], size = VA.fn.regTraceEntrySize();
-  let k = 0;
-  while (U(A6 + 3530) > cfg.od && k++ < cfg.limit) {
-    H[p + A6 + 166] &= ~8;
-    KEEP_LIVES
-    VA.fn.joy(2, (k % 10) < 5 ? 4 : 13);
-    if (k % 120 === 0) VA.fn.joy(2, (k / 120) % 2 ? 2 : 3);
-    VA.fn.regTrace(1); VA.fn.step(); VA.fn.regTrace(0);
-    const n = VA.fn.regTraceCount(), base = VA.fn.regTracePtr();
-    for (let i = 0; i < n; i++) {
-      const o = base + i * size, r = dv.getUint16(o, true);
-      if (r >= 0xa0 && r < 0xe0)
-        out.push([k, dv.getUint16(o + 10, true), dv.getUint16(o + 12, true),
-                  r, dv.getUint16(o + 2, true), dv.getUint32(o + 4, true)]);
-    }
-  }
-  return { pos: U(A6 + 3530), k, out };
-}""".replace("KEEP_LIVES", vacmp.KEEP_LIVES_JS)
+# Jizda je spolecna s ostatnimi nastroji (vacmp.DRIVE_JS, s vyprostenim
+# zablokovaneho zavadece); cfg.trace k ni prida zaznam registru Paula.
+
 
 # Rutiny podle PC zapisu AUDxLCH, ktery instanci zaklada.
 EFEKTY = {
@@ -142,12 +120,13 @@ def zaznam(targets):
                 base64.b64encode(open(vacmp.ADF, "rb").read()).decode()])
             page.evaluate(vacmp.PLAY_PROLOGUE)
             for t in targets:
-                r = page.evaluate(TRACE_JS, {"a6": vacmp.A6_BASE, "od": t,
-                                             "limit": 120000})
+                r = page.evaluate(vacmp.DRIVE_JS, {"od": t, "limit": 120000,
+                                                   "trace": True})
                 json.dump(r["out"], open(os.path.join(OUT, f"trace_{t}.json"), "w"))
                 zas = "  ZASEKNUTO" if r["pos"] > t else ""
                 print(f"  original: pozice {r['pos']} (cil {t}), {r['k']} snimku, "
-                      f"{len(r['out'])} zapisu{zas}", flush=True)
+                      f"{len(r['out'])} zapisu, vyprosteni {r['vyprosteni']}{zas}",
+                      flush=True)
             br.close()
     finally:
         srv.shutdown()

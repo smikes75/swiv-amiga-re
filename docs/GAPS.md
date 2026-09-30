@@ -43,11 +43,13 @@ Otevrene zustava:
   `tools/sfxtrace.py`: zapisy do registru Paula originalu (TOWN, DESERT,
   GRASS, RIVER) proti timeline prepisu, 15 efektu a vsech 12 063 instanci
   stav po stavu bez rozdilu (hlasitost, perioda, delka), vzorky BIGEXPL a
-  SMART v periodach i delce. **2026-09-30 rozsireno na celou hru az po
-  FINAL** (9 495 instanci, i noty extra zivota, 0 rozdilu): "zamek ICE"
-  a "zaseknuti RIVERu" byly konec hry - bezobsluzna jizda prisla o vsechny
-  zivoty. Harness je ted drzi (`vacmp.LIVES`, slovo +68 slotu = -4 x
-  zivoty). Neovereny zustava jen gejzir `0x536e`.
+  SMART v periodach i delce. 2026-09-30: "zamek ICE" a jedno "zaseknuti
+  RIVERu" byly konec hry - bezobsluzna jizda prisla o vsechny zivoty.
+  Harness je ted drzi (`vacmp.LIVES`, slovo +68 slotu = -4 x zivoty).
+  Jizda pak sice dojela na pozici 32995, ale ctec mapy originalu stal od
+  44189 (zacatek ICE, vycerpana pamet zavadece), takze **overeni plati jen
+  po zacatek ICE** (9 495 instanci, i noty extra zivota, 0 rozdilu). ICE,
+  SCIFI, FINAL a gejzir `0x536e` zustavaji neoverene.
 - **Nalez pri tom: CIAB je jednorazovy.** `0x4a74` nastavi RUNMODE,
   obsluha ho restartuje az na `0x4b00`, takze IRQ chodi ~199 Hz (3,98 na
   snimek), ne 204,8 Hz. Prepis ted pocita s restartem 106 E-cyklu
@@ -2092,6 +2094,15 @@ Prepis pricital +4 pri kazdem vystrelu. DESERT husy 0/16 -> 11/16.
   `0x3496` stavi jen, kdyz je ctec mapy `fp@(3586)` dost napred, a ctec
   zjevne ceka (nejspis na pamet pro dalsi ulohu, `0x6162`). `fp@(166)` je
   pritom 0. Hypoteza, neovereno; prepis tuto mechaniku nema.
+  **Overeno 2026-09-30:** stavitel terenu `0x3516` ceka na `0x48c0`, tedy
+  az zavadec nahraje grafiku dalsiho objektu (TRILO) do tabulky
+  `fp@(11566)`. Sest POPUPu na pozici 46214 (x 34..284) mezitim proslo
+  `a2c6` a samo ceka na HOMING; hrac je nezasahne, zavadeci dosla pamet
+  (A500 1 MB) a obe strany cekaji navzajem. Zaseknuti zavisi na prubehu
+  hry (drzene zivoty ho neresi, i dva snimky vstupu navic ho vyvolaji nebo
+  obejdou). Harness (`vacmp.DRIVE_JS`) ho proto po 1500 snimcich stani
+  vyprosti: objekty po `a2c6` v obraze odsune pod obrazovku, cull je zrusi
+  a pamet se uvolni. Prepis limit pameti zamerne nemodeluje.
 - Kola jsou v ICE a na konci SCIFI delsi (nejcasteji 4 az 5 VBL misto 2),
   takze tam se chovani pocitana na kola od prepisu rozchazeji vic.
 

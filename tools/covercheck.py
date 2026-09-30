@@ -9,8 +9,8 @@ kresleni do pruhu (`0x3e38` -> `0x4068`, minterm NOT A AND C). Prepis
 sklada tutez masku v `renderMap` (`coverMask`).
 
 Skript pusti original v harnessu vAmiga (tools/survey/vacmp.py), dojede na
-zadane mapove pozice stejne jako tools/survey/zoneshot.py (kazdy snimek
-smaze bit 3 zamku instalace) a na kazde precte rovinu popredi i ctyri
+zadane mapove pozice jizdou `vacmp.jizda` (kazdy snimek smaze bit 3
+zamku instalace, drzi zivoty a vyprosti zablokovany zavadec) a na kazde precte rovinu popredi i ctyri
 bitplany terenu. Rovina je kruhova: radek bufferu = (kamera + sy) mod 320,
 44 bajtu na radek. Zarovnani s mapou prepisu (radek = pozice - 32826) se
 overi shodou barevnych indexu terenu.
@@ -20,13 +20,14 @@ zvlast: tam se prave stavi dalsi pruh a rovina muze byt jeste
 nedokreslena (ICE: 444 bodu).
 
     python3 tools/covercheck.py                  # DESERT, GRASS, RIVER, ICE
+    python3 tools/covercheck.py 42000 37000 33100   # ICE, SCIFI, FINAL
     python3 tools/covercheck.py 0 52000          # 0 = start TOWN, pak DESERT
 
 Vysledek 2026-09-29: TOWN (start + 3 dalsi okamziky), DESERT 52000, GRASS
 48788, RIVER 45488, ICE 42735 - 0 odchylek mimo horni pruh (ICE 444 bodu
-v nem). SCIFI a FINAL harness nedojede: scroll v ICE drzi dalsi zamek.
-Pozor, jizda neni vzdy stejna - po snimku startu TOWN se RIVER zasekl na
-46159 (skript to hlasi a porovna, kde stoji).
+v nem). "Zamek ICE" a zaseknuti na 46159 byly konec hry a vycerpana
+pamet zavadece; `vacmp.jizda` s drzenymi zivoty a vyprostenim projede
+az do FINAL (docs/GAPS.md).
 """
 import base64
 import json
@@ -36,7 +37,6 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "tools", "survey"))
 import vacmp                                        # noqa: E402
-import zoneshot                                     # noqa: E402
 from playwright.sync_api import sync_playwright     # noqa: E402
 
 K = 32826               # radek retezu prepisu = mapova pozice - K
@@ -61,13 +61,30 @@ DUMP = """(cfg) => {
 }"""
 
 COMPARE = """([samples, K, EDGE]) => {
-  startGame(0);
-  const g = state.g, W = g.mapW || 320, mi = g.mapIndex, cm = g.coverMask;
+  // Retez map prepisu: TOWN..RIVER je jeden (startGame(0)), ICE, SCIFI
+  // a FINAL maji vlastni. Uroven a presny posun radku (K +-4) se vybere
+  // podle nejlepsi shody barevnych indexu terenu.
+  const maps = {};
+  const mapOf = lv => { if (!maps[lv]) { startGame(lv); const g = state.g;
+    maps[lv] = { W: g.mapW || 320, mi: g.mapIndex, cm: g.coverMask }; }
+    return maps[lv]; };
   return samples.map(s => {
-    const R0 = s.cam - K;
+    let best = null;
+    for (const lv of [0, 4, 5, 6]) {
+      const m = mapOf(lv);
+      for (let dk = -4; dk <= 4; dk++) {
+        const R0 = s.cam - K - dk;
+        if (R0 < 0 || (R0 + 256) * m.W > m.mi.length) continue;
+        let t = 0, n = 0;
+        for (let sy = 0; sy < 256; sy += 4) for (let x = 0; x < 320; x += 4) {
+          n++; if (s.idx[sy][x] === m.mi[(R0 + sy) * m.W + x]) t++; }
+        if (!best || t / n > best.q) best = { q: t / n, lv, R0 };
+      }
+    }
+    const { W, mi, cm } = mapOf(best.lv), R0 = best.R0;
     let teren = 0, n = 0;
-    const r = { cam: s.cam, obojeZakryto: 0, jenOriginal: 0, jenPrepis: 0,
-                okrajJenOriginal: 0, okrajJenPrepis: 0 };
+    const r = { cam: s.cam, uroven: best.lv, radek: R0, obojeZakryto: 0,
+                jenOriginal: 0, jenPrepis: 0, okrajJenOriginal: 0, okrajJenPrepis: 0 };
     for (let sy = 0; sy < 256; sy++) for (let x = 0; x < 320; x++) {
       const o = s.cov[sy][x] === 0, q = cm[(R0 + sy) * W + x] === 1;
       n++; if (s.idx[sy][x] === mi[(R0 + sy) * W + x]) teren++;
@@ -109,10 +126,9 @@ def original(targets):
             page.evaluate(vacmp.PLAY_PROLOGUE)
             for t in targets:
                 if t:
-                    r = page.evaluate(zoneshot.DRIVE_JS,
-                                      {"target": t, "limit": 120000})
-                    stuck = "  ZASEKNUTO (dalsi zamek scrollu)" \
-                        if r["pos"] > t else ""
+                    r = vacmp.jizda(page, t)
+                    stuck = "  ZASEKNUTO" if r["pos"] > t else ""
+                    stuck += f"  (vyprosteni {r['vyprosteni']})" if r["vyprosteni"] else ""
                     print(f"  original: pozice {r['pos']} (cil {t}){stuck}",
                           flush=True)
                 out.append(page.evaluate(DUMP, {"a6": vacmp.A6_BASE,
@@ -123,9 +139,19 @@ def original(targets):
     return out
 
 
+CACHE = os.path.join(ROOT, "build", "vacmp", "cover.json")
+
+
 def main():
-    targets = [int(a) for a in sys.argv[1:]] or [52000, 48788, 45488, 42735]
-    samples = [decode(d) for d in original(targets)]
+    # --ulozene: znovu porovnat posledni zaznam originalu (jizda trva ~30 min)
+    if "--ulozene" in sys.argv:
+        raw = json.load(open(CACHE))
+    else:
+        targets = [int(a) for a in sys.argv[1:]] or [52000, 48788, 45488, 42000]
+        raw = original(targets)
+        os.makedirs(os.path.dirname(CACHE), exist_ok=True)
+        json.dump(raw, open(CACHE, "w"))
+    samples = [decode(d) for d in raw]
     with sync_playwright() as pw:
         b = pw.chromium.launch(); p = b.new_page()
         p.goto("file://" + os.path.join(ROOT, "game.html"))
@@ -138,7 +164,8 @@ def main():
     for r in res:
         chyb = r["jenOriginal"] + r["jenPrepis"]
         spatne += chyb
-        print(f"pozice {r['cam']:5d}: teren {r['shodaTerenu']:5.1f} %, "
+        print(f"pozice {r['cam']:5d} (uroven {r['uroven']}, radek {r['radek']}): "
+              f"teren {r['shodaTerenu']:5.1f} %, "
               f"zakryto v obou {r['obojeZakryto']:6d}, jen original "
               f"{r['jenOriginal']}, jen prepis {r['jenPrepis']}"
               f"  (horni pruh: {r['okrajJenOriginal']} / {r['okrajJenPrepis']})")

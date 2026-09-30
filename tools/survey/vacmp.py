@@ -184,6 +184,81 @@ PROG_BASE = 0xEFC0        # 61376
 LIVES = 11176 + 68
 KEEP_LIVES_JS = "H[p + %d] = 0xff; H[p + %d + 1] = 0xd8;" % (A6_BASE + LIVES,
                                                           A6_BASE + LIVES)
+# Sila zbrane: slovo +102 slotu = pocet sebranych TOKENu (0x70d6 deli peti
+# a vybira radek tabulky 0x70c0). Bez silne zbrane bezobsluzna jizda nechava
+# naziva prilis mnoho nepratel, jejich grafika zaplni pamet zavadece a ctec
+# mapy (fp@(3586)) nebo stavitel terenu se zablokuje (viz DRIVE_JS).
+WEAPON = 11176 + 102
+KEEP_WEAPON_JS = "H[p + %d] = 0; H[p + %d + 1] = 15;" % (A6_BASE + WEAPON,
+                                                     A6_BASE + WEAPON)
+
+# Jizda originalem (TOWN -> FINAL). Pri bezobsluzne jizde se muze v RIVERu
+# na 46159 zablokovat zavadec: sest POPUPu (x 34..284, pozice 46214) proslo
+# a2c6 a ceka na nahrani HOMING, mapa ceka na TRILO a zavadeci dosla pamet
+# (A500 1 MB). Je to skutecne chovani originalu (prepis ho zamerne nema),
+# ale zda nastane, zavisi na kazdem snimku vstupu - i dva snimky navic
+# jinde ho vyvolaji. Jizda proto pri zablokovani (pozice stoji 1500 snimku,
+# fp@(166) = 0) odsune objekty, ktere prosly a2c6 a jsou v obraze, 600 bodu
+# pod obrazovku; cull `0x6480` je pak sam zrusi a uvolni pamet. Pocet
+# zasahu vraci jako `vyprosteni`.
+MARK = (0xa36a + PROG_BASE) & 0xffff
+DRIVE_JS = """(cfg) => {
+  const H = VA.M.HEAPU8, p = VA.fn.chipPtr(), A6 = %d, n = VA.fn.chipSize();
+  const U = a => (H[p+a]<<8)|H[p+a+1];
+  const W = a => { const v = U(a); return v > 0x7fff ? v - 0x10000 : v; };
+  const L = a => (H[p+a]<<24|H[p+a+1]<<16|H[p+a+2]<<8|H[p+a+3])>>>0;
+  // cfg.souvisle: jizda jako trajdiff --od (bez cekani na zamek, citac
+  // snimku pokracuje pres zastavky), takze zastavka na vypis prubeh nemeni.
+  if (!cfg.souvisle && !window.__lockWait) { let guard = 0;
+    while (H[p + A6 + 166] !== 0 && guard++ < 3000) VA.run(4, null);
+    window.__lockWait = 1; }
+  VA.fn.warp(1);
+  let k = cfg.souvisle ? (window.__jizdaK || 0) : 0;
+  const k0 = k;
+  let stoji = 0, posledni = U(A6 + 3530), vyprosteni = 0;
+  // cfg.trace: zapisy do registru Paula (AUD0..AUD3) s PC, tools/sfxtrace.py
+  const out = [], dv = new DataView(H.buffer),
+        size = cfg.trace ? VA.fn.regTraceEntrySize() : 0;
+  while (U(A6 + 3530) > cfg.od && k++ - k0 < cfg.limit) {
+    H[p + A6 + 166] &= ~8;
+    %s
+    if (cfg.zbran) { %s }
+    VA.fn.joy(2, (k %% 10) < 5 ? 4 : 13);
+    if (k %% 120 === 0) VA.fn.joy(2, (k / 120) %% 2 ? 2 : 3);
+    if (cfg.trace) {
+      VA.fn.regTrace(1); VA.fn.step(); VA.fn.regTrace(0);
+      const m = VA.fn.regTraceCount(), base = VA.fn.regTracePtr();
+      for (let i = 0; i < m; i++) {
+        const o = base + i * size, r = dv.getUint16(o, true);
+        if (r >= 0xa0 && r < 0xe0)
+          out.push([k, dv.getUint16(o + 10, true), dv.getUint16(o + 12, true),
+                    r, dv.getUint16(o + 2, true), dv.getUint32(o + 4, true)]);
+      }
+    } else VA.fn.step();
+    const c = U(A6 + 3530);
+    if (c !== posledni) { posledni = c; stoji = 0; continue; }
+    if (++stoji < 1500 || H[p + A6 + 166] || !cfg.vyprostit) continue;
+    stoji = 0; vyprosteni++;
+    let node = A6 - 698, g = 0; const seen = new Set();
+    while (g++ < 800) {
+      const nx = L(node + 4);
+      if (!nx || nx >= n || seen.has(nx)) break;
+      seen.add(nx); node = nx;
+      if (W(nx + 274) !== 100 || (L(nx + 534) & 0xffff) !== %d) continue;
+      const sy = W(nx + 324) - c;
+      if (sy < -80 || sy > 300) continue;
+      const y = (c + 600) & 0xffff;
+      H[p + nx + 324] = y >> 8; H[p + nx + 325] = y & 255;
+    }
+  }
+  if (cfg.souvisle) window.__jizdaK = k;
+  return { pos: U(A6 + 3530), ctec: U(A6 + 3586), k: k - k0, vyprosteni, out };
+}""" % (A6_BASE, KEEP_LIVES_JS, KEEP_WEAPON_JS, MARK)
+
+
+def jizda(page, cil, limit=120000):
+    """Dojede na mapovou pozici `cil` (s vyprostenim zablokovaneho zavadece)."""
+    return page.evaluate(DRIVE_JS, {"od": cil, "limit": limit})
 FIND_A6_JS = """(frames) => {
   const H = VA.M.HEAPU8, p = VA.fn.chipPtr(), n = VA.fn.chipSize();
   const before = H.slice(p, p + n);
