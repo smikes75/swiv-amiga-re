@@ -10,7 +10,7 @@
 body { background:#000; color:var(--white);
   font-family:"Courier New",ui-monospace,monospace; font-weight:bold;
   min-height:100vh; display:flex; flex-direction:column; align-items:center;
-  padding:34px 16px 16px; text-align:center; }
+  padding:34px 16px 10px; text-align:center; }   /* 34 = lista 24 + 10 */
 /* Lista a menu ve stylu Workbenche 1.3: bila obrazovkova lista, modre
    pismo, menu jako bile krabice s modrym okrajem a inverzni volbou. */
 #wbbar { position:fixed; top:0; left:0; right:0; height:22px; z-index:20;
@@ -61,7 +61,7 @@ p { max-width:640px; margin:6px 0; font-size:14px; }
 .btn:active { transform:translate(2px,2px); box-shadow:1px 1px 0 var(--black); }
 #game { image-rendering:pixelated; border:0; background:#000; outline:0;
   box-sizing:content-box; display:block; }
-#gamewrap { max-width:100%; }
+#gamewrap { max-width:100%; margin:auto 0; }   /* svisle na stred cerne plochy */
 #zoomrow { display:flex; flex-wrap:wrap; align-items:center; gap:4px;
   padding:1px 14px; }
 #zoomrow button { font:inherit; color:var(--blue); background:var(--white);
@@ -8796,10 +8796,11 @@ function bestS(dev) {                   // nejvetsi delitel `dev` do osmi
    game-codex.html): pri zmene ovladacich prvku uz neni co dopocitavat
    a pri skryte strance se drzi posledni znama hodnota. */
 function chromeHeight() {
-  // Ovladani je v menu listy (#wbbar), pod platnem uz nic neni.
-  const wrap = document.getElementById("cvwrap");
-  if (!wrap || !wrap.getClientRects().length) return state.chromeH ?? 60;
-  const h = wrap.getBoundingClientRect().top + window.scrollY + 16;
+  // Ovladani je v menu listy (#wbbar), pod platnem uz nic neni. Platno je
+  // svisle vystredene, takze se nesmi merit jeho poloha (zpetna vazba):
+  // rezerva je jen lista s odsazenim stranky nahore a dole.
+  const bar = document.getElementById("wbbar");
+  const h = (bar ? bar.offsetHeight : 24) + 12 + 16 + 8;
   state.chromeH = h;
   return h;
 }
@@ -9082,7 +9083,7 @@ document.getElementById("btnload").onclick = () =>
 document.getElementById("btndel").onclick = () => {
   saveSlotWrite(+document.getElementById("slotsel").value | 0, null);
   refreshSlots();
-  document.getElementById("slotinfo").textContent = "smazano";
+  document.getElementById("slotinfo").textContent = "smaz\u00e1no";
 };
 document.getElementById("btnend").onclick = () => {
   const g = state.g;
@@ -9242,7 +9243,7 @@ function saveSlotWrite(i, value) {
 }
 function slotLabel(i) {
   const d = saveSlotRead(i);
-  if (!d) return (i + 1) + " - prazdny";
+  if (!d) return (i + 1) + " - pr\u00e1zdn\u00fd";
   return (i + 1) + " - " + (ZONE_NAMES[d.zone] || "?") +
          " " + d.ujeto + " px, " + d.score + " b";
 }
@@ -9284,11 +9285,11 @@ function saveToSlot(i) {
   };
   const ok = saveSlotWrite(i, data);
   refreshSlots();
-  if (info) info.textContent = ok ? "ulozeno" : "ulozeni se nezdarilo";
+  if (info) info.textContent = ok ? "ulo\u017eeno" : "ulo\u017een\u00ed se nezda\u0159ilo";
 }
 function loadFromSlot(i) {
   const d = saveSlotRead(i), info = document.getElementById("slotinfo");
-  if (!d) { if (info) info.textContent = "slot je prazdny"; return; }
+  if (!d) { if (info) info.textContent = "slot je pr\u00e1zdn\u00fd"; return; }
   startGame(d.lv | 0);
   const g = state.g;
   // stejna cesta jako vyvojarsky skok: scroll a pak prezbrojeni objektu
@@ -9309,7 +9310,7 @@ function loadFromSlot(i) {
   p.mode = d.mode | 0;
   p.weaponX = p.x; p.weaponY = p.y;
   updateJumpLabel(); updateWeaponLabel();
-  if (info) info.textContent = "nacteno (" + d.kdy + ")";
+  if (info) info.textContent = "na\u010dteno (" + d.kdy + ")";
   document.getElementById("game").focus();
 }
 
@@ -9511,20 +9512,20 @@ function padSlotZmena(slot) {
 function updatePadPanel(seznam) {
   const el = document.getElementById("padinfo");
   if (!el) return;
-  if (!navigator.getGamepads) { el.textContent = "prohlizec Gamepad API nema"; return; }
+  if (!navigator.getGamepads) { el.textContent = "prohl\u00ed\u017ee\u010d Gamepad API nem\u00e1"; return; }
   if (!seznam.length) {
-    el.textContent = "zadny ovladac - pripoj ho a zmackni na nem tlacitko";
+    el.textContent = "\u017e\u00e1dn\u00fd ovlada\u010d - p\u0159ipoj ho a zm\u00e1\u010dkni na n\u011bm tla\u010d\u00edtko";
     return;
   }
   const casti = [];
   for (let slot = 0; slot < 2; slot++) {
     const p = padForSlot(seznam, slot);
-    if (!p) { casti.push("slot " + (slot + 1) + ": klavesnice"); continue; }
+    if (!p) { casti.push("slot " + (slot + 1) + ": kl\u00e1vesnice"); continue; }
     const st = readPad(p);
     const smer = (st.u ? "\u2191" : "") + (st.d ? "\u2193" : "") +
                  (st.l ? "\u2190" : "") + (st.r ? "\u2192" : "");
     casti.push("slot " + (slot + 1) + ": #" + p.index +
-               (p.mapping === "standard" ? "" : " [nestandardni]") +
+               (p.mapping === "standard" ? "" : " [nestandardn\u00ed]") +
                " " + (smer || "\u00b7") +
                (st.f ? " palba" : "") + (st.j ? " skok" : ""));
   }
