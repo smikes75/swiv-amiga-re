@@ -7350,14 +7350,17 @@ function heliBobBlocked(g, x, screenY, bobs) {
 function respawnBobField(g, self) {
   if (!g.mapIndex || !g.spawns || !Number.isInteger(g.mapH)) return null;
   // Novy hrac v bufferu originalu jeste neni (jeho BOB vznikne az po
-  // 0x9046); vlastni BOB proto pri sondovani skryjeme. Druhy hrac se
-  // naopak skryt nesmi - v nativnim bufferu je a kandidata blokuje.
-  const p = self === undefined ? g.player : self;
-  const wasAlive = p ? p.alive : false;
-  if (p) p.alive = false;
+  // 0x9046). Zmereno 2026-09-30 (tools/jeepdiff.py, harness): jeep se
+  // pripojil na (160,192) presne pod stojicim vrtulnikem - at uz vrtulnik
+  // blikal, nebo ne - takze ani BOB DRUHEHO hrace sondu 0x3dd4 neblokuje
+  // (GOOSE nad timtez mistem blokuje, viz BEHAVIORS; ktery buffer sonda
+  // presne cte, zmereno neni). Skryjeme proto oba hrace.
+  const hraci = [g.player, g.player2].filter(Boolean);
+  const byli = hraci.map(p => p.alive);
+  for (const p of hraci) p.alive = false;
   try { return composeTownBobs(g, Math.floor(g.scroll)).index; }
   catch (e) { return null; }                    // izolovane fixture
-  finally { if (p) p.alive = wasAlive; }
+  finally { hraci.forEach((p, i) => { p.alive = byli[i]; }); }
 }
 /* 0x9046: sloupce jsou vnejsi smycka. Pri plnem zablokovani vsech
    16*12 kandidatu zustane puvodni nekontrolovany fallback (288,192).
@@ -9887,7 +9890,9 @@ function swapVehicleForm(g, p) {
   const vlastni = p.form === "boat" ? g.padB : g.padA;
   const pos = findPlayerRespawn(g, p);
   p.x = pos.x; p.y = pos.y;
-  if (vlastni && vlastni.y - scrollTop(g) <= 240) {
+  // 0x90a8 `bhi`: rozdil plosina - kamera se porovnava bez znamenka,
+  // plosina nad hornim okrajem (zaporne sy) tedy neplati.
+  if (vlastni && vlastni.y - scrollTop(g) >= 0 && vlastni.y - scrollTop(g) <= 240) {
     p.x = vlastni.x; p.y = vlastni.y - scrollTop(g);
     g.padHandoff = true;                       // 0x90ba / 0x8e52
   }
@@ -9900,7 +9905,7 @@ function swapVehicleForm(g, p) {
   return true;
 }
 
-function stepJeep(g) {
+function stepJeep(g, scrollDelta = 0) {
   const p = g.player2;
   if (!p || !p.alive) return;
   incrementPlayerRank(p);                      // 0x70f6 pres 0x7090
@@ -9910,6 +9915,22 @@ function stepJeep(g) {
   const nib = (g.keys2.u ? 1 : 0) | (g.keys2.d ? 2 : 0) |
               (g.keys2.l ? 4 : 0) | (g.keys2.r ? 8 : 0);
   const ja = JOY_ANGLE[nib];                   // 0x958a, tabulka 0x959e
+  // 0x7222 (joystick, oba typy): dvojity tuk smeru = bit 6 (skok).
+  // +90 posledni smer, +92 predposledni, +94 okno 5 tiku: pri zmene se
+  // okno nabije; smer -> puste (0) -> tyz smer, kazdy stav kratsi nez
+  // 5 tiku, skoci. Drzeni jednoho stavu 5 tiku historii vynuluje (-1).
+  // Klavesnice (typ 2, 0x71ac) to nativne nema; prepis ji od joysticku
+  // nerozlisuje, takze plati i pro WASD.
+  let tuk = false;
+  if (nib === (p.tapLast | 0)) {
+    p.tapWin = ((p.tapWin | 0) - 1) & 0xffff;
+    if (p.tapWin === 0) { p.tapLast = -1; p.tapPrev = -1; }
+  } else {
+    p.tapWin = 5;
+    const d2 = p.tapPrev | 0, d1 = p.tapLast | 0;
+    p.tapPrev = d1; p.tapLast = nib;
+    tuk = nib !== 0 && d1 === 0 && d2 === nib;
+  }
 
   // 0x912e: bit 6 vstupu (druhe tlacitko / dvojity tap 0x7246) skoci
   // hned. 0x9136: jinak se KAZDY tik na zemi nejdriv ubere z `+282`
@@ -9920,7 +9941,7 @@ function stepJeep(g) {
   // az dole a skok prisel o tik pozdeji.
   if (!p.airborne) {
     p.jumpT = (p.jumpT | 0) - 1;               // 0x9136 / 0x8ed2
-    if (g.keys2.j || p.jumpT < 0) startJeepJump(g, p);
+    if (g.keys2.j || tuk || p.jumpT < 0) startJeepJump(g, p);
   }
 
   const boat = p.form === "boat";
@@ -9957,6 +9978,12 @@ function stepJeep(g) {
   blocked = jeepBlockedAhead(g, p, p.vx, p.vy);
   if (blocked) { p.vx = 0; p.vy = 0; }         // 0x91ba / 0x9260
   else { p.x += p.vx; p.y += p.vy; }
+  // 0x9090 (na rozdil od vrtulniku 0x9410) scroll nekompenzuje: jeep i lod
+  // stoji na mape a obrazovka pod nimi ujizdi. Bez vstupu tedy klouze po
+  // obrazovce dolu rychlosti scrollu, az ho zastavi dolni mez 0x94f0.
+  // Zmereno 2026-09-30 (tools/jeepdiff.py): mapove +324 bez vstupu stoji,
+  // s "nahoru" klesa o 2,5/VBL; na obrazovce +0,25 resp. -2,25 px/VBL.
+  p.y -= scrollDelta;
   if (!p.airborne && !blocked) p.jumpT = JEEP_JUMP_HOLD;   // 0x91c4
   // 0x9172 -> 0xad78: uvnitr pasma znacky (0xad30) nechava jeep stopu
   // 0xad98 - tentyz dekal JEEPHELI#40..#43 podle uhlu jako vez tanku,
@@ -10232,7 +10259,7 @@ function step(g) {
     stepPlayerHeliAnim(p);
   }
 
-  stepJeep(g);                                 // 0x9090, slot 2
+  stepJeep(g, scrollDelta);                    // 0x9090, slot 2
 
   // Ostatni tasky, ktere minuly VBL skoncily na 0x643a, provedou pred svym
   // dalsim coroutine krokem orphan/smart/event housekeeping. Snapshot brani

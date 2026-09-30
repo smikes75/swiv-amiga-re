@@ -4,7 +4,10 @@ Posledni velka chybejici cast hry. Vrtulnik je hotovy, jeep existuje jen
 jako prazdna pulka HUD. Tenhle dokument shrnuje, co uz je zmerene v
 `work/prog.txt`, co presne chybi, a v jakych davkach to jde udelat.
 
-Stav k 2026-09-10: **vsech sest davek hotovych.** Zbytek dokumentu
+Stav k 2026-09-10: **vsech sest davek hotovych.** 2026-09-30 zmereno
+proti originalu (`tools/jeepdiff.py`, docs/GAPS.md "Jeep proti originalu"):
+jeep stoji na mape a klouze se scrollem, skok z joysticku je dvojity tuk,
+sonda zrozeni nevidi druheho hrace - vse opraveno. Zbytek dokumentu
 popisuje, co v nich bylo. Vse nize je
 odecteno z disassembly, ne odhadnuto.
 

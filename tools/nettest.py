@@ -75,6 +75,9 @@ def main():
             print(f"hostitel: {engines[0]}, host: {engines[1]}")
 
             # --- rucni parovani, presne jak ho dela hrac ---------------
+            # Sitovy panel je od 2026-09-30 v menu Sit v liste: otevrit
+            for pg in (pa, pb):
+                pg.click("#mnu-sit .wbtitle")
             pa.click("#nethost")
             pa.wait_for_function(
                 "() => document.querySelector('#netout').value.length > 100",

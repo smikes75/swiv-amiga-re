@@ -6347,20 +6347,26 @@ def main():
               const j = g.player2;
               if (!j) return { pred, joined: false };
               const p1 = { x: g.player.x, y: g.player.y };
+              // Jeep stoji na mape (0x9090 scroll nekompenzuje, jeepdiff
+              // 2026-09-30): rychlost jizdy se meri ocistena o posun
+              // scrollu, drift sam se overi zvlast (`klid`).
               const mereni = (klavesy, tiku) => {
-                const x0 = j.x, y0 = j.y;
+                const x0 = j.x, y0 = j.y, t0 = scrollTop(g);
                 for (const k of klavesy) g.keys2[k] = true;
                 for (let i = 0; i < tiku; i++) step(g);
                 for (const k of klavesy) g.keys2[k] = false;
                 return [+((j.x - x0) / tiku).toFixed(6),
-                        +((j.y - y0) / tiku).toFixed(6)];
+                        +((j.y - y0 - (t0 - scrollTop(g))) / tiku).toFixed(6)];
               };
+              const y0 = j.y, t0 = scrollTop(g);
+              for (let i = 0; i < 40; i++) step(g);
+              const klid = [j.y - y0, t0 - scrollTop(g)];
               return { pred, joined: true, p1,
                        spawn: { x: j.x, y: j.y }, inv: j.inv,
                        continues: g.continues, players: g.players,
                        lives: g.jeepLives, ordinal: j.bobOrdinal,
                        hud: hudTextsForGame(g).right,
-                       vpravo: mereni(["r"], 10),
+                       klid, vpravo: mereni(["r"], 10),
                        nahoru: mereni(["u"], 10),
                        diagonalne: mereni(["r", "u"], 10) };
             }""")
@@ -6379,6 +6385,11 @@ def main():
                    (jeep["p1"]["x"], jeep["p1"]["y"]),
                    "jeep vznikl presne na vrtulniku: %r" % (jeep,))
             # +356 = 640 -> 2,5 px/t kardinalne, 181*640/65536 diagonalne
+            # jeep stoji na mape (0x9090 scroll nekompenzuje): na obrazovce
+            # klouze o scroll 0,25 px/tik dolu (jeepdiff 2026-09-30)
+            expect(jeep["klid"][0] == jeep["klid"][1] and jeep["klid"][0] > 0,
+                   "jeep bez vstupu neklouze po obrazovce se scrollem: %r" %
+                   (jeep["klid"],))
             expect(jeep["vpravo"] == [2.5, 0] and jeep["nahoru"] == [0, -2.5],
                    "rychlost jeepu neni 640/256: %r %r" %
                    (jeep["vpravo"], jeep["nahoru"]))
@@ -6623,6 +6634,9 @@ def main():
               const udalosti = [];
               let tvar = j.form;
               for (let i = 0; i < 20000 && udalosti.length < 2; i++) {
+                // Hrac jede vpred (vozidlo bez vstupu klouze se scrollem
+                // na dno, kde plosina prijde mimo dosah predani).
+                g.keys2.u = true;
                 step(g);
                 if (g.lives < 99999) g.lives = 99999;
                 g.jeepLives = 4; j.inv = Math.max(j.inv, 1);

@@ -2155,6 +2155,39 @@ tomu, aby se o nej weaveri rozbili - krouzi kolem nej a `activeCost`
 vyleti na 300. Harness ma jen nekonecne zivoty.
 
 
+## Jeep proti originalu (2026-09-30, `tools/jeepdiff.py`)
+
+Do 2026-09-30 byl jeep prepsany jen z disassembly. `tools/jeepdiff.py`
+pripoji slot 2 v harnessu (F6 na obrazovce "select controls" = joystick
+v portu 1, fire na portu 1), na obou stranach odehraje tutez sekvenci
+vstupu (rovne, diagonalne, dvojity tuk = skok) a po kazdem VBL zapise
+x, y, z tela jeepu (uloha s `+276` = slot 2 a PC v `0x9090..0x9600`;
+vez `0x89e8` ma `+276` stejny a sedi 8 px pod telem).
+
+Nalezy a opravy:
+
+- **Jeep stoji na mape.** `0x9090` na rozdil od vrtulniku `0x9410` scroll
+  nekompenzuje: mapove `+324` bez vstupu stoji, takze po obrazovce klouze
+  dolu rychlosti scrollu (0,25 px/VBL) az k dolni mezi `0x94f0`; s
+  "nahoru" jede po mape 2,5 px/VBL, po obrazovce 2,25. Prepis ho drzel
+  na miste jako vrtulnik - opraveno (`p.y -= scrollDelta`), plati i pro
+  lod.
+- **Skok z joysticku je dvojity tuk smeru** (`0x7222`: smer, pusteni,
+  tyz smer, kazdy stav kratsi nez 5 tiku -> bit 6 -> `0x91e8`); "druhe
+  tlacitko" harness nevyvola. Prepis mel jen klavesu `q`; dvojity tuk
+  doplnen (i pro WASD, klavesnice typu 2 ho nativne nema). Skok pak
+  sedi: vrchol 25 px, ~58 tiku, prepis startuje o kolo driv.
+- **Zrozeni**: jeep se rodi na (160, 192 + kamera) i kdyz na temze miste
+  stoji vrtulnik, a to bez ohledu na jeho blikani; sonda `0x3dd4` tedy
+  BOB druheho hrace nevidi (GOOSE vidi - BEHAVIORS). Prepis pri sondovani
+  skryva oba hrace; presny buffer sondy zmereny neni. Pri predani plosiny
+  se `<= 240` porovnava bez znamenka (`0x90a8 bhi`).
+- Po opravach: y po celou jizdu do 3 px, x do jednoho kola (2 az 4 px,
+  vstup se v originale cte jednou za kolo), skok shodny. Kontrakty v
+  `uitest` meri rychlost ocistenou o scroll a SWAP plosiny s jizdou vpred
+  (stojici vozidlo sjede na dno a druha plosina prijde mimo dosah
+  predani; tahle varianta proti originalu zmerena neni).
+
 ## Konec hry po smrti INST5 (2026-09-29, zmereno v harnessu)
 
 Hrac hlasil: po zniceni finalniho hnizda dlouha cerna obrazovka a pak jen
