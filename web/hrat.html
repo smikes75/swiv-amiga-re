@@ -10,10 +10,12 @@
   &nbsp;|&nbsp; <label><input type="checkbox" id="zivoty" checked> dr&#382;et &#382;ivoty</label>
   &nbsp;|&nbsp; rychlost <select id="rychlost"><option value="1">1&#215;</option><option value="2">2&#215;</option><option value="4">4&#215;</option></select>
   &nbsp;|&nbsp; <button id="ulozit" disabled>Ulo&#382;it stav (U)</button>
+  <button id="nacist" disabled>Na&#269;&#237;st stav (L)</button>
+  <select id="stavy" style="max-width:260px"></select>
   <span id="ulozeno" style="color:#8f8"></span>
 </div>
 <canvas id="cv" width="716" height="285" style="image-rendering:pixelated;height:calc(100vh - 90px);aspect-ratio:358/285;max-width:100%"></canvas>
-<div style="opacity:.7;margin-top:6px">&#353;ipky = joystick, mezern&#237;k = palba, P = pauza, U = ulo&#382;it stav &middot; gamepad funguje taky &middot; bez zvuku</div>
+<div style="opacity:.7;margin-top:6px">&#353;ipky = joystick, mezern&#237;k = palba, P = pauza, U = ulo&#382;it stav, L = na&#269;&#237;st vybran&#253; stav &middot; gamepad funguje taky &middot; bez zvuku</div>
 <script src="vamiga.js"></script>
 <script>
 const CROP_X = 124, CROP_Y = 26, W = 716, H = 285, STRIDE32 = 1824;
@@ -46,6 +48,7 @@ createVAmiga().then(async mod => {
     key: c('wasm_key', 'number', ['number', 'number']),
     snapTake: c('wasm_snapshot_take', 'number', []),
     snapSize: c('wasm_snapshot_size', 'number', []),
+    snapLoad: c('wasm_snapshot_load', 'number', ['number', 'number']),
   };
   // Stejne API, jake ocekava prolog z tools/survey/vacmp.py (PLAY_PROLOGUE).
   window.VA = { fn, run: (n) => { for (let i = 0; i < n; i++) fn.step(); } };
@@ -69,7 +72,8 @@ createVAmiga().then(async mod => {
   prolog();
   fn.warp(0);
   $('stav').textContent = 'hraj';
-  $('ulozit').disabled = false;
+  $('ulozit').disabled = false; $('nacist').disabled = false;
+  await obnovSeznam();
   bezi = true;
   requestAnimationFrame(smycka);
 });
@@ -102,6 +106,7 @@ addEventListener('keydown', e => {
   if (KLAVESY[e.key]) { drzeno[KLAVESY[e.key]] = true; e.preventDefault(); return; }
   if (!bezi || e.repeat) return;
   if (e.key === 'u' || e.key === 'U') { ulozit(); e.preventDefault(); }
+  if (e.key === 'l' || e.key === 'L') { nacist(); e.preventDefault(); }
   if (e.key === 'p' || e.key === 'P') { fn.key(0x19, 1); e.preventDefault(); }   // Amiga P
 });
 addEventListener('keyup', e => {
@@ -149,6 +154,25 @@ async function ulozit() {
   const data = M.HEAPU8.slice(ptr, ptr + n), pos = pozice();
   const r = await fetch('/ulozit?pos=' + pos + '&zona=' + zonaPro(pos), { method: 'POST', body: data });
   $('ulozeno').textContent = r.ok ? 'ulozeno: ' + (await r.text()) : 'ulozeni selhalo';
+  await obnovSeznam();
 }
+/* Seznam ulozenych stavu (nejnovejsi nahore) a jejich nacteni. Hodi se,
+   kdyz se hra v RIVERu na 46159 zasekne (zavadec dokola cte _JUNGLE.LIN,
+   docs/GAPS.md): vratit se kousek zpet a usek odehrat jinak. */
+async function obnovSeznam() {
+  const seznam = await (await fetch('/stavy')).json(), sel = $('stavy');
+  sel.innerHTML = '';
+  for (const j of seznam) { const o = document.createElement('option'); o.value = o.textContent = j; sel.appendChild(o); }
+}
+async function nacist() {
+  const jmeno = $('stavy').value;
+  if (!jmeno) return;
+  const b = new Uint8Array(await (await fetch('/stav/' + encodeURIComponent(jmeno))).arrayBuffer());
+  const p = M._malloc(b.length); M.HEAPU8.set(b, p);
+  const r = fn.snapLoad(p, b.length); M._free(p);
+  posledni = { x: 0, y: 0, f: false };
+  $('ulozeno').textContent = r === 0 ? 'nacteno: ' + jmeno : 'nacteni selhalo';
+}
+$('nacist').onclick = nacist;
 $('ulozit').onclick = ulozit;
 </script>

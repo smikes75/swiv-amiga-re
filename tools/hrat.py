@@ -20,6 +20,7 @@ import json
 import os
 import socketserver
 import sys
+import urllib.parse
 import webbrowser
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -48,6 +49,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if self.path == "/prologue.js":
             return self.posli(("(" + vacmp.PLAY_PROLOGUE + ")").encode(),
                               "text/javascript")
+        if self.path == "/stavy":
+            jmena = sorted(os.listdir(STAVY), key=lambda j: os.path.getmtime(
+                os.path.join(STAVY, j)), reverse=True) if os.path.isdir(STAVY) else []
+            return self.posli(json.dumps([j for j in jmena if j.endswith(".vamiga")]).encode(),
+                              "application/json")
+        if self.path.startswith("/stav/"):
+            jmeno = os.path.basename(urllib.parse.unquote(self.path[6:]))
+            return self.posli(open(os.path.join(STAVY, jmeno), "rb").read())
         if self.path == "/info":
             return self.posli(json.dumps({"a6": vacmp.A6_BASE,
                                           "lives": vacmp.LIVES}).encode(),

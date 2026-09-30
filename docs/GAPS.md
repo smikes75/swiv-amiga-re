@@ -2100,9 +2100,17 @@ Prepis pricital +4 pri kazdem vystrelu. DESERT husy 0/16 -> 11/16.
   `a2c6` a samo ceka na HOMING; hrac je nezasahne, zavadeci dosla pamet
   (A500 1 MB) a obe strany cekaji navzajem. Zaseknuti zavisi na prubehu
   hry (drzene zivoty ho neresi, i dva snimky vstupu navic ho vyvolaji nebo
-  obejdou). Harness (`vacmp.DRIVE_JS`) ho proto po 1500 snimcich stani
-  vyprosti: objekty po `a2c6` v obraze odsune pod obrazovku, cull je zrusi
-  a pamet se uvolni. Prepis limit pameti zamerne nemodeluje.
+  obejdou). Prepis limit pameti zamerne nemodeluje.
+  **2026-09-30 upresneno, pricina otevrena:** zasekne se i hrac v
+  `tools/hrat.py` (stejne jadro vAmiga 5.0b2), kdezto ve vAmize 4.4 a FS-UAE
+  podle hrace hra jede dal. Zavadec v zaseknutem stavu dokola cte soubor
+  `_JUNGLE.LIN` (stopy 117-120): precte 117, 118, 119, vsechny sektory
+  bez chyby a shodne s ADF, a pak zacne soubor znovu od 117 - ke stope 120
+  se nedostane. Emulace mechaniky (`df0 MECHANICS`), rychlost otaceni,
+  `AUTO_DSKSYNC` ani vymena diskety na to nemaji vliv. Ze stavu
+  `RIVER_46749` se zasekne 1 z 6 ruznych prubehu vstupu (s mechanikou
+  i bez). Odsunuti objektu pod obrazovku nepomaha. Jestli je to chyba jadra
+  5.0b2, nebo pamet zavadece, zustava nerozhodnute.
 - Kola jsou v ICE a na konci SCIFI delsi (nejcasteji 4 az 5 VBL misto 2),
   takze tam se chovani pocitana na kola od prepisu rozchazeji vic.
 
