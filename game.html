@@ -111,6 +111,7 @@ a { color:#cfe0ff }
     <div class="wbpanel">
       <label><input type="radio" name="mode" id="modeorig" checked> origin&#225;l</label>
       <label><input type="radio" name="mode" id="modefx"> vylep&#353;eno</label>
+      <div class="wbnote">kl&#225;vesy: <b>O</b> = origin&#225;l + CRT v&#253;razn&#233;, <b>E</b> = vylep&#353;eno + CRT jemn&#233;</div>
       <input type="checkbox" id="smoothchk" hidden>
       <hr>
       <label title="Emulace obrazovky prekryvem. Jemne: jedna tenka tmava linka na kazdy radek hry (sedi na herni radky pri kazdem zvetseni), slaba maska RGB a mirna vineta. Vyrazne: puvodni husty raster nezavisly na zvetseni.">CRT <select id="crtsel"><option value="vyp">vyp</option><option value="jemne">jemn&#233;</option><option value="vyrazne">v&#253;razn&#233;</option></select></label>
@@ -8924,11 +8925,13 @@ try {
 } catch (e) {}
 state.crtMode = document.getElementById("crtsel").value;
 applyCrt();
-document.getElementById("crtsel").onchange = e => {
-  state.crtMode = e.target.value;
-  try { localStorage.setItem("swivCrt", e.target.value); } catch (e2) {}
+function setCrt(mode) {
+  document.getElementById("crtsel").value = mode;
+  state.crtMode = mode;
+  try { localStorage.setItem("swivCrt", mode); } catch (e) {}
   applyCrt();
-};
+}
+document.getElementById("crtsel").onchange = e => setCrt(e.target.value);
 // Rezim "vylepseno": logika zustava 50 Hz jako original, renderer pri kazdem
 // snimku displeje interpoluje scroll i polohy BOBu mezi poslednimi dvema
 // tiky (viz renderSmoothField). Vychozi je original (kontrakty).
@@ -8971,6 +8974,13 @@ function setMode(fx) {
 }
 document.getElementById("modeorig").onchange = () => setMode(false);
 document.getElementById("modefx").onchange = () => setMode(true);
+/* Klavesy O a E: totez, co prepnuti v menu Obraz - O = original s CRT
+   vyrazne, E = vylepseno s CRT jemne. */
+function displayPreset(fx) {
+  document.getElementById(fx ? "modefx" : "modeorig").checked = true;
+  setMode(fx);
+  setCrt(fx ? "jemne" : "vyrazne");
+}
 /* Volba rezimu prezije reload, stejne jako zvetseni. Bez toho se po
    kazdem nacteni vracel "original" a vsechny efekty byly potichu vypnute
    - hrac je pak hledal a nechapal, proc nejsou videt. */
@@ -9397,6 +9407,13 @@ window.addEventListener("keydown", e => {
   // cheatu 0x20e4) - stisk meni pamet kolem fp@(-1260), tedy v knihovne
   // zavadece. Nelze proto rozhodnout, jestli je to puvodni funkce hry,
   // nebo pridavek crackeru; viz docs/GAPS.md.
+  // O / E: prepnuti zobrazeni bez mysi (i na titulce; ne pri psani do
+  // policek menu a ne s modifikatory, at neblokuji zkratky prohlizece).
+  if (!e.ctrlKey && !e.metaKey && !e.altKey &&
+      !(e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName))) {
+    const k = e.key.toLowerCase();
+    if (k === "o" || k === "e") { displayPreset(k === "e"); e.preventDefault(); return; }
+  }
   if (e.key.toLowerCase() === "p" && state.g && !state.g.over) {
     state.g.paused = !state.g.paused;
     // Napis uz kresli HUD nativne (0x274a), HTML stitek by byl duplicita.
