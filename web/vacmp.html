@@ -41,6 +41,7 @@ createVAmiga().then(M => {
     regTraceCount: c('wasm_regtrace_count', 'number', []),
     regTracePtr: c('wasm_regtrace_ptr', 'number', []),
     regTraceEntrySize: c('wasm_regtrace_entry_size', 'number', []),
+    snapLoad: c('wasm_snapshot_load', 'number', ['number', 'number']),
   };
   VA.ready = true;
   document.getElementById('log').textContent = 'jadro pripraveno';
@@ -140,6 +141,15 @@ VA.regTraceRead = function () {
                hpos: dv.getUint16(o + 12, true) };
   }
   return out;
+};
+
+/* Obnovi stav ze snapshotu jadra (web/hrat.html, tools/hrat.py). Jadro uz
+   musi byt zapnute (VA.boot). */
+VA.loadSnapshot = function (b64) {
+  const [p, n] = VA.toHeap(b64);
+  const r = VA.fn.snapLoad(p, n);
+  VA.M._free(p);
+  return r === 0 ? '' : 'snapshot: ' + VA.fn.err();
 };
 
 /* Kopie zacatku chip RAM (stav hry) jako base64. */

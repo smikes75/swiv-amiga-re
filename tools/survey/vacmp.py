@@ -256,6 +256,14 @@ DRIVE_JS = """(cfg) => {
 }""" % (A6_BASE, KEEP_LIVES_JS, KEEP_WEAPON_JS, MARK)
 
 
+def nacti_stav(page, cesta):
+    """Obnovi stav ulozeny v tools/hrat.py (snapshot jadra .vamiga)."""
+    err = page.evaluate("(b) => VA.loadSnapshot(b)",
+                        base64.b64encode(open(cesta, "rb").read()).decode())
+    if err:
+        raise RuntimeError(err)
+
+
 def jizda(page, cil, limit=120000):
     """Dojede na mapovou pozici `cil` (s vyprostenim zablokovaneho zavadece)."""
     return page.evaluate(DRIVE_JS, {"od": cil, "limit": limit})

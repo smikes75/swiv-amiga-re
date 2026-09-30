@@ -1,0 +1,154 @@
+<!doctype html><meta charset="utf-8"><title>SWIV original - hrani a ulozeni stavu</title>
+<!-- Hratelny original ve stejnem jadru vAmiga jako harness (web/vacmp.html).
+     Spousti ho tools/hrat.py, ktery servíruje ROM a disk a uklada stavy do
+     build/vacmp/stavy/. Ulozeny stav harness nacte beze zmeny (stejne jadro),
+     takze z nej jde overovat zony, kam bezobsluzna jizda nedojede. -->
+<body style="background:#000;color:#ccd;font:13px/1.6 monospace;text-align:center;margin:0;padding:8px">
+<div id="bar" style="margin-bottom:6px">
+  <b id="stav">nacitam jadro&#8230;</b>
+  &nbsp;|&nbsp; pozice <b id="pos">-</b> <span id="zona"></span>
+  &nbsp;|&nbsp; <label><input type="checkbox" id="zivoty" checked> dr&#382;et &#382;ivoty</label>
+  &nbsp;|&nbsp; rychlost <select id="rychlost"><option value="1">1&#215;</option><option value="2">2&#215;</option><option value="4">4&#215;</option></select>
+  &nbsp;|&nbsp; <button id="ulozit" disabled>Ulo&#382;it stav (U)</button>
+  <span id="ulozeno" style="color:#8f8"></span>
+</div>
+<canvas id="cv" width="716" height="285" style="image-rendering:pixelated;height:calc(100vh - 90px);aspect-ratio:358/285;max-width:100%"></canvas>
+<div style="opacity:.7;margin-top:6px">&#353;ipky = joystick, mezern&#237;k = palba, P = pauza, U = ulo&#382;it stav &middot; gamepad funguje taky &middot; bez zvuku</div>
+<script src="vamiga.js"></script>
+<script>
+const CROP_X = 124, CROP_Y = 26, W = 716, H = 285, STRIDE32 = 1824;
+const $ = id => document.getElementById(id);
+let INFO = null, M = null, fn = null, bezi = false;
+
+/* Zony podle mapove pozice fp@(3530) (hranice odhadnute z harnessu). */
+function zonaPro(p) {
+  if (p > 58600) return "TOWN";
+  if (p > 50200) return "DESERT";
+  if (p > 46800) return "GRASS";
+  if (p > 44200) return "RIVER";
+  if (p > 39200) return "ICE";
+  if (p > 35600) return "SCIFI";
+  return "FINAL";
+}
+
+createVAmiga().then(async mod => {
+  M = mod;
+  const c = (n, r, a) => M.cwrap(n, r, a);
+  fn = {
+    init: c('wasm_init', 'number', []), err: c('wasm_error', 'string', []),
+    loadRom: c('wasm_load_rom', 'number', ['number', 'number']),
+    insert: c('wasm_insert_disk', 'number', ['number', 'number', 'number']),
+    powerOn: c('wasm_power_on', 'number', []), step: c('wasm_step', 'number', []),
+    chipPtr: c('wasm_chip_ptr', 'number', []), texPtr: c('wasm_texture_ptr', 'number', []),
+    warp: c('wasm_warp', 'number', ['number']),
+    joy: c('wasm_joystick', 'number', ['number', 'number']),
+    mouse: c('wasm_mouse', 'number', ['number', 'number']),
+    key: c('wasm_key', 'number', ['number', 'number']),
+    snapTake: c('wasm_snapshot_take', 'number', []),
+    snapSize: c('wasm_snapshot_size', 'number', []),
+  };
+  // Stejne API, jake ocekava prolog z tools/survey/vacmp.py (PLAY_PROLOGUE).
+  window.VA = { fn, run: (n) => { for (let i = 0; i < n; i++) fn.step(); } };
+  INFO = await (await fetch('/info')).json();
+  const nahraj = async (url) => {
+    const b = new Uint8Array(await (await fetch(url)).arrayBuffer());
+    const p = M._malloc(b.length); M.HEAPU8.set(b, p); return [p, b.length];
+  };
+  $('stav').textContent = 'zapinam Amigu a preskakuji uvod (trainer: nekonecne zivoty)...';
+  await new Promise(r => setTimeout(r, 30));
+  if (fn.init() !== 0) return fail('init: ' + fn.err());
+  const [rp, rn] = await nahraj('/rom');
+  if (fn.loadRom(rp, rn) !== 0) return fail('rom: ' + fn.err());
+  const [ap, an] = await nahraj('/adf');
+  if (fn.insert(0, ap, an) !== 0) return fail('adf: ' + fn.err());
+  fn.warp(1);
+  if (fn.powerOn() !== 0) return fail('power: ' + fn.err());
+  // Prolog je vlastni kod projektu (vacmp.PLAY_PROLOGUE) z lokalniho serveru
+  // tools/hrat.py - stejna sekvence jako v harnessu, proto eval.
+  const prolog = eval(await (await fetch('/prologue.js')).text());
+  prolog();
+  fn.warp(0);
+  $('stav').textContent = 'hraj';
+  $('ulozit').disabled = false;
+  bezi = true;
+  requestAnimationFrame(smycka);
+});
+function fail(t) { $('stav').textContent = 'CHYBA ' + t; }
+
+/* ---- vstup: klavesnice a gamepad -> joystick v portu 2 ---- */
+const PULL_UP = 0, PULL_DOWN = 1, PULL_LEFT = 2, PULL_RIGHT = 3, FIRE = 4,
+      REL_X = 10, REL_Y = 11, REL_FIRE = 13;
+const drzeno = { u: false, d: false, l: false, r: false, f: false };
+let posledni = { x: 0, y: 0, f: false };
+function poslatJoystick() {
+  let g = { u: false, d: false, l: false, r: false, f: false };
+  for (const p of (navigator.getGamepads ? navigator.getGamepads() : [])) {
+    if (!p) continue;
+    const ax = p.axes[0] || 0, ay = p.axes[1] || 0, b = i => p.buttons[i] && p.buttons[i].pressed;
+    g.l = g.l || ax < -0.5 || b(14); g.r = g.r || ax > 0.5 || b(15);
+    g.u = g.u || ay < -0.5 || b(12); g.d = g.d || ay > 0.5 || b(13);
+    g.f = g.f || b(0) || b(1);
+  }
+  const x = (drzeno.l || g.l) ? -1 : (drzeno.r || g.r) ? 1 : 0;
+  const y = (drzeno.u || g.u) ? -1 : (drzeno.d || g.d) ? 1 : 0;
+  const f = drzeno.f || g.f;
+  if (x !== posledni.x) fn.joy(2, x < 0 ? PULL_LEFT : x > 0 ? PULL_RIGHT : REL_X);
+  if (y !== posledni.y) fn.joy(2, y < 0 ? PULL_UP : y > 0 ? PULL_DOWN : REL_Y);
+  if (f !== posledni.f) fn.joy(2, f ? FIRE : REL_FIRE);
+  posledni = { x, y, f };
+}
+const KLAVESY = { ArrowUp: 'u', ArrowDown: 'd', ArrowLeft: 'l', ArrowRight: 'r', ' ': 'f' };
+addEventListener('keydown', e => {
+  if (KLAVESY[e.key]) { drzeno[KLAVESY[e.key]] = true; e.preventDefault(); return; }
+  if (!bezi || e.repeat) return;
+  if (e.key === 'u' || e.key === 'U') { ulozit(); e.preventDefault(); }
+  if (e.key === 'p' || e.key === 'P') { fn.key(0x19, 1); e.preventDefault(); }   // Amiga P
+});
+addEventListener('keyup', e => {
+  if (KLAVESY[e.key]) { drzeno[KLAVESY[e.key]] = false; e.preventDefault(); }
+  if (bezi && (e.key === 'p' || e.key === 'P')) fn.key(0x19, 0);
+});
+
+/* ---- beh v realnem case: 50 snimku za sekundu (x rychlost) ---- */
+const ctx = $('cv').getContext('2d'), obraz = ctx.createImageData(W, H);
+let akum = 0, predtim = performance.now();
+function pozice() { const Hh = M.HEAPU8, p = fn.chipPtr() + INFO.a6 + 3530; return (Hh[p] << 8) | Hh[p + 1]; }
+function smycka(ted) {
+  akum = Math.min(akum + (ted - predtim), 200); predtim = ted;
+  const rychle = +$('rychlost').value;
+  while (akum >= 20) {
+    akum -= 20;
+    poslatJoystick();
+    for (let i = 0; i < rychle; i++) {
+      if ($('zivoty').checked) {                   // slot 1 +68 = -4 x zivoty
+        const Hh = M.HEAPU8, p = fn.chipPtr() + INFO.a6 + INFO.lives;
+        Hh[p] = 0xff; Hh[p + 1] = 0xd8;
+      }
+      fn.step();
+    }
+  }
+  const H32 = M.HEAPU32, tp = fn.texPtr() >> 2, d = obraz.data;
+  let o = 0;
+  for (let y = 0; y < H; y++) {
+    const src = tp + (CROP_Y + y) * STRIDE32 + CROP_X * 2;
+    for (let x = 0; x < W; x++) {
+      const v = H32[src + 2 * x];
+      d[o++] = v & 255; d[o++] = (v >> 8) & 255; d[o++] = (v >> 16) & 255; d[o++] = 255;
+    }
+  }
+  ctx.putImageData(obraz, 0, 0);
+  const pos = pozice();
+  $('pos').textContent = pos; $('zona').textContent = '(' + zonaPro(pos) + ')';
+  requestAnimationFrame(smycka);
+}
+
+/* ---- ulozeni stavu: snapshot jadra -> tools/hrat.py -> build/vacmp/stavy ---- */
+async function ulozit() {
+  const ptr = fn.snapTake(), n = fn.snapSize();
+  if (!ptr || !n) { $('ulozeno').textContent = 'snapshot se nepovedl'; return; }
+  const data = M.HEAPU8.slice(ptr, ptr + n), pos = pozice();
+  const r = await fetch('/ulozit?pos=' + pos + '&zona=' + zonaPro(pos), { method: 'POST', body: data });
+  $('ulozeno').textContent = r.ok ? 'ulozeno: ' + (await r.text()) : 'ulozeni selhalo';
+}
+$('ulozit').onclick = ulozit;
+</script>
