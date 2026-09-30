@@ -1312,10 +1312,11 @@ Slot 2 se pripojuje, jeep jezdi. Rozpis vsech sesti davek je v
   uz deli na `heliTerrainBlocked` + `heliBobBlocked`. Davka 1 zapojuje
   jen terenni polovinu, takze jeep zatim projede skrz nepratele. Sklada
   se to az v davce 3 spolu s kolizni tridou bit 2.
-- **Ktery z paru `0x3dd4`/`0x3dce` miri do ktereho bufferu**, neni
-  zmereno. Vime jen, ze se lisi hodnotou `fp@(161)` a ze `0x9046` pouziva
-  `0x3dd4`. `0x94f0` zada oba, takze rozmacknuti modelujeme terenem —
-  konjunkce je jim dominovana.
+- ~~**Ktery z paru `0x3dd4`/`0x3dce` miri do ktereho bufferu**, neni
+  zmereno.~~ Zmereno 2026-09-30 (viz "Jeep proti originalu", RIVER):
+  `0x3dd4` = rovina terenu (flag 0x04, +14080), `0x3dce` = rovina popredi
+  (flag 0x02, `coverMask`); obe orezane na obrazovku 0..256. Rozmacknuti i
+  blok ve vzduchu jsou konjunkce teren A popredi (`heliCoverBlocked`).
 - ~~**`fp@(3558)`** (`g.jeepFloorY`) se zatim nikde nezapisuje.~~ Hotovo
   v davce 5 spolu s celou dvojici plosin a druhou podobou vozidla (lod
   `0x8e26`).
@@ -2193,6 +2194,83 @@ Nalezy a opravy:
   `uitest` meri rychlost ocistenou o scroll a SWAP plosiny s jizdou vpred
   (stojici vozidlo sjede na dno a druha plosina prijde mimo dosah
   predani; tahle varianta proti originalu zmerena neni).
+
+### RIVER: plosiny, lod, scroll (2026-09-30, `--od 47700 --skript pady`)
+
+Co se pri mereni mimo TOWN ukazalo o originalu (a co z toho je artefakt
+nastroje, ne rozdil prepisu):
+
+- **Ochrana vozidla zije ve slotu, ne v uloze.** `0x90ce`/`0x8e66` pisou
+  200 do `+108` ZAZNAMU SLOTU (`a0 = +276`), `0x9306` cte `slot+108 |
+  slot+106`. Harness drzel `+108` ulohy, cimz ji rozbijel (smrti kazdych
+  ~400 VBL, respawn se smetim v `+320`); prepis to ma spravne (`inv` na
+  hraci). Rozmacknuti z clampu (`0x953a` -> `0x9314` primo) ochranu
+  obchazi - v prepisu taky (`jeepCrushed` bez `inv`).
+- **Brazda lodi je dite se stejnym `+276`.** `0x8efa`/`0x8f3e` zakladaji
+  pres `0x6178` ulohu `0x9358` (stoji na miste, yield v `0x9394`), ktera
+  ma `+276` = slot 2 jako telo. Vyber ulohy podle PC `0x9090..0x9600`
+  proto po predani sledoval brazdu misto lodi; spravne rozsahy jsou jeep
+  `0x9046..0x9358`, lod `0x8e26..0x9046` (delo lodi `0x939c` a vez
+  `0x89e8` jsou mimo).
+- **Scroll originalu stoji na pameti.** `0x3cbe` scrolluje jen pri
+  `fp@(166) == 0` a `kamera - 16 >= fp@(3538)` (ctecka mapy). Kdyz
+  vrtulnik nestrili, nepratele se hromadi, a2c6 nema pamet a ctecka stoji
+  (zde 270 VBL na 47311, dalsi kratsi). Prepis limit pameti nema (zamerne,
+  viz rozhodnuti o HW), takze nastroj drzi vrtulnik ve strelbe a objekty,
+  ktere prosly a2c6, odsouva pod obrazovku hned po 6 VBL stani (jako
+  `vyprostit` v DRIVE_JS) - **krome znacek mapy** `0xac6a..0xad98`:
+  odsunuta plosina se zaregistruje 600 px pod obrazovkou, `0x94dc`
+  okamzite predava a lod se rodi sondou na souši, kde ji clamp rozmackne.
+- **Zrozeni zavisi na BOBech pod sondou** (`0x3dd4` cte obrazovku): v
+  RIVER stal v prepisu pod (160,192) jiny nepritel (skyeyea, RNG) a jeep
+  se zrodil o 32 px vys. Nastroj proto prepis prenese na zrozeni
+  originalu a porovnava jizdu; sonda sama je overena v TOWN (shodne
+  (160,193)).
+- **Tolerance jednoho kola.** Planovac `0x62d2` integruje `v += a; pos +=
+  v` tolikrat, kolik VBL kolo trvalo (`fp@(-76)`), ale az pri probuzeni
+  ulohy; prepis kazdy VBL. Vysledek je stejny, jen faze se lisi az o kolo
+  (2 az 5 VBL x 2,5 az 4 px), a sonda `0x9328` (2 x rychlost dopredu)
+  zastavi original o kolo dal nez prepis. Houpani na kolech (`0x915a`:
+  `vz` = 0x4000 + rand & 0x7fff, tj. 0,25 az 0,75 px/VBL, `az` -1/16) je
+  nahodne (`0x883c`), vrchol az 4,5 px, a skok z houpani startuje vys.
+  `jeepdiff` proto porovnava jen tiky, kdy original vozidlem pohnul, s
+  toleranci 8 px v x/y a 5 px v z. TOWN: 126 kol, 57 v toleranci kola,
+  0 mimo.
+- **Sonda terenu se oreze na obrazovku.** Original u brehu (pas
+  uzavreneho terenu 47192..47199, vycteny primo z ridicich rovin pruhu
+  `[fp@(264)]+4` a `+14080`: rovina 0 = popredi (flag 0x02, shodna s
+  `coverMask` 320/320 radku), rovina 1 = teren (flag 0x04, shodna s
+  `terrainOpen`)) dojel s maskou 47188..47215 az k horni mezi a zastavil
+  se teprve pri kamere 47199, tj. kdyz pas vjel do obrazu. Blit `0x3ef6`
+  kresli relativne k pocatku obrazovky a `0x3f16`/`0x3f2c` oreze na okno
+  0..256 (`0x4868`); radky mimo obraz se netestuji. Prepis testoval celou
+  masku v mape a brzdil o 12 px driv - opraveno (`heliTerrainBlocked`).
+- **Citace v korutine bezi po kolech.** `+282` (`0x9136`: zablokovany
+  jeep s vstupem vyskoci sam) ubyva jednou za probuzeni korutiny, tj. za
+  KOLO: original u brehu blok 2033, skok 2065 VBL (16 kol po 2 VBL), pak
+  mezery 22..140 VBL podle delky kol; prepis ubiral po ticich a skakal
+  dvakrat casteji. Opraveno pres `roundDue` (ROUND_VBL = 2), resety na
+  15/5 zustavaji po tiku (jsou idempotentni). Totez brazda lodi `0x8ef0`
+  (`subq #1,+280`, kazde treti kolo); stopa jeepu `0x9188` odecita
+  `fp@(-76)`, ta je po VBL spravne.
+- **`0x3dce` je sonda proti rovine popredi.** `0x40a8` s `fp@(161)`
+  = -1 cte prvni ridici rovinu (`[fp@(264)]+4` bez +14080), tu vyrezavaji
+  casti s flagem 0x02 = `coverMask` (z pameti: rovina 0 se shoduje s
+  `coverMask` 320/320 radku, rovina 1 s `terrainOpen`). Ve vzduchu
+  (`0x9254`) brzdi vozidlo jen shoda OBOU sond, takze lod ve skoku
+  preskoci kamen (original 47050 -> 47020 skrz kamen na x 281..290),
+  strom ne; rozmacknuti `0x953a` je tataz konjunkce (kamen u dolni meze
+  sam nezabije). Prepis mel v obou sondach teren - lod visela pred
+  kamenem a kazdy kamen u dolni meze rozmackl. Opraveno
+  (`heliCoverBlocked`, `jeepBlockedAhead`, `jeepCrushed`).
+- **Vysledek RIVER** (`--od 47700 --skript pady`, 3600 VBL): zrozeni
+  (160,192) shodne, blok u brehu 47203/47204, auto-skoky 1982/1985 a
+  2072/2074, predani jeep -> lod na plosine 47181 v tiku 2152/2154 na
+  (270,27)/(270,26), lod preskoci kamen na 47050 v obou. Z 1339 kol
+  originalu 1174 v toleranci kola a 105 mimo - 102 z nich je jen `z`
+  behem skoku (start skoku o 2-3 VBL jinde, nahodne houpani pod nim),
+  zbyle tri jsou tik predani a dva tiky u horni meze. Kamera se rozesla
+  nejvyse o 1 px. TOWN po vsech opravach dal beze zmeny (126 kol, 0 mimo).
 
 ## Konec hry po smrti INST5 (2026-09-29, zmereno v harnessu)
 

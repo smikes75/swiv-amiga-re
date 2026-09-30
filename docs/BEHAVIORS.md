@@ -104,6 +104,16 @@ therefore `+348 = 0x800` means `1/32 px/t²`, not a constant speed.
   jen pri skutecnem doteku. Zmereno baseline t281..t289 (2026-09-03):
   po smrti pod bossem hrac 4 s neni na (160,192), boss prezije do timeoutu.
   Prepis: `respawnBobField` sklada aktualni BOBy bez vlastniho hrace.
+  **Maska se pri tom oreze na obrazovku**: `0x3ef6` odecte pocatek
+  `a2@(8)` (= `fp@(3542)`), `0x3f16`/`0x3f2c` orezou na okno zaznamu
+  `+16..+18` = 0..256 (`0x4868`), takze radky nad hornim (a pod dolnim)
+  okrajem se netestuji. Jeep tak dojede k horni mezi i pres uzavreny
+  teren, ktery jeste neni v obraze, a zastavi se, az kdyz se do nej
+  nascrolluje. Zmereno 2026-09-30 (`tools/jeepdiff.py`, RIVER 47700, pas
+  47192..47199 vycteny z rovin pruhu v pameti: shodny s `terrainOpen`,
+  blok pri kamere 47199, ne 47211). Prepis: `heliTerrainBlocked` oreze
+  radky mimo 0..256 a zahodi blit s `x - cx <= -32` nebo `>= 320`
+  (`0x3f02`).
 - pohybova smycka clampuje starou pozici na x `4..316`, y `4..252`
   **pred** aplikaci vstupu; kardinalni krok muze proto v prave publikovanem
   framu dosahnout x `1..319` nebo y `1..255`
@@ -668,7 +678,8 @@ drzi jmeno do tabulky skore (`0x6fb0` pred nej lepi `Lazy `).
 - kolize s terenem `0x9328`: rychlost `+332/+336` se zdvojnasobi,
   priplacne k `x/y`, sahne na masku a zase odecte — tedy **pohled o krok
   dopredu**, ne test aktualni polohy
-- rozmacknuti `0x9314`: po clampu blokuje `0x3dd4` i `0x3dce` → exploze
+- rozmacknuti `0x9314`: po clampu blokuje `0x3dd4` (teren) i `0x3dce`
+  (popredi, flag 0x02) → exploze; kamen sam nezabije, most/strom ano
   `0x88fc`. Jeep tedy umira i tim, ze ho scroll pritlaci k terenu
 - pasmo dopravniku `0x9172`: pri `fp@(154)` a `y` mezi `fp@(150)` a
   `fp@(152)` odecita `fp@(-76)` od `+280` a spousti `0xad98`

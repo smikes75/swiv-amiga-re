@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="cs">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -219,18 +219,19 @@ a { color:#cfe0ff }
 </nav>
 
 <div id="intro" class="wbwin">
-  <div class="wbwtitle">S.W.I.V. &mdash; playable reconstruction</div>
-  <p><b>IN-PROGRESS RECONSTRUCTION.</b> Maps, graphics, palettes, scroll
-  tempo and enemy positions come straight from your original disk.
-  All 1497 map objects in 73 kinds are transcribed, TOWN through FINAL,
-  and so is the whole sound engine &mdash; every effect is synthesised the
-  way the original does it, from the routines in <code>AMPROG.OBJ</code>.
-  Newest: the post-game statistics screen, the title/hi-score music switch
-  and a fix to the boss-death synth. Follow the measured progress in the
-  <a href="https://github.com/smikes75/swiv-amiga-re">repo</a>.</p>
-  <p>Insert your own S.W.I.V. disk image (.adf). Nothing is uploaded.</p>
-  <a class="btn" id="insert">&#128190; Insert disk</a>
-  <p><small>P1 heli: arrows + space &middot; P2 jeep: WASD + shift, Q jumps (joins for a credit) &middot; <b>gamepads work too</b> &mdash; one per player, like the original's two joysticks &middot; or play against someone over the network, no server &middot; sound on first click</small></p>
+  <div class="wbwtitle">S.W.I.V. &mdash; p&#345;epis hry z Amigy (1991)</div>
+  <p>P&#345;epis hry v prohl&#237;&#382;e&#269;i, ud&#283;lan&#253; podle rozboru p&#367;vodn&#237;ho k&#243;du
+  a m&#283;&#345;en&#237; proti origin&#225;lu v emul&#225;toru. Mapy, grafika, palety, v&#353;ech
+  1&#8239;497 objekt&#367; i zvukov&#253; engine se &#269;tou p&#345;&#237;mo z tv&#233; diskety; nic se
+  nikam nepos&#237;l&#225;. Podrobnosti a n&#225;stroje:
+  <a href="https://github.com/smikes75/swiv-amiga-re">swiv-amiga-re</a>.</p>
+  <p>Vlo&#382; vlastn&#237; obraz diskety S.W.I.V. (.adf).</p>
+  <a class="btn" id="insert">&#128190; Vlo&#382;it disk</a>
+  <p><small><b>Vrtuln&#237;k</b>: &#353;ipky + mezern&#237;k &middot; <b>jeep</b>: WASD + Shift, Q skok
+  (p&#345;ipoj&#237; se za kredit) &middot; <b>gamepady</b>: jeden na hr&#225;&#269;e, skok = dvojit&#253; &#357;uk sm&#283;ru
+  jako na Amize &middot; <b>P</b> pauza &middot; <b>O</b>/<b>E</b> origin&#225;l/vylep&#353;eno &middot;
+  <b>S</b>/<b>L</b> ulo&#382;it/na&#269;&#237;st pozici &middot; v&#353;e ostatn&#237; je v menu naho&#345;e
+  (v&#269;etn&#283; hry ve dvou po s&#237;ti a startu od libovoln&#233; z&#243;ny) &middot; zvuk po prvn&#237;m kliknut&#237;</small></p>
 </div>
 
 <div id="titlewrap" style="display:none">
@@ -7308,15 +7309,56 @@ function heliTerrainBlocked(g, x, screenY, frame = 0) {
   const W = g.mapW || 320;
   const H = Math.floor(g.terrainOpen.length / W);
   const left = Math.floor(x + spr.ox);
-  const top = Math.floor(g.scroll) + Math.floor(screenY + spr.oy);
+  // 0x3f02: blit se zahodi cely, kdyz x - cx <= -32 nebo >= 320.
+  if (left <= -32 || left >= 320) return false;
+  // 0x3ef6/0x3f16: maska se kresli relativne k pocatku OBRAZOVKY
+  // (`a2@(8)` = fp@(3542)) a oreze na okno zaznamu +16/+18 = 0..256
+  // (0x4868). Radky nad hornim okrajem se tedy NETESTUJI: uzavreny teren
+  // brzdi az ve chvili, kdy se scrolluje do obrazu. Zmereno 2026-09-30
+  // (tools/jeepdiff.py, RIVER 47700): pas 47192..47199 v rovine terenu
+  // (roviny vycteny z pameti, shodne s terrainOpen) pustil jeep s
+  // maskou 47188..47215 k horni mezi a zablokoval ho az pri kamere
+  // 47199; bez orezu prepis brzdil o 12 px driv.
+  const sy0 = Math.floor(screenY + spr.oy);
+  const top = Math.floor(g.scroll) + sy0;
   for (let sy = 0; sy < spr.h; sy++) {
     const ty = top + sy;
     if (ty < 0 || ty >= H) continue;
+    if (sy0 + sy < 0 || sy0 + sy >= 256) continue;
     for (let sx = 0; sx < spr.w; sx++) {
       if (spr.pix[sy * spr.w + sx] === 0xFF) continue;
       const tx = left + sx;
       if (tx >= 0 && tx < W && g.terrainOpen[ty * W + tx] === 0)
         return true;
+    }
+  }
+  return false;
+}
+
+/* 0x3dce: tataz sonda s fp@(161) = -1, tj. proti PRVNI ridici rovine
+   `[fp@(264)]+4` (0x40a8 bez +14080), kterou vyrezavaji casti s flagem
+   0x02 - to je rovina popredi (`coverMask`), zmereno 2026-09-30 z pameti
+   (rovina 0 = coverMask 320/320 radku, rovina 1 = terrainOpen). Jeep ve
+   vzduchu (0x9254) a rozmacknuti (0x953a) chteji shodu OBOU sond: teren
+   A popredi. Lod tak preskoci kamen (teren bez popredi), ale ne strom. */
+function heliCoverBlocked(g, x, screenY, frame = 0) {
+  if (!g.coverMask) return false;
+  const spr = indexedFrameFor(state, "JEEPHELI.LIN", frame);
+  if (!spr) return false;
+  const W = g.mapW || 320;
+  const H = Math.floor(g.coverMask.length / W);
+  const left = Math.floor(x + spr.ox);
+  if (left <= -32 || left >= 320) return false;   // 0x3f02
+  const sy0 = Math.floor(screenY + spr.oy);
+  const top = Math.floor(g.scroll) + sy0;
+  for (let sy = 0; sy < spr.h; sy++) {
+    const ty = top + sy;
+    if (ty < 0 || ty >= H) continue;
+    if (sy0 + sy < 0 || sy0 + sy >= 256) continue;   // orez na obrazovku
+    for (let sx = 0; sx < spr.w; sx++) {
+      if (spr.pix[sy * spr.w + sx] === 0xFF) continue;
+      const tx = left + sx;
+      if (tx >= 0 && tx < W && g.coverMask[ty * W + tx]) return true;
     }
   }
   return false;
@@ -9822,20 +9864,29 @@ function clampJeep(g, p) {
    o krok dopredu - rychlost `+332/+336` se zdvojnasobi, priplacne k
    `x/y`, sahne se na masku a zase odecte.
 
-   Nativne sahaji obe sondy do obrazovkoveho bufferu (`0x3dd4`, `fp@(161)`
-   = 0), ktery vedle terenu obsahuje i BOBy posledniho renderu - stejne
-   jako `0x9046`, ktery prepis uz deli na `heliTerrainBlocked` +
-   `heliBobBlocked`. Davka 1 zapojuje jen terenni polovinu; blokovani
-   BOBy nepratel je otevrene (viz docs/GAPS.md). */
+   Nativne saha sonda `0x3dd4` do obrazovkoveho bufferu, ktery vedle
+   terenu obsahuje i BOBy posledniho renderu - stejne jako `0x9046`, ktery
+   prepis uz deli na `heliTerrainBlocked` + `heliBobBlocked`. Davka 1
+   zapojuje jen terenni polovinu; blokovani BOBy nepratel je otevrene
+   (viz docs/GAPS.md).
+
+   Na zemi (0x91b4) staci teren; ve vzduchu (0x9254) musi blokovat teren
+   I popredi (`0x9322` = `0x3dce`, rovina flagu 0x02), jinak vozidlo leti
+   dal - proto lod ve skoku preskoci kamen. Zmereno 2026-09-30
+   (tools/jeepdiff.py, RIVER 47050): original ve skoku projel kamenem
+   z 47050 na 47020, prepis s terenem v obou sondach visel pred nim. */
 function jeepBlockedAhead(g, p, vx, vy) {
-  return heliTerrainBlocked(g, p.x + 2 * vx, p.y + 2 * vy, vehicleFrame(p));
+  const x = p.x + 2 * vx, y = p.y + 2 * vy, f = vehicleFrame(p);
+  if (!heliTerrainBlocked(g, x, y, f)) return false;
+  return !p.airborne || heliCoverBlocked(g, x, y, f);
 }
 
-/* 0x9314: rozmacknuti. `0x94f0` po clampu sahne na `0x3dd4` i `0x3dce`;
-   `0x3dce` je tataz sonda proti terennimu pasu, takze konjunkce je
-   dominovana terenem a modelujeme ji jim. */
+/* 0x9314: rozmacknuti. `0x94f0` po clampu sahne na `0x3dd4` i `0x3dce`
+   (0x953a: obe musi blokovat), tedy teren A popredi - kamen u dolni meze
+   sam o sobe nerozmackne, most/strom nad terenem ano. */
 function jeepCrushed(g, p) {
-  return heliTerrainBlocked(g, p.x, p.y, vehicleFrame(p));
+  const f = vehicleFrame(p);
+  return heliTerrainBlocked(g, p.x, p.y, f) && heliCoverBlocked(g, p.x, p.y, f);
 }
 
 /* 0x7156 pro slot 2. Pripojeni stoji kredit stejne jako continue
@@ -9942,7 +9993,13 @@ function stepJeep(g, scrollDelta = 0) {
   // Poradi je zavazne: uber, test, teprve pak vstup - drive se ubiralo
   // az dole a skok prisel o tik pozdeji.
   if (!p.airborne) {
-    p.jumpT = (p.jumpT | 0) - 1;               // 0x9136 / 0x8ed2
+    // Korutina vozidla bezi jednou za KOLO, takze `+282` ubyva po kolech
+    // (nominalne 2 VBL): zablokovany jeep vyskoci po 15 kolech. Zmereno
+    // 2026-09-30 (tools/jeepdiff.py, RIVER u brehu): original blok 2033,
+    // skok 2065 VBL; prepis po ticich skakal dvakrat casteji. Resety na
+    // 15/5 nize jsou idempotentni, ty mohou zustat po tiku.
+    if (roundDue(g, p, "jumpRoundAt"))
+      p.jumpT = (p.jumpT | 0) - 1;             // 0x9136 / 0x8ed2
     if (g.keys2.j || tuk || p.jumpT < 0) startJeepJump(g, p);
   }
 
@@ -9956,9 +10013,10 @@ function stepJeep(g, scrollDelta = 0) {
     // zatimco rizeni meni smer letu.
     if (!p.airborne) p.ang = ja;
     [p.vx, p.vy] = playerMoveVelocity(ja, speed);   // 0x65f2
-    // 0x8ef0: lod za jizdy kazdy ctvrty tik pousti brazdu 0x9358.
+    // 0x8ef0: lod za jizdy kazde treti KOLO (`subq #1,+280` v korutine,
+    // ne po VBL jako stopa jeepu 0x9188) pousti brazdu 0x9358.
     // (snimek tela 0x8ee8/0x914c: viz `vehicleFrame`)
-    if (boat && !p.airborne && --p.padT <= 0) {
+    if (boat && !p.airborne && roundDue(g, p, "wakeRoundAt") && --p.padT <= 0) {
       p.padT += 3;
       spawnFishSplash(g, { x: p.x, y: p.y + scrollTop(g) });
     }
