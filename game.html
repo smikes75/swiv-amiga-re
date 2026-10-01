@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
 <title>S.W.I.V. Reconstruction</title>
 <style>
 :root { --blue:#0055aa; --white:#fff; --black:#000020; --orange:#ff8800; }
@@ -218,6 +219,10 @@ a { color:#cfe0ff }
   <div class="wbgadget" aria-hidden="true"></div>
 </nav>
 
+<style>
+.diskmsg { margin: 6px 0; padding: 6px 8px; border: 1px solid #a33; color: #ffb3b3; background: #2a0d0d }
+.diskmsg.info { border-color: #357; color: #cfe0ff; background: #0d1a2a }
+</style>
 <div id="intro" class="wbwin">
   <div class="wbwtitle">S.W.I.V. &mdash; p&#345;epis hry z Amigy (1991)</div>
   <p>P&#345;epis hry v prohl&#237;&#382;e&#269;i, ud&#283;lan&#253; podle rozboru p&#367;vodn&#237;ho k&#243;du
@@ -226,6 +231,7 @@ a { color:#cfe0ff }
   nikam nepos&#237;l&#225;. Podrobnosti a n&#225;stroje:
   <a href="https://github.com/smikes75/swiv-amiga-re">swiv-amiga-re</a>.</p>
   <p>Vlo&#382; vlastn&#237; obraz diskety S.W.I.V. (.adf).</p>
+  <p id="diskmsg" class="diskmsg" hidden></p>
   <a class="btn" id="insert">&#128190; Vlo&#382;it disk</a>
   <p><small><b>Vrtuln&#237;k</b>: &#353;ipky + mezern&#237;k &middot; <b>jeep</b>: WASD + Shift, Q skok
   (p&#345;ipoj&#237; se za kredit) &middot; <b>gamepady</b>: jeden na hr&#225;&#269;e, skok = dvojit&#253; &#357;uk sm&#283;ru
@@ -1301,21 +1307,68 @@ $("#insert").onclick = () => { unlockAudioContext(); $("#fpick").click(); };
   $("#mi-insert").onclick = () => $("#insert").click();
 })();
 
+function diskMsg(text, info = false) {
+  const el = $("#diskmsg");
+  el.textContent = text; el.className = "diskmsg" + (info ? " info" : "");
+  el.hidden = !text;
+}
+/* Soubory, bez kterych hra nema smysl: program a sprity vozidel. Kdyz
+   katalog neprojde nebo tyhle chybi, neni to disk S.W.I.V. (nebo je to
+   jiny format obrazu) a hrac dostane srozumitelnou hlasku misto vyjimky. */
+const ADF_POVINNE = ["AMPROG.OBJ", "JEEPHELI.LIN", "HOMING.LIN", "BULLET.LIN"];
 async function loadFile(file) {
-  const adf = new Uint8Array(await file.arrayBuffer());
+  loadAdfBytes(new Uint8Array(await file.arrayBuffer()), file.name);
+}
+function loadAdfBytes(adf, jmeno) {
+  if (adf.length !== 901120) {
+    diskMsg(`Soubor ${jmeno} ma ${adf.length} bajtu; obraz diskety Amigy (.adf) ma 901 120. Zkus jiny obraz.`);
+    return false;
+  }
   let files;
   try { files = readCatalog(adf); }
-  catch (err) { alert("This does not look like a SWIV disk."); return; }
-  state.adf = adf; state.files = files;
-  state.prog = unpackFile(adf, files.find(f => f.name === "AMPROG.OBJ") || files[1]);
-  state.order = gameOrder(state.prog);
-  state.behaviorDispatch = scanBehaviorDispatch(state.prog, state.order);
+  catch (err) {
+    diskMsg(`Soubor ${jmeno} nevypada jako disketa S.W.I.V.: katalog souboru se nepodarilo precist (${err && err.message || err}). Hra potrebuje obraz puvodni herni diskety.`);
+    return false;
+  }
+  const chybi = ADF_POVINNE.filter(n => !files.some(f => f.name === n));
+  if (chybi.length) {
+    diskMsg(`Soubor ${jmeno} neni disketa S.W.I.V.: v katalogu chybi ${chybi.join(", ")}. Hra potrebuje obraz puvodni herni diskety (s AMPROG.OBJ a soubory .LIN).`);
+    return false;
+  }
+  try {
+    state.adf = adf; state.files = files;
+    state.prog = unpackFile(adf, files.find(f => f.name === "AMPROG.OBJ"));
+    state.order = gameOrder(state.prog);
+    state.behaviorDispatch = scanBehaviorDispatch(state.prog, state.order);
+  } catch (err) {
+    diskMsg(`Disk ${jmeno} se nepodarilo rozbalit (${err && err.message || err}). Obraz je nejspis poskozeny nebo z jine verze hry.`);
+    return false;
+  }
   state.frameCache = {}; state.indexedFrameCache = new Map();
   state.spriteCache = {};
   state.introFileCache = new Map(); state.introRawCache = new Map();
+  diskMsg("");
   $("#intro").style.display = "none";
   showTitle();
+  return true;
 }
+/* Testovaci nasazeni: lezi-li vedle stranky `swiv.adf` (nebo `swiv.bin`,
+   kdyz server priponu .adf nepusti), nacte se sam a hrac nic nevklada.
+   Na GitHub Pages ani z `file:` nic takoveho neni, takze zustane vlozeni
+   diskety. Verejne vydani ma mit jen vkladani (obraz je obsah hry). */
+async function autoLoadAdf() {
+  if (location.protocol === "file:") return;
+  for (const jmeno of ["swiv.adf", "swiv.bin"]) {
+    try {
+      const res = await fetch(jmeno, { cache: "force-cache" });
+      if (!res.ok) continue;
+      diskMsg(`Nacitam ${jmeno} ze serveru ...`, true);
+      const adf = new Uint8Array(await res.arrayBuffer());
+      if (loadAdfBytes(adf, jmeno)) return;
+    } catch (err) { /* neni tam - vlozeni diskety */ }
+  }
+}
+autoLoadAdf();
 
 /* ---- Nativni attract intro (0x0d64, 0x1598..0x23cc, 0x2f06..0x33fc) ----
    COVER -> credits -> HELI blueprint -> HELI scores -> JEEP blueprint ->
