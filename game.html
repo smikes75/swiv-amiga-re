@@ -1358,7 +1358,13 @@ function loadAdfBytes(adf, jmeno) {
    diskety. Verejne vydani ma mit jen vkladani (obraz je obsah hry). */
 async function autoLoadAdf() {
   if (location.protocol === "file:") return;
-  for (const jmeno of ["swiv.adf", "swiv.bin"]) {
+  // Server muze slozku presmerovat na tvar bez lomitka (Vercel 308:
+  // /swiv/ -> /swiv); relativni "swiv.adf" by pak miril do korene. Proto
+  // se zkousi i cesta slozky z adresy stranky.
+  const cesty = ["swiv.adf", "swiv.bin"];
+  const dir = location.pathname.replace(/[^/]*\.html?$/i, "");
+  if (dir && !dir.endsWith("/")) cesty.push(dir + "/swiv.adf", dir + "/swiv.bin");
+  for (const jmeno of cesty) {
     try {
       const res = await fetch(jmeno, { cache: "force-cache" });
       if (!res.ok) continue;
