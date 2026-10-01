@@ -7361,7 +7361,8 @@ def main():
               const kabina = r => (r && r.overlays || []).map(o =>
                 o.pix.reduce((n, v) => n + (v === 7), 0));
               return { f: listu(f), y: listu(y), jet: j, telo: f && f.body,
-                       kabina: kabina(y), kabinaF: kabina(f) };
+                       kabina: kabina(y), kabinaF: kabina(f),
+                       kabinaK: (y && y.overlays || []).map(o => [o.k, o.poz]) };
             }""")
             expect(zapec["jet"] is None and zapec["telo"] == 2 and
                    all(n > 20 for n in zapec["f"]) and
@@ -7369,8 +7370,10 @@ def main():
                    "zapecene rotory: %r" % (zapec,))
             # 2026-10-01: kabina YELLOW (26 bodu indexu 7 ve snimcich #1 a #2,
             # v tele #0 chybi) musi do disku dojit jako prekryv, jinak v
-            # TOWN nepulzuje cervene (COLOR07) jako v originale.
-            expect(zapec["kabina"] == [26, 26] and
+            # TOWN nepulzuje cervene (COLOR07) jako v originale. Oba snimky
+            # nesou tytez body -> jeden prekryv (k = 2) se zableskem mezi
+            # polohami 0 a 1 (poz 0,5).
+            expect(zapec["kabina"] == [26] and zapec["kabinaK"] == [[2, 0.5]] and
                    all(n >= 1 for n in zapec["kabinaF"]),
                    "kabina zlutych vrtulniku v disku: %r" % (zapec,))
 

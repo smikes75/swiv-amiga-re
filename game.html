@@ -4162,9 +4162,12 @@ const ROTOR_DISC_BASE = 0.14, ROTOR_DISC_BLADE = 0.3;
    TOWN COLOR07 pulzuje cervene (0x2b3e), takze v originale kabina ve dvou
    z osmi snimku cervene blika; disk ji s listy zahazoval a hrac videl
    jen tmavy trup (hlaseno 2026-10-01). Takove body se sbiraji do
-   `overlays` a kresli se pres telo plnou krytosti bez zmeny op, tedy s
-   pulzujicim c07 - trvale misto 2/8 casu, stejne jako disk vyhlazuje
-   blikani listu. */
+   `overlays` (s polohou listu, ke ktere patri) a kresli se pres telo
+   beznym op, tedy s pulzujicim c07, stejne jako listy disku: slaby zaklad
+   a silny zablesk, kdyz obihajici faze prochazi polohou toho snimku.
+   Hrac chtel kabinu spis cernou s obcasnym cervenym probliknutim, ne
+   trvale cervenou (prvni verze kreslila plnou krytosti). */
+const KABINA_BASE = 0.1, KABINA_FLASH = 0.8;
 function bakedRotorOf(seq, file) {
   if (!seq || seq.length !== 8) return null;
   const b = seq[0];
@@ -4176,9 +4179,10 @@ function bakedRotorOf(seq, file) {
   let rotor = null;
   if (body) {
     const parts = [], overlays = [];
-    for (const f of [seq[1], seq[3], seq[5], seq[7]]) {
+    [seq[1], seq[3], seq[5], seq[7]].forEach((f, poz) => {
       const c = indexedFrameFor(state, file, f);
-      if (!c) { parts.length = 0; break; }
+      if (!c) { parts.length = 0; return; }
+      if (parts.length !== poz) return;        // predchozi snimek chybel
       const pix = new Uint8Array(c.w * c.h).fill(0xFF);
       const ov = new Uint8Array(c.w * c.h).fill(0xFF);
       let ovN = 0;
@@ -4193,8 +4197,15 @@ function bakedRotorOf(seq, file) {
         else if (bv !== v) { ov[y * c.w + x] = v; ovN++; }
       }
       parts.push([{ w: c.w, h: c.h, ox: c.ox, oy: c.oy, pix }, 0, 0]);
-      if (ovN) overlays.push({ w: c.w, h: c.h, ox: c.ox, oy: c.oy, pix: ov, n: ovN });
-    }
+      if (!ovN) return;
+      // tytez body ve vice snimcich (YELLOW #1 a #2) = jeden prekryv, jehoz
+      // zablesk lezi uprostred mezi jejich polohami; original kabinu ukaze
+      // v kazdem z techto kol, tj. 2 z 8 - zablesk siroky jednu fazi
+      const stejny = overlays.find(o => o.w === c.w && o.h === c.h && o.ox === c.ox &&
+        o.oy === c.oy && o.pix.every((v, i) => v === ov[i]));
+      if (stejny) { stejny.poz = (stejny.poz * stejny.k + poz) / (stejny.k + 1); stejny.k++; }
+      else overlays.push({ w: c.w, h: c.h, ox: c.ox, oy: c.oy, pix: ov, n: ovN, poz, k: 1 });
+    });
     if (parts.length === 4) rotor = { file, body: b, parts, overlays };
   }
   cache.set(key, rotor);
@@ -13418,12 +13429,17 @@ function drawRotorDisc(ctx, rotor, ax, ay, palRow, c07, S, blurDev, faze,
       smoothSpriteCanvas(spr, palRow, BOB_CLEAR_INDEX0, c07, null, 0, 0),
       ax + ox + spr.ox, ay + oy + spr.oy, S, blurDev, zx, zy, cx, cy);
   }
-  ctx.globalAlpha = a0;
-  // kabina a dalsi body jen z listovych snimku (viz bakedRotorOf): plna
-  // krytost, bezny op, tedy index 7 pulzuje s c07 jako v originale
-  for (const ov of rotor.overlays || [])
+  // kabina a dalsi body jen z listovych snimku (viz bakedRotorOf): bezny
+  // op (index 7 pulzuje s c07), krytost jako u listu - zaklad a zablesk,
+  // kdyz faze prochazi polohou snimku, ze ktereho body pochazeji
+  for (const ov of rotor.overlays || []) {
+    let d = Math.abs(faze - ov.poz) % 4; d = Math.min(d, 4 - d);
+    // zablesk siroky jednu fazi (ctvrtina obehu), jinak jen slaby zaklad
+    ctx.globalAlpha = a0 * (KABINA_BASE + KABINA_FLASH * Math.max(0, 1 - 2 * d));
     drawSpriteDevice(ctx, smoothSpriteCanvas(ov, palRow, null, c07, null, 0, 0),
       ax + ov.ox, ay + ov.oy, S, blurDev, zx, zy, cx, cy);
+  }
+  ctx.globalAlpha = a0;
 }
 /* HUD pruh do pruhledneho platna - stejna smycka jako compositeHudPlane,
    jen misto do hotoveho snimku zapisuje do vrstvy s alfa 0 na pozadi. */
