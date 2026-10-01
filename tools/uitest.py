@@ -7357,12 +7357,22 @@ def main():
               const j = bakedRotorOf([0, 1], 'FODDERA.LIN');
               const listu = r => r ? r.parts.map(([s]) =>
                 s.pix.reduce((n, v) => n + (v === 0), 0)) : null;
-              return { f: listu(f), y: listu(y), jet: j, telo: f && f.body };
+              // kabina YELLOW: body indexu 7 jen v listovych snimcich #1/#2
+              const kabina = r => (r && r.overlays || []).map(o =>
+                o.pix.reduce((n, v) => n + (v === 7), 0));
+              return { f: listu(f), y: listu(y), jet: j, telo: f && f.body,
+                       kabina: kabina(y), kabinaF: kabina(f) };
             }""")
             expect(zapec["jet"] is None and zapec["telo"] == 2 and
                    all(n > 20 for n in zapec["f"]) and
                    all(n > 20 for n in zapec["y"]),
                    "zapecene rotory: %r" % (zapec,))
+            # 2026-10-01: kabina YELLOW (26 bodu indexu 7 ve snimcich #1 a #2,
+            # v tele #0 chybi) musi do disku dojit jako prekryv, jinak v
+            # TOWN nepulzuje cervene (COLOR07) jako v originale.
+            expect(zapec["kabina"] == [26, 26] and
+                   all(n >= 1 for n in zapec["kabinaF"]),
+                   "kabina zlutych vrtulniku v disku: %r" % (zapec,))
 
             # Varianta (a), etapa 2b: klasicky rezim publikuje obraz jednou
             # za KOLO (0x291e: exg bufferu, latch fp@(3542), 0x41c8 + HW

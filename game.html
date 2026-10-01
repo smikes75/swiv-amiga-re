@@ -1361,9 +1361,11 @@ async function autoLoadAdf() {
   // Server muze slozku presmerovat na tvar bez lomitka (Vercel 308:
   // /swiv/ -> /swiv); relativni "swiv.adf" by pak miril do korene. Proto
   // se zkousi i cesta slozky z adresy stranky.
+  // Bez lomitka nejdriv cesta slozky (jinak dva 404 v konzoli), pak
+  // relativni jmena.
   const cesty = ["swiv.adf", "swiv.bin"];
   const dir = location.pathname.replace(/[^/]*\.html?$/i, "");
-  if (dir && !dir.endsWith("/")) cesty.push(dir + "/swiv.adf", dir + "/swiv.bin");
+  if (dir && !dir.endsWith("/")) cesty.unshift(dir + "/swiv.adf", dir + "/swiv.bin");
   for (const jmeno of cesty) {
     try {
       const res = await fetch(jmeno, { cache: "force-cache" });
@@ -4153,7 +4155,16 @@ const ROTOR_DISC_BASE = 0.14, ROTOR_DISC_BLADE = 0.3;
    (0x86f2) stridaji s periodou 1 telo s telem+listy [B,C1,B,C2,B,C3,B,C4],
    takze listy blikaji stejne jako u hrace. Listy jsou body barvy 0, ktere
    ve snimku Ck pribyly proti telu B; z nich se slozi ctyri samostatne
-   "listove" snimky pro tentyz disk. */
+   "listove" snimky pro tentyz disk.
+
+   Snimky Ck ale nesou i jine body, ktere v tele nejsou: YELLOW #1 a #2
+   maji 26 bodu INDEXU 7 na spodku trupu (kabina), FODDERA po jednom. V
+   TOWN COLOR07 pulzuje cervene (0x2b3e), takze v originale kabina ve dvou
+   z osmi snimku cervene blika; disk ji s listy zahazoval a hrac videl
+   jen tmavy trup (hlaseno 2026-10-01). Takove body se sbiraji do
+   `overlays` a kresli se pres telo plnou krytosti bez zmeny op, tedy s
+   pulzujicim c07 - trvale misto 2/8 casu, stejne jako disk vyhlazuje
+   blikani listu. */
 function bakedRotorOf(seq, file) {
   if (!seq || seq.length !== 8) return null;
   const b = seq[0];
@@ -4164,22 +4175,27 @@ function bakedRotorOf(seq, file) {
   const body = indexedFrameFor(state, file, b);
   let rotor = null;
   if (body) {
-    const parts = [];
+    const parts = [], overlays = [];
     for (const f of [seq[1], seq[3], seq[5], seq[7]]) {
       const c = indexedFrameFor(state, file, f);
       if (!c) { parts.length = 0; break; }
       const pix = new Uint8Array(c.w * c.h).fill(0xFF);
+      const ov = new Uint8Array(c.w * c.h).fill(0xFF);
+      let ovN = 0;
       for (let y = 0; y < c.h; y++) for (let x = 0; x < c.w; x++) {
-        if (c.pix[y * c.w + x] !== 0) continue;
+        const v = c.pix[y * c.w + x];
+        if (v === 0xFF) continue;
         // tentyz bod v souradnicich tela (spolecna kotva)
         const bx = x + c.ox - body.ox, by = y + c.oy - body.oy;
         const bv = bx >= 0 && by >= 0 && bx < body.w && by < body.h
           ? body.pix[by * body.w + bx] : 0xFF;
-        if (bv !== 0) pix[y * c.w + x] = 0;
+        if (v === 0) { if (bv !== 0) pix[y * c.w + x] = 0; }
+        else if (bv !== v) { ov[y * c.w + x] = v; ovN++; }
       }
       parts.push([{ w: c.w, h: c.h, ox: c.ox, oy: c.oy, pix }, 0, 0]);
+      if (ovN) overlays.push({ w: c.w, h: c.h, ox: c.ox, oy: c.oy, pix: ov, n: ovN });
     }
-    if (parts.length === 4) rotor = { file, body: b, parts };
+    if (parts.length === 4) rotor = { file, body: b, parts, overlays };
   }
   cache.set(key, rotor);
   return rotor;
@@ -13403,6 +13419,11 @@ function drawRotorDisc(ctx, rotor, ax, ay, palRow, c07, S, blurDev, faze,
       ax + ox + spr.ox, ay + oy + spr.oy, S, blurDev, zx, zy, cx, cy);
   }
   ctx.globalAlpha = a0;
+  // kabina a dalsi body jen z listovych snimku (viz bakedRotorOf): plna
+  // krytost, bezny op, tedy index 7 pulzuje s c07 jako v originale
+  for (const ov of rotor.overlays || [])
+    drawSpriteDevice(ctx, smoothSpriteCanvas(ov, palRow, null, c07, null, 0, 0),
+      ax + ov.ox, ay + ov.oy, S, blurDev, zx, zy, cx, cy);
 }
 /* HUD pruh do pruhledneho platna - stejna smycka jako compositeHudPlane,
    jen misto do hotoveho snimku zapisuje do vrstvy s alfa 0 na pozadi. */
