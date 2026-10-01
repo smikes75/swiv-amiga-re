@@ -160,7 +160,10 @@ therefore `+348 = 0x800` means `1/32 px/t²`, not a constant speed.
    HOMING.LIN ma presne 16 snimku): 3 px/t (+356=768), kazdych
    8 tiku otocka k hraci max 14 jednotek (~20°), **2×(5+D)
    korekci**, pak rovne. Prvni z 20 primych pohybu probehne uz ve spawn
-   VBL. Muzzle PLOP zdedi parentovu rychlost; setup `PLOP#0` animator
+   VBL. Zmereno 2026-10-01 (`tools/homingdiff.py`, TOWN): original i
+   prepis `20:-14 28:-14 ... 92:-14`. Cil z `0x72ee` (ve dvou hracich
+   stridave slot 2 / slot 1, drzeny v `+276`); `+397` bit 0 dedi z nosice
+   (`0x626a`), proto strely pozemnich nosicu leti pod korunami stromu. Muzzle PLOP zdedi parentovu rychlost; setup `PLOP#0` animator
    prepise pred prvnim enqueue, takze je jeden field videt HW `BULLET#2`
    a dalsi resume jej prikazem `KILL` ukonci (`0x85f0/0x861e`).
 

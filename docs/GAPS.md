@@ -2162,6 +2162,61 @@ tomu, aby se o nej weaveri rozbili - krouzi kolem nej a `activeCost`
 vyleti na 300. Harness ma jen nekonecne zivoty.
 
 
+## Navadena strela a kadence po kolech (2026-10-01, `tools/homingdiff.py`)
+
+Hrac: "navadena strela v originale sleduje dele" a "leta pod stromy a
+skrz domy". Zmereno v TOWN od pozice 58400 (4000 VBL, vrtulnik stoji
+na (316,192) nesmrtelny, obtiznost prepisu pripnuta na original):
+
+- **Strela sama je verna.** `0x8566`: 20 VBL rovne, pak 2x(5+D) korekci
+  po 8 VBL (`0x629c`, VBL), kazda max 14/256 kratsim smerem (`0x65be`:
+  znamenkovy bajt, limit), pak rovne az za okraj (cull margin 0).
+  Original: `20:-14 28:-14 ... 92:-14` (10 korekci, D = 0), prepis
+  totez. Kdyz je skoro namirena, obe otoci jen o zbytek (`+4`, `-1`).
+  Na zatizene A500 se cekani 8 VBL vyhodnocuje na hranici kola: v jedne
+  salve `21 29 39 49 57 65 73` (9-10 VBL) - strela sleduje o 10-25 % dele
+  v realnem case; to je delka kola, kterou nemodelujeme.
+- **Pod stromy a skrz domy je original.** Dite `0x6178` dedi `+397` bit 0
+  nosice (`0x626a`: `and.b +397,#1; or.b -> dite`), takze strely
+  pozemnich nosicu (POPUP, TINYTRUK, DESTRAIN...) se kresli za rovinou
+  popredi; v TOWN do ni patri koruny `_DEADTRE` (2 casti s flagem 0x02) a
+  7 casti `_HOUSES`. Rovina je proti originalu overena covercheckem.
+  Strely bosse bit nemaji (0/0 na obou stranach).
+- **Nosic: boss `0xc882` palil v prepisu dvakrat tak casto.** Salva
+  (mireny kanon + dve navadene) ma kadenci (12-D)x4 = 48 - v originale
+  KOL (`0xc8d4`: `subq #1,+282` ve smycce korutiny; zmereno 96, 96, 100,
+  109 VBL mezi salvami), prepis odecital po tiku (48 VBL). Opraveno
+  (`roundDue`).
+- **Rank `+110` roste za KOLO, ne za VBL.** `0x70f6` bezi jednou za
+  probuzeni ulohy hrace; prepis `incrementPlayerRank` volal kazdy tik.
+  Obtiznost `fp@(182)` = `((rank1>>8)+(rank2>>8)+((w1+w2)>>2))>>3 + faze`
+  (`0x1cd4`, shodny vzorec) tak v prepisu rostla 2,4x rychleji: za 4000
+  VBL original rank 1813 (D = 0 cely beh), prepis 4361 (D = 1 od 1686,
+  D = 2 od 3734). D zvedа pocet korekci strely, HP tanku (`D+1`, `D+5`),
+  salvy POPUPu, velikost vln. Opraveno (`roundDue` u vrtulniku i jeepu).
+- **Cil `0x72ee` se ve dvou hracich strida.** Je-li ve hre (+54) jen
+  jeden slot, vrati ten; jsou-li oba, kazde volani prehodi `fp@(168)` a
+  vraci stridave slot 2, slot 1, ... (prvni volani slot 2). Volajici si
+  cil drzi v `+276` po cely zivot: navadena strela (`0x8586`), mireny
+  kanon (`0x95f2`), bomba XEVIOUS (`0x7fd6`), GOOSE#7 (`0x87c6`, strana
+  startu), odpalovac INST1 (`0xb7ee`), dron INST3 (`0xbdb4`), chodec
+  INST3 (`0xbc9c`, pri vstupu do dojezdu). `0x7312` je jina rutina
+  (blizsi hrac podle |dx|+|dy|, bez stridani). Prepis miril vzdy na
+  vrtulnik - doplneno `aimTarget` na vsech sedmi mistech; s jednim
+  hracem beze zmeny.
+- Audit vsech `subq #1,+N` citacu v korutinach (60 mist): krome vyse
+  uvedenych a dnesnich (jeep `+282`, brazda `+280`) uz prepis kola drzi
+  (kanon `0x966e` po 5 kolech, camogun `0xac56`, plat `0xa40e`, roto
+  `0x9a0e`, INST2 `0xb790`, INST4 vez `0xbf66`); ostatni jsou pocty salv
+  nebo cekani `0x629c` po VBL.
+- **Po oprave** (tyz beh): salvy bosse v prepisu v tiku 107, 203, 299
+  (original 101, 197, 293 - po 96 VBL, posun 6 tiku je dojezd bosse k
+  vrtulniku); rank na konci 2181 proti 1813 originalu (kola prepisu jsou
+  presne 2 VBL, originalu v TOWN prumerne 2,2), D = 1 az v tiku 3733
+  (original do 4000 VBL D = 0). Strely: prepis `20:-14 ... 92:-14`
+  shodne; parovani nastroje selhava jen na poloze nosice (boss doleta
+  k vrtulniku z jine strany), ne na logice strely.
+
 ## Jeep proti originalu (2026-09-30, `tools/jeepdiff.py`)
 
 Do 2026-09-30 byl jeep prepsany jen z disassembly. `tools/jeepdiff.py`

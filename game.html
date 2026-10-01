@@ -4040,6 +4040,17 @@ function turnToward(cur, want, max) {        // 0x65be: otocka omezena na max
   if (d > max) d = max; else if (d < -max) d = -max;
   return (cur + d) & 255;
 }
+/* 0x72ee: ktereho hrace si strelec bere za cil. Je-li ve hre (+54) jen
+   jeden slot, vrati ten; jsou-li oba, kazde volani prehodi fp@(168)
+   (`notb`, `bpl` -> slot 1) a vraci STRIDAVE slot 2, slot 1, ... Cil si
+   volajici drzi (+276) po cely zivot strely/stavu. 0x7312 je jina rutina
+   (blizsi hrac, bez stridani). S jednim hracem beze zmeny: g.player. */
+function aimTarget(g) {
+  const p2 = g.player2;
+  if (!p2) return g.player;
+  g.aimToggle = !g.aimToggle;
+  return g.aimToggle ? p2 : g.player;
+}
 const dir16 = a => ((a + 8) >> 4) & 15;
 const dir8 = a => ((a + 16) >> 5) & 7;
 /* 0x959e: joystickovy nibble z 0x71ac (bit0 nahoru, bit1 dolu, bit2 vlevo,
@@ -4354,7 +4365,7 @@ function advanceHomingShot(g, s) {
     s.lead--;
   } else if (s.corr > 0 && --s.ct <= 0) {
     s.ct = 8; s.corr--;
-    const p = g.player;
+    const p = s.target || g.player;            // +276 z 0x72ee pri zrodu
     s.ang = turnToward(s.ang, angTo(s.x, s.y, p.x, p.y), 14);
   }
   const v = angVel(s.ang, s.spd);
@@ -4393,9 +4404,10 @@ function fireCannonStraight(g, x, y, a) {
 }
 /* Mirena varianta (0x95d2): zamiri na hrace v okamziku vystrelu. */
 function fireCannonAimed(g, x, y, parentVx = 0, parentVy = 0) {
-  // 0x95d2 drzi ukazatel na player slot a miri na posledni ulozenou
-  // pozici i behem death/respawn tasku; alive flag zde nekontroluje.
-  const p = g.player; if (!p) return;
+  // 0x95d2 drzi ukazatel na player slot (0x72ee, ve dvou hracich
+  // stridave) a miri na posledni ulozenou pozici i behem death/respawn
+  // tasku; alive flag zde nekontroluje.
+  const p = aimTarget(g); if (!p) return;
   if (fireCannon(g, x, y, angTo(x, y, p.x, p.y - 8)))
     spawnPlop(g, x, y, parentVx, parentVy);
 }
@@ -4407,7 +4419,7 @@ function fireHoming(g, x, y, a, parentVx = 0, parentVy = 0,
                     groundBit = false) {
   // groundBit: dite 0x6178 dedi +397 bit 0 strelce (POPUP, 0x626a).
   const h = { kind: "hom", x, y, ang: a, spd: 3, groundBit: !!groundBit,
-              bornTick: g.tick | 0,
+              bornTick: g.tick | 0, target: aimTarget(g),   // 0x8586
               lead: 20, corr: 2 * (5 + (g.difficulty || 0)), ct: 0,
               cost: 5, budgeted: true };
   g.activeCost = (g.activeCost || 0) + h.cost;  // bez 0x8822 guardu
@@ -6257,7 +6269,7 @@ function spawnXevBomb(g, s) {                  // 0x7f9a (dite 0x6178)
   // Trida 6 + HP 0 = smrtici kontakt bez handleru, tedy jako kanonovy
   // granat: bolt hrace jej nezastavi ani nezabije.
   sfxXevBomb(g, s.x);                          // 0x7f9e, jeste pred a2c6
-  const p = g.player;
+  const p = aimTarget(g);                      // 0x7fd6
   const sy = s.y - scrollTop(g);
   const ang = (angTo(s.x, sy, p.x, p.y) +
                ((random32(g) & 31) - 16)) & 255;
@@ -6662,7 +6674,7 @@ function advanceTownHazardField(g, h) {
         if ((g.inst1Factories | 0) > 0) { h.vy = 0; h.t = 10; h.st = 2; }
         else { h.t = 30; h.st = 4; }
       } else if (h.st === 2) {
-        const p = g.player;
+        const p = aimTarget(g);                // 0xb7ee
         const ang = angTo(h.x, h.y - scrollTop(g), p.x, p.y);
         fireHoming(g, h.x, h.y - scrollTop(g) - 4, ang, h.vx, h.vy);
         h.t = 30; h.st = 3;
@@ -6857,7 +6869,7 @@ function advanceTownHazardField(g, h) {
   } else if (h.kind === "inst3drone") {
     if (h.st === 0) {                          // 0x629c(50)
       if (--h.t <= 0) {                        // 0xbdae
-        const p = g.player;
+        const p = aimTarget(g);                // 0xbdb4
         h.ang = angTo(h.x, h.y - scrollTop(g),  // 0x65be s limitem 0
                       p.alive ? p.x : 160, p.alive ? p.y : 192);
         const v = angVel(h.ang, 2); h.vx = v.vx; h.vy = v.vy;
@@ -9961,7 +9973,8 @@ function swapVehicleForm(g, p) {
 function stepJeep(g, scrollDelta = 0) {
   const p = g.player2;
   if (!p || !p.alive) return;
-  incrementPlayerRank(p);                      // 0x70f6 pres 0x7090
+  if (roundDue(g, p, "rankRoundAt"))           // za KOLO, viz vrtulnik
+    incrementPlayerRank(p);                    // 0x70f6 pres 0x7090
   checkExtraLife(g, 2);                        // 0x710c, za rankem
   if (swapVehicleForm(g, p)) return;           // 0x94c2 / 0x94d0
   clampJeep(g, p);                             // 0x94f0 pred vstupem
@@ -10264,7 +10277,12 @@ function step(g) {
     respawnJeep(g);
 
   if (p.alive) {
-    incrementPlayerRank(p);                    // player task pred enemy tasky
+    // 0x70f6 bezi jednou za probuzeni ulohy hrace, tj. za KOLO (nominalne
+    // 2 VBL); po tiku rostl rank 2,4x rychleji a s nim obtiznost fp@(182)
+    // (0x1cd4: rank >> 8 >> 3). Zmereno 2026-10-01 (tools/homingdiff.py,
+    // TOWN 4000 VBL): original rank 1813 (D = 0), prepis 4361 (D = 2).
+    if (roundDue(g, p, "rankRoundAt"))
+      incrementPlayerRank(p);                  // player task pred enemy tasky
     checkExtraLife(g, 1);                      // 0x710c, za rankem
     // 0x947c vola 0x954c pred nactenim vstupu a pred 0x92a0/0x62d2.
     // Kardinalni pohyb proto muze na jeden publikovany frame dojit az na
@@ -11031,7 +11049,7 @@ function step(g) {
         if (!reserveCost(g, s)) releaseSpawnTask(g, s);
         else {
           s.scrollLocked = true; s.z = 32;
-          const p = g.player;
+          const p = aimTarget(g);              // 0x87c6
           const left = positionWord(p ? p.x : 160) < 160;
           s.x = (left ? 256 : 0) + (random32(g) & 63);
           s.vx = left ? -0.5 : 0.5; s.vy = 1;
@@ -11346,9 +11364,9 @@ function step(g) {
         s.st = 2;
       } else if (s.st === 2) {                   // test az po poli
         if (s.marchDir < 0 ? positionWord(s.x) >= 296
-                           : positionWord(s.x) <= 24) { s.vx = 0; s.st = 3; }
+                           : positionWord(s.x) <= 24) { s.vx = 0; s.st = 3; s.target = aimTarget(g); }
       } else if (s.st === 3) {                   // 0xbc9c: dojezd k hraci
-        const p = g.player;                      // ukazatel z 0x72ee v +276
+        const p = s.target || g.player;          // ukazatel z 0x72ee v +276
         const d = signedWord(positionWord(p.alive ? p.x : 160) -
                              positionWord(s.x));
         if (Math.abs(d) >= 24) s.vx = d >= 0 ? 2 : -2;
@@ -12270,8 +12288,11 @@ function step(g) {
             if (bsyWord < 64) s.vy = 4;
             else if (bsyWord > 192) s.vy = -0.25;
             s.y += s.vy;
-            // 0xc8ce: pali jen v horni polovine, kadence (12-D)*4.
-            if (bsyWord <= 128 && --s.fireT <= 0) {
+            // 0xc8ce: pali jen v horni polovine, kadence (12-D)*4 KOL
+            // (`subq #1,+282` ve smycce korutiny). Zmereno 2026-10-01
+            // (tools/homingdiff.py): salvy po 96, 96, 100, 109 VBL;
+            // prepis po tiku palil kazdych 48.
+            if (bsyWord <= 128 && roundDue(g, s, "fireAt") && --s.fireT <= 0) {
               s.fireT = (12 - (g.difficulty || 0)) * 4;
               fireCannonAimed(g, preMoveX, bsy, s.vx, s.vy);
               fireHoming(g, preMoveX + 6, bsy, 0, s.vx, s.vy);

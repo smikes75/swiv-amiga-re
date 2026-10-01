@@ -1273,7 +1273,9 @@ def main():
                 };
 
                 // Prvni bojova salva je mireny cannon + dva homing BOBs.
-                g.shots = []; s.fireT = 1;
+                // Kadence 0xc8ce bezi po KOLECH (roundDue): fixture branu
+                // uvolni, aby salva prisla v tomto kroku.
+                g.shots = []; s.fireT = 1; s.fireAt = 0;
                 step(g);
                 const salvo = g.shots.map(x => x.kind).sort();
 
@@ -1385,6 +1387,7 @@ def main():
                     vx: patch.vx ?? 0, vy: patch.vy ?? 0,
                     arrived: patch.arrived ?? false,
                     timer: patch.timer ?? 100, fireT: patch.fireT ?? 100,
+                    fireAt: 0,                 // brana kadence po kolech
                     parts: [], assemblyLeft: 0, bodyHidden: false,
                     unfoldPos: -1, rotorActive: false, hitSpread: false,
                     groupReleased: false, retireAfterField: false,
