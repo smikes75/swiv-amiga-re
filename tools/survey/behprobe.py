@@ -80,9 +80,9 @@ with sync_playwright() as pw:
     page.goto("file://" + os.path.join(ROOT, "game.html"))
     page.set_input_files("#fpick", os.path.join(ROOT, "SWIVFIX.ADF"))
     page.wait_for_selector("#titlewrap", state="visible")
-    page.wait_for_selector("#levelpick", state="visible")
     page.evaluate("window.requestAnimationFrame = () => 0")
-    page.click("#levelbtns a:nth-child(%d)" % level)
+    page.click("#mnu-hra .wbtitle")             # vyber zony je v menu Game
+    page.click("#levelbtns button:nth-child(%d)" % level)
     page.wait_for_selector("#gamewrap", state="visible")
     res = page.evaluate(JS, [spec, kill, maxtick])
     for name, data in res["shots"]:

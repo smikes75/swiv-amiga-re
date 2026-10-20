@@ -115,9 +115,11 @@ with sync_playwright() as pw:
     errs = []; page.on("pageerror", lambda e: errs.append(str(e)))
     page.goto("file://" + os.path.join(ROOT, "game.html"))
     page.set_input_files("#fpick", os.path.join(ROOT, "SWIVFIX.ADF"))
-    page.wait_for_selector("#titlewrap", state="visible"); page.wait_for_selector("#levelpick", state="visible")
+    page.wait_for_selector("#titlewrap", state="visible")
     page.evaluate("window.requestAnimationFrame = () => 0")
-    page.click(f"#levelbtns a:nth-child({zone})"); page.wait_for_selector("#gamewrap", state="visible")
+    # vyber zony je v menu Game (lista), tlacitka jsou <button>
+    page.click("#mnu-hra .wbtitle")
+    page.click(f"#levelbtns button:nth-child({zone})"); page.wait_for_selector("#gamewrap", state="visible")
     res = page.evaluate(JS, tick)
     b.close()
 if errs or "error" in res:
