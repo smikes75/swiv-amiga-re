@@ -11,15 +11,23 @@ Kontrakt: `tools/wbtest.py` (plus `uitest.py`, `smoothtest.py`, `nettest.py`).
 |---|---|
 | Project (`mnu-proj`) | Insert disk, Restart zone (R), pozice 1-10 (save / load / delete, S / L), odkaz na repo |
 | Display (`mnu-obraz`) | original / enhanced (E), velikost (fit, 2-6x, posuvnik 0-12 v bodech displeje), CRT off / fine / strong, knofliky brightness / contrast / saturation / blur, reset picture, Full screen (F) |
+| Effects (`mnu-fx`) | vehicle tracks (stopy vozidel); v originalu sede, plati jen ve vylepsenem rezimu |
 | Game (`mnu-hra`) | start od zony (`#levelbtns button`) |
 | Controls (`mnu-ovl`) | gamepad hrace 1 a 2 (`padsel0/1`), zivy stav (`padinfo`), prehled klaves |
 | Network (`mnu-sit`) | hra ve dvou po siti (beze zmeny, jen anglicky) |
 | Debug (`mnu-dbg`, jen `?debug`) | pul zony zpet/vpred, End sequence (C), zivoty, rychlost scrollu, zbran + / rozptyl, paleta hardware / period monitor, jednotlive efekty vylepseneho rezimu, mereni snimku |
 
-Menu Efekty zmizelo: vylepseny rezim je pro hrace pevna sada vychozich
-efektu (hloubka ostrosti plna, mekke stiny, prolnuti scrollu, vlnky, stopy,
+Menu Effects ma pro hrace jen vypinac stop vozidel (pridano na prani
+uzivatele po prvnim testu 2026-10-20); jinak je vylepseny rezim pevna sada
+vychozich efektu (hloubka ostrosti plna, mekke stiny, prolnuti scrollu, vlnky, stopy,
 podpixelove sprity, rotor jako disk; naklon vrtulniku a hrany spritu
 vypnute). Jednotlive prepinace jsou v Debug.
+
+Uzka obrazovka: pod 600 px zmizi jmeno hry a stavovy text z listy, pod
+420 px se zmensi pismo, aby byly dosazitelne vsechny titulky; panel, ktery
+by vpravo pretekl okno, se pri otevreni posune doleva (`fit` v ovladaci
+menu), siroke panely jsou nanejvys sirka okna. Overuje `wbtest.py` na
+480 a 380 px (stranka hrace; Debug se do 380 px nevejde a nemusi).
 
 ## Klavesy
 
@@ -48,6 +56,7 @@ pri stavbe), knofliky se projevi hned. Puvod: stejne knofliky ma Turrican II
 | `swivZoom` | 0-12 (bodu displeje, 0 = fit) | vzdy |
 | `swivCrt` | `vyp` / `jemne` / `vyrazne` | vzdy |
 | `swivMode` | `fx` / `orig` | vzdy |
+| `swivTracks` | `0` = stopy vozidel vypnute | vzdy |
 | `swivPicture` | `{bright, contrast, sat, blur}` | vzdy; reset ho smaze |
 | `swivPad0`, `swivPad1` | volba ovladace | vzdy |
 | `swivMonitor`, `swivDof`, `swivSprite` | paleta a efekty | jen s `?debug` (hrac ma vychozi) |
@@ -61,8 +70,8 @@ reload. Ukladani je ted jen v obsluze vyberu.
 
 `amiga-re-kit/WB-SHELL-SWIV.md` (2026-10-20) pocita se sdilenou vrstvou
 `wb-shell 1.0` z Turricanu. Uzivatel rozhodl upravit SWIV samostatne a hned.
-Odchylky od toho kontraktu: anglicke popisky, bez panelu Efekty a bez volby
-palety pro hrace (oboje v Debug), Debug jen s `?debug`, id prvku zustala
+Odchylky od toho kontraktu: anglicke popisky, panel Effects jen se stopami
+vozidel, bez volby palety pro hrace (zbytek efektu a paleta v Debug), Debug jen s `?debug`, id prvku zustala
 puvodni (mapa v zadani §3 plati). Pri pozdejsim prevzeti shellu pozor:
 vsechny nastroje SWIV oteviraji `game.html` pres `file://`, kde Chromium
 nenacte `<script type="module">` s importem - shell by musel byt vlozen do

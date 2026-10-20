@@ -43,7 +43,7 @@ body { background:#000; color:var(--white);
   border:1px solid var(--blue); border-radius:0; }
 .wbpanel input[type=checkbox], .wbpanel input[type=radio] { accent-color:var(--blue); }
 .wbpanel #fxbar[hidden] { display:none; }
-.wbpanel.wbwide { min-width:380px; white-space:normal; }
+.wbpanel.wbwide { min-width:min(380px, calc(100vw - 4px)); white-space:normal; }
 .wbpanel textarea { width:100%; height:52px; font:11px monospace; color:var(--blue);
   background:var(--white); border:1px solid var(--blue); }
 .wbpanel .wbrow.wbbtns { flex-wrap:wrap; gap:4px; }
@@ -92,6 +92,16 @@ p { max-width:640px; margin:6px 0; font-size:14px; }
 .wbpanel label.wbslider { display:grid; grid-template-columns:7.5em 130px 3.5em; }
 .wbpanel label.wbslider input[type=range] { width:100%; margin:0; }
 .wbpanel label.wbslider output { text-align:right; }
+/* Uzke okno (telefon): lista se musi vejit na sirku, jinak by posledni
+   menu nebyla dosazitelna. Stavovy text a jmeno hry ustoupi. */
+@media (max-width: 600px) {
+  #wbbar .wbname, #wbstatus { display:none; }
+  .wbtitle { padding:0 6px; }
+}
+@media (max-width: 420px) {
+  #wbbar { font-size:12px; }
+  .wbtitle { padding:0 4px; }
+}
 .wbpanel :focus-visible { outline:2px solid var(--orange); outline-offset:1px; }
 small { opacity:.75 }
 a { color:#cfe0ff }
@@ -148,6 +158,13 @@ a { color:#cfe0ff }
       <div class="wbnote">like the knobs of a monitor: they change only the picture, not the game</div>
       <hr>
       <button type="button" class="wbitem" id="btnfull">Full screen (F)</button>
+    </div>
+  </div>
+  <div class="wbmenu ghost" id="mnu-fx">
+    <button type="button" class="wbtitle">Effects</button>
+    <div class="wbpanel">
+      <label title="Vehicles leave tracks on the ground; the original draws them only in a few places. Purely visual, the game and network play are not affected."><input type="checkbox" id="stopychk" checked> vehicle tracks</label>
+      <div class="wbnote" id="fxnote">effects work only in enhanced mode (key <b>E</b>)</div>
     </div>
   </div>
   <div class="wbmenu" id="mnu-hra">
@@ -217,7 +234,6 @@ a { color:#cfe0ff }
     <label><input type="checkbox" id="softshchk2" checked> soft shadows</label>
     <label><input type="checkbox" id="blendchk" checked> scroll blend</label>
     <label><input type="checkbox" id="vlnkychk" checked> water ripples</label>
-    <label><input type="checkbox" id="stopychk" checked> vehicle tracks</label>
     <label><input type="checkbox" id="subpxchk" checked> subpixel sprites</label>
     <label><input type="checkbox" id="tiltchk"> helicopter tilt</label>
     <label><input type="checkbox" id="rotorchk" checked> rotor as a disc</label>
@@ -1279,8 +1295,20 @@ document.getElementById("mnu-dbg").hidden = !DEBUG;
    Esc zavre. Po zavreni se fokus vrati hernimu platnu. */
 (() => {
   const menus = [...document.querySelectorAll("#wbbar .wbmenu:not([hidden])")];
-  window.wbOpenMenu = id => { menus.forEach(o => o.classList.remove("open"));
-    const m = document.getElementById(id); if (m) m.classList.add("open"); };
+  // Panel, ktery by vpravo pretekl okno (uzka obrazovka, menu vpravo na
+  // liste), se posune doleva, aby byl cely videt.
+  const fit = m => {
+    const p = m.querySelector(".wbpanel");
+    p.style.left = "";
+    const r = p.getBoundingClientRect(), W = document.documentElement.clientWidth;
+    if (r.right > W - 2) p.style.left = Math.max(2 - r.left, W - 2 - r.right) + "px";
+  };
+  const openMenu = m => {
+    menus.forEach(o => o.classList.remove("open"));
+    m.classList.add("open"); fit(m);
+  };
+  window.wbOpenMenu = id => { const m = document.getElementById(id);
+    if (m) openMenu(m); else menus.forEach(o => o.classList.remove("open")); };
   const close = () => {
     const was = menus.some(m => m.classList.contains("open"));
     menus.forEach(m => m.classList.remove("open"));
@@ -1296,13 +1324,13 @@ document.getElementById("mnu-dbg").hidden = !DEBUG;
       if (m.hoverAt && performance.now() - m.hoverAt < 500) { e.stopPropagation(); return; }
       const open = !m.classList.contains("open");
       menus.forEach(o => o.classList.remove("open"));
-      if (open) m.classList.add("open");
+      if (open) openMenu(m);
       e.stopPropagation();
     });
     // Najeti mysi na jiny titulek pri otevrenem menu prepne (jako na Amize)
     t.addEventListener("pointerenter", () => {
       if (menus.some(o => o.classList.contains("open") && o !== m)) {
-        menus.forEach(o => o.classList.remove("open")); m.classList.add("open");
+        openMenu(m);
         m.hoverAt = performance.now();
       }
     });
@@ -9195,6 +9223,7 @@ document.getElementById("blendchk").onchange = e => {
    rozbali jejich seznam. */
 function setMode(fx) {
   state.smooth = fx;
+  document.getElementById("mnu-fx").classList.toggle("ghost", !fx);
   try { localStorage.setItem("swivMode", fx ? "fx" : "orig"); } catch (e) {}
   // Vylepseny rezim zapne vsechny sve podvolby, ktere ma hrac zaskrtnute;
   // v originalnim rezimu je drzi vypnute, at je "original" opravdu
@@ -9230,6 +9259,12 @@ function toggleMode() {
 /* Volba rezimu prezije reload, stejne jako zvetseni. Bez toho se po
    kazdem nacteni vracel "original" a vsechny efekty byly potichu vypnute
    - hrac je pak hledal a nechapal, proc nejsou videt. */
+// Stopy vozidel jsou jedina volba v menu Effects pro hrace; obnovit ji
+// driv nez rezim, protoze setMode() cte zaskrtavatko.
+try {
+  if (localStorage.getItem("swivTracks") === "0")
+    document.getElementById("stopychk").checked = false;
+} catch (e) {}
 try {
   if (localStorage.getItem("swivMode") === "fx") {
     document.getElementById("modefx").checked = true;
@@ -9260,6 +9295,7 @@ document.getElementById("vlnkychk").onchange = e => {
 document.getElementById("stopychk").onchange = e => {
   state.vehicleTracks = state.smooth && e.target.checked;
   if (!state.vehicleTracks) { state.trail = []; state.trackLast = null; }
+  try { localStorage.setItem("swivTracks", e.target.checked ? "1" : "0"); } catch (e2) {}
 };
 try {
   const ulozeno = DEBUG ? localStorage.getItem("swivSprite") : null;

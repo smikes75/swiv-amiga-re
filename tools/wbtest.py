@@ -4,14 +4,17 @@
 Lista je jen prezentace: nic z ni nesmi sahnout na simulaci. Tenhle test
 overuje, co hrac vidi a co klavesy delaji:
 
-  - menu Project / Display / Game / Controls / Network, vse anglicky;
+  - menu Project / Display / Effects / Game / Controls / Network, vse
+    anglicky; Effects ma pro hrace jen stopy vozidel (ulozene), v originalu
+    sede;
     menu Debug jen s `?debug` v adrese,
   - E prepina original <-> vylepseno oboje smery a NEMENI CRT; O nedela nic,
   - knofliky jas / kontrast / sytost / rozmazani jsou CSS filtr nad
     platnem; pri vychozich hodnotach zadny filtr (obraz bit po bitu stejny),
     rozmazani = 0,8 bodu hry pri 100 %, reset, ulozeni pres reload,
   - stara ulozena paleta a efekty (swivMonitor, swivDof) plati jen s ?debug,
-  - C (skok na konec) jen s ?debug, R restartuje zonu, F celou obrazovku.
+  - C (skok na konec) jen s ?debug, R restartuje zonu, F celou obrazovku,
+  - na sirce 480 a 380 px je kazdy titulek i otevreny panel cely v okne.
 
     python3 tools/wbtest.py
 """
@@ -65,7 +68,7 @@ with sync_playwright() as pw:
     otevri(page)
     titulky = page.evaluate("""() => [...document.querySelectorAll('#wbbar .wbmenu')]
         .filter(m => !m.hidden).map(m => m.querySelector('.wbtitle').textContent)""")
-    expect(titulky == ["Project", "Display", "Game", "Controls", "Network"],
+    expect(titulky == ["Project", "Display", "Effects", "Game", "Controls", "Network"],
            "menu hrace: %r" % titulky)
     expect(page.evaluate("document.getElementById('mnu-dbg').hidden"),
            "menu Debug je videt bez ?debug")
@@ -98,6 +101,19 @@ with sync_playwright() as pw:
     page.keyboard.press("o")
     expect(st()["smooth"] is False, "O porad prepina rezim")
 
+    # Effects: stopy vozidel, sede v originalu, volba prezije reload
+    ghost = lambda: page.evaluate("document.getElementById('mnu-fx').classList.contains('ghost')")
+    expect(ghost(), "menu Effects neni v originalu sede")
+    page.keyboard.press("e")
+    expect(not ghost() and page.evaluate("state.vehicleTracks === true"),
+           "vylepseno: Effects sede nebo stopy vypnute")
+    page.click("#mnu-fx .wbtitle")
+    page.click("#stopychk")
+    page.keyboard.press("Escape")
+    expect(page.evaluate("state.vehicleTracks === false"), "odskrtnuti stopy nevypnulo")
+    page.focus("#game")
+    page.keyboard.press("e")
+
     # knofliky monitoru
     slider(page, "#dispbright", 120)
     slider(page, "#dispsat", 40)
@@ -116,6 +132,8 @@ with sync_playwright() as pw:
     otevri(page)
     expect(page.evaluate("document.getElementById('dispbright').value") == "120",
            "jas se po reloadu neobnovil")
+    expect(page.evaluate("!document.getElementById('stopychk').checked"),
+           "vypnute stopy se po reloadu neobnovily")
     expect("brightness(120%)" in page.evaluate("document.getElementById('title').style.filter"),
            "knofliky neplati na titulni obrazovce")
     page.click("#mnu-obraz .wbtitle")
@@ -158,6 +176,26 @@ with sync_playwright() as pw:
     page.focus("#game")
     page.keyboard.press("c")
     expect(page.evaluate("state.g.over && state.g.won"), "C s ?debug neskocilo na konec")
+
+    # uzka obrazovka (stranka hrace): vsechny titulky v liste a kazdy
+    # otevreny panel v okne
+    otevri(page)
+    for w in (480, 380):
+        page.set_viewport_size({"width": w, "height": 700})
+        mimo = page.evaluate("""() => {
+          const W = document.documentElement.clientWidth, out = [];
+          for (const m of document.querySelectorAll('#wbbar .wbmenu')) {
+            if (m.hidden) continue;
+            const t = m.querySelector('.wbtitle');
+            if (t.getBoundingClientRect().right > W) out.push('titulek ' + t.textContent);
+            t.click();
+            const r = m.querySelector('.wbpanel').getBoundingClientRect();
+            if (r.left < 0 || r.right > W) out.push('panel ' + t.textContent);
+            document.body.click();
+          }
+          return out; }""")
+        expect(not mimo, "sirka %d: mimo okno %r" % (w, mimo))
+    page.set_viewport_size({"width": 1280, "height": 900})
 
     expect(not errs, "JS chyby: %r" % errs)
     b.close()
