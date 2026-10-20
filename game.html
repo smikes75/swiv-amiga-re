@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="cs">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -88,6 +88,10 @@ p { max-width:640px; margin:6px 0; font-size:14px; }
 #zoomrow button { font:inherit; color:var(--blue); background:var(--white);
   border:1px solid var(--blue); padding:0 5px; cursor:pointer; }
 #zoomrow button[aria-pressed="true"] { background:var(--blue); color:var(--white); }
+.wbpanel input[type=range] { accent-color:var(--blue); }
+.wbpanel label.wbslider { display:grid; grid-template-columns:7.5em 130px 3.5em; }
+.wbpanel label.wbslider input[type=range] { width:100%; margin:0; }
+.wbpanel label.wbslider output { text-align:right; }
 .wbpanel :focus-visible { outline:2px solid var(--orange); outline-offset:1px; }
 small { opacity:.75 }
 a { color:#cfe0ff }
@@ -97,42 +101,34 @@ a { color:#cfe0ff }
 <nav id="wbbar" aria-label="Menu">
   <span class="wbname">S.W.I.V.</span>
   <div class="wbmenu" id="mnu-proj">
-    <button type="button" class="wbtitle">Projekt</button>
+    <button type="button" class="wbtitle">Project</button>
     <div class="wbpanel">
-      <button type="button" class="wbitem" id="mi-insert">Vlo&#382;it disk&#8230;</button>
+      <button type="button" class="wbitem" id="mi-insert">Insert disk&#8230;</button>
+      <button type="button" class="wbitem" id="btnrestart">&#8635; Restart zone (R)</button>
       <hr>
-      <button type="button" class="wbitem" id="btnrestart" title="Zacit aktualni zonu znovu">&#8635; Restart z&#243;ny</button>
-      <button type="button" class="wbitem" id="btnback" title="O pul zony zpet">&#9668;&#9668; O p&#367;l z&#243;ny zp&#283;t</button>
-      <button type="button" class="wbitem" id="btnfwd" title="O pul zony vpred">&#9658;&#9658; O p&#367;l z&#243;ny vp&#345;ed</button>
-      <button type="button" class="wbitem" id="btnend" title="Preskocit na zaverecnou sekvenci (klavesa C)">Konec hry (C)</button>
-      <hr>
-      <div class="wbrow"><span title="Ulozene pozice zustavaji v tomto prohlizeci">Pozice</span>
+      <div class="wbrow"><span>Position</span>
         <select id="slotsel"></select></div>
       <div class="wbrow">
-        <button type="button" id="btnsave" title="Ulozit aktualni pozici do vybraneho slotu (klavesa S uklada do dalsiho slotu dokola)">ulo&#382;it</button>
-        <button type="button" id="btnload" title="Nacist pozici z vybraneho slotu (klavesa L otevre seznam)">na&#269;&#237;st</button>
-        <button type="button" id="btndel" title="Smazat vybrany slot">smazat</button></div>
+        <button type="button" id="btnsave">save</button>
+        <button type="button" id="btnload">load</button>
+        <button type="button" id="btndel">delete</button></div>
       <div class="wbnote" id="slotinfo"></div>
-      <div class="wbnote">kl&#225;vesy: <b>S</b> = ulo&#382;it do dal&#353;&#237; pozice (1&#8211;10 dokola), <b>L</b> = seznam pozic</div>
+      <div class="wbnote">keys: <b>S</b> = save to the next slot (1&#8211;10 in turn), <b>L</b> = list of positions</div>
       <hr>
-      <a class="wbitem" href="index.html">Disk explorer</a>
-      <a class="wbitem" href="https://github.com/smikes75/swiv-amiga-re">Zdroj a dokumentace</a>
+      <a class="wbitem" href="https://github.com/smikes75/swiv-amiga-re">Source and documentation</a>
     </div>
   </div>
   <div class="wbmenu" id="mnu-obraz">
-    <button type="button" class="wbtitle">Obraz</button>
+    <button type="button" class="wbtitle">Display</button>
     <div class="wbpanel">
-      <label><input type="radio" name="mode" id="modeorig" checked> origin&#225;l</label>
-      <label><input type="radio" name="mode" id="modefx"> vylep&#353;eno</label>
-      <div class="wbnote">kl&#225;vesy: <b>O</b> = origin&#225;l, <b>E</b> = vylep&#353;eno (ob&#283; s CRT v&#253;razn&#233;)</div>
+      <label><input type="radio" name="mode" id="modeorig" checked> original</label>
+      <label title="Smooth motion at any refresh rate and effects the Amiga could not do. The game itself still runs at 50 Hz."><input type="radio" name="mode" id="modefx"> enhanced</label>
+      <div class="wbnote">key <b>E</b> switches between the two</div>
       <input type="checkbox" id="smoothchk" hidden>
       <hr>
-      <label title="Emulace obrazovky prekryvem. Jemne: jedna tenka tmava linka na kazdy radek hry (sedi na herni radky pri kazdem zvetseni), slaba maska RGB a mirna vineta. Vyrazne: puvodni husty raster nezavisly na zvetseni.">CRT <select id="crtsel"><option value="vyp">vyp</option><option value="jemne">jemn&#233;</option><option value="vyrazne">v&#253;razn&#233;</option></select></label>
-      <label title="Prevod ctyrbitove slozky na barvu. 'hardware' je presne n*17, jak to delaji emulatory i nase baseline snimky - na tom stoji vsechny kontrakty. 'dobovy monitor' je PRIBLIZENI, ne mereni: gama 2,4 podle ITU-R BT.1886 misto 2,2 u sRGB (stredy byly na CRT tmavsi) a bily bod 9300 K misto D65, na ktery spotrebni PAL monitory bezne jely - bila proto byla chladnejsi, ne teplejsi.">paleta <select id="monsel"><option value="puvodni">hardware</option><option value="crt">dobov&#253; monitor</option></select></label>
-      <hr>
-      <div class="wbrow">velikost <output id="zoomval" for="zoombox">auto</output></div>
-      <div id="zoomrow" role="group" aria-label="Velikost hern&#237;ho pole">
-        <button type="button" data-zoom="0" aria-pressed="true">do okna</button>
+      <div class="wbrow">size <output id="zoomval" for="zoombox">fit</output></div>
+      <div id="zoomrow" role="group" aria-label="Size of the playfield">
+        <button type="button" data-zoom="0" aria-pressed="true">fit</button>
         <button type="button" data-zoom="2" aria-pressed="false">2&#215;</button>
         <button type="button" data-zoom="3" aria-pressed="false">3&#215;</button>
         <button type="button" data-zoom="4" aria-pressed="false">4&#215;</button>
@@ -140,79 +136,96 @@ a { color:#cfe0ff }
         <button type="button" data-zoom="6" aria-pressed="false">6&#215;</button>
       </div>
       <div class="wbrow"><input id="zoombox" type="range" min="0" max="12" step="1" value="0"
-        style="width:200px" aria-label="Zv&#283;t&#353;en&#237; hern&#237;ho pole"></div>
-    </div>
-  </div>
-  <div class="wbmenu" id="mnu-fx">
-    <button type="button" class="wbtitle">Efekty</button>
-    <div class="wbpanel">
-      <div class="wbnote" id="fxnote">Efekty nad r&#225;mec hardwaru jsou jen v re&#382;imu vylep&#353;eno (menu Obraz).</div>
-      <div id="fxbar" hidden>
-    <label title="Kamera zaostrena na rovinu objektu: teren pod nimi je mirne mekci. Plna: zem i vse, co po ni jezdi (tanky, vlak), je stejne mekke. Mirna: zem polovicne a objekty zustavaji ostre. Amiga obraz skladala z pevnych bitplanu, zadny filtr mezi nimi a monitorem nebyl.">hloubka ostrosti <select id="dofsel"><option value="vyp">vyp</option><option value="mirna">m&#237;rn&#225;</option><option value="plna" selected>pln&#225;</option></select></label>
-    <label title="Stin objektu se s vyskou rozostri a zesvetli; blitter zna jen plnou masku, alfu neumi"><input type="checkbox" id="softshchk2" checked> m&#283;kk&#233; st&#237;ny</label>
-    <label title="Pomahá plynulosti pri malem zvetseni: svisle prolnuti mezi dvema polohami. Neni to vizualni efekt, pri 4x a vice je zbytecne."><input type="checkbox" id="blendchk" checked> prolnut&#237; pohybu</label>
-    <label title="Voda v originale stoji. Vlnky vznikaji prehazovanim jejich VLASTNICH tri paletovych indexu uvnitr masky vodnich dlazdic, takze v obraze nepribude zadna nova barva a nic mimo hladinu se nehne. Tak se voda na Amize animovala."><input type="checkbox" id="vlnkychk" checked> vlnky na vod&#283;</label>
-    <label title="Vozidla nechavaji stopy i mimo pasmo, ktere pro ne original otevira jen na tech mistech. Kresli se puvodnim dekalem JEEPHELI#40..#43 a jsou ciste zobrazovaci - do simulace ani po siti nezasahuji."><input type="checkbox" id="stopychk" checked> stopy vozidel</label>
-    <label title="Sprity se kladou na zlomkovou polohu jako teren, misto aby skakaly po celych bodech displeje. Bez toho objekty po plynule jedouci zemi podkluzuji. Rozmaze se jen okraj spritu o jeden bod displeje, vnitrek zustava tvrdy."><input type="checkbox" id="subpxchk" checked> podpixelov&#233; sprity</label>
-    <label title="Rotorovy disk se sklopi do smeru letu. Telo zustava pixel po pixelu nedotcene - naklani se jen rotor, ktery je jednobarevna plocha. Original naklonene snimky nema."><input type="checkbox" id="tiltchk"> n&#225;klon vrtuln&#237;ku</label>
-    <label title="Listy rotoru jsou v originale videt jen v kazdem druhem snimku hry, tedy blikaji 12,5x za sekundu. Na CRT je dosvit slil do tmaveho pruhledneho disku, na LCD blikaji. Disk kresli vsechny ctyri polohy listu slabe najednou a jeden silneji obiha stejnou rychlosti jako v originale."><input type="checkbox" id="rotorchk" checked> rotor jako disk</label>
-    <label title="Sprity maji velke jednolite plochy a ostry obrys, takze pri zvetseni vypadaji hranateji nez ditherovany teren. Obe volby stavi na tomtez: Scale2x zdvojnasobi mrizku a schody rozdeli na polovicni, ale hrany nechava tvrde - porad je to pixel art. Vyhlazeno tutez mrizku dotahne na displej bilinearne, je to mekci, ale vzdalenejsi od predlohy. Maskovanych pozemnich objektu se to netyka."> hrany sprit&#367; <select id="sprsel"><option value="bez">bez &#250;prav</option><option value="scale2x">Scale2x</option><option value="vyhlazeno">vyhlazeno</option></select></label>
-      </div>
+        style="width:200px" aria-label="Playfield size"></div>
+      <hr>
+      <label title="Scanlines over the picture. Fine: one thin dark line per game row at every size. Strong: a dense raster independent of the size.">CRT <select id="crtsel"><option value="vyp">off</option><option value="jemne">fine</option><option value="vyrazne">strong</option></select></label>
+      <hr>
+      <label class="wbslider">brightness <input type="range" id="dispbright" min="50" max="150" step="1" value="100"><output id="dispbrightval">100%</output></label>
+      <label class="wbslider">contrast <input type="range" id="dispcontrast" min="50" max="150" step="1" value="100"><output id="dispcontrastval">100%</output></label>
+      <label class="wbslider">saturation <input type="range" id="dispsat" min="0" max="200" step="1" value="100"><output id="dispsatval">100%</output></label>
+      <label class="wbslider" title="Softens the pixels slightly, like the picture of a monitor.">blur <input type="range" id="dispblur" min="0" max="100" step="1" value="0"><output id="dispblurval">0%</output></label>
+      <div class="wbrow"><button type="button" id="dispreset">reset picture</button></div>
+      <div class="wbnote">like the knobs of a monitor: they change only the picture, not the game</div>
+      <hr>
+      <button type="button" class="wbitem" id="btnfull">Full screen (F)</button>
     </div>
   </div>
   <div class="wbmenu" id="mnu-hra">
-    <button type="button" class="wbtitle">Hra</button>
+    <button type="button" class="wbtitle">Game</button>
     <div class="wbpanel">
-      <div class="wbrow">Za&#269;&#237;t od z&#243;ny</div>
+      <div class="wbrow">Start from zone</div>
       <div id="levelbtns" class="wbrow wbbtns"></div>
-      <div class="wbnote">fire nebo mezern&#237;k na titulce = TOWN; z&#243;ny na sebe navazuj&#237;</div>
+      <div class="wbnote">fire or space on the title screen = TOWN; the zones follow on from each other</div>
+    </div>
+  </div>
+  <div class="wbmenu" id="mnu-ovl">
+    <button type="button" class="wbtitle">Controls</button>
+    <div class="wbpanel wbwide">
+      <label>player 1 <select id="padsel0"></select></label>
+      <label>player 2 <select id="padsel1"></select></label>
+      <div class="wbnote" id="padinfo">looking for controllers&#8230;</div>
       <hr>
-      <label>&#x2665; &#382;ivoty <input type="number" id="livesbox" value="4" min="1" max="99" style="width:3.5em"></label>
-      <label>scroll <input type="range" id="scrollpct" min="25" max="200" step="5"
-        value="100" style="width:130px"><span id="scrollval">100%</span></label>
-      <hr>
-      <div class="wbrow">ovl&#225;d&#225;n&#237;</div>
-      <label>slot 1 <select id="padsel0"></select></label>
-      <label>slot 2 <select id="padsel1"></select></label>
-      <div class="wbnote" id="padinfo">hled&#225;m ovlada&#269;e&#8230;</div>
+      <div class="wbnote"><b>Helicopter</b> (player 1): arrows, fire = space or Z</div>
+      <div class="wbnote"><b>Jeep</b> (player 2, joins with a credit): WASD, fire = Shift, jump = Q</div>
+      <div class="wbnote"><b>Gamepads</b>: one per player; the jeep jumps on a double tap of a direction, as on the Amiga</div>
+      <div class="wbnote"><b>P</b> pause &middot; <b>E</b> original / enhanced &middot; <b>S</b> / <b>L</b> save / load position &middot; <b>R</b> restart zone &middot; <b>F</b> full screen &middot; <b>Esc</b> closes a menu</div>
     </div>
   </div>
   <div class="wbmenu" id="mnu-sit">
-    <button type="button" class="wbtitle">S&#237;&#357;</button>
+    <button type="button" class="wbtitle">Network</button>
     <div class="wbpanel wbwide">
-      <div class="wbnote">Hra ve dvou po s&#237;ti: spojen&#237; je p&#345;&#237;m&#233; mezi dv&#283;ma
-        prohl&#237;&#382;e&#269;i, &#382;&#225;dn&#253; server, disk se nikam nepos&#237;l&#225; &mdash; ka&#382;d&#253;
-        hr&#225;&#269; vkl&#225;d&#225; sv&#367;j vlastn&#237;. Hostitel &#345;&#237;d&#237; vrtuln&#237;k, host jeep.
-        Oba mus&#237; m&#237;t tent&#253;&#382; .adf, jinak se hry rozejdou.</div>
+      <div class="wbnote">Two players over the network: a direct connection between two
+        browsers, no server, the disk is not sent anywhere &mdash; each player
+        inserts their own. The host flies the helicopter, the guest drives the jeep.
+        Both must have the same .adf, otherwise the games drift apart.</div>
       <div class="wbnote" id="netnote" hidden></div>
       <div id="netbody">
         <div id="netstart" class="wbrow wbbtns">
-          <button type="button" id="nethost" class="hlavni">Vytvo&#345;it hru</button>
-          <button type="button" id="netjoin" class="hlavni">P&#345;ipojit se</button>
+          <button type="button" id="nethost" class="hlavni">Host a game</button>
+          <button type="button" id="netjoin" class="hlavni">Join a game</button>
         </div>
         <div id="netstep" style="display:none">
           <p id="netlabel" class="wbnote" style="opacity:1"><b></b></p>
-          <div class="wbrow"><textarea id="netout" readonly placeholder="k&#243;d se objev&#237; tady"></textarea></div>
-          <div class="wbrow wbbtns"><button type="button" id="netcopy">Kop&#237;rovat k&#243;d</button></div>
-          <p id="netaskin" class="wbnote" style="opacity:1"><b>Vlo&#382; k&#243;d od protihr&#225;&#269;e:</b></p>
-          <div class="wbrow"><textarea id="netin" placeholder="sem vlo&#382; k&#243;d"></textarea></div>
-          <div class="wbrow wbbtns"><button type="button" id="netgo" class="hlavni">Nav&#225;zat spojen&#237;</button></div>
+          <div class="wbrow"><textarea id="netout" readonly placeholder="the code appears here"></textarea></div>
+          <div class="wbrow wbbtns"><button type="button" id="netcopy">Copy code</button></div>
+          <p id="netaskin" class="wbnote" style="opacity:1"><b>Paste the code from the other player:</b></p>
+          <div class="wbrow"><textarea id="netin" placeholder="paste the code here"></textarea></div>
+          <div class="wbrow wbbtns"><button type="button" id="netgo" class="hlavni">Connect</button></div>
         </div>
       </div>
       <p id="netstatus" class="wbnote" style="opacity:1"><small></small></p>
     </div>
   </div>
-  <div class="wbmenu" id="mnu-dbg">
-    <button type="button" class="wbtitle">Lad&#283;n&#237;</button>
+  <div class="wbmenu" id="mnu-dbg" hidden>
+    <button type="button" class="wbtitle">Debug</button>
     <div class="wbpanel">
-      <button type="button" class="wbitem" id="btnweapon"
-        title="Vyvojarska zkratka: sebere TOKEN typ 1 az po plnou silu. Neni v originale - tam se zbran zveda sberem bonusu.">&#9889; Zbra&#328; +</button>
-      <button type="button" class="wbitem" id="btnspread"
-        title="TOKEN typ 1 (0x939c): stejna usti, ale strely se rozletnou do vejire misto rovnobezneho letu">&#10021; Rozptyl</button>
+      <button type="button" class="wbitem" id="btnback">&#9668;&#9668; Half a zone back</button>
+      <button type="button" class="wbitem" id="btnfwd">&#9658;&#9658; Half a zone forward</button>
+      <button type="button" class="wbitem" id="btnend">End sequence (C)</button>
+      <label>&#x2665; lives <input type="number" id="livesbox" value="4" min="1" max="99" style="width:3.5em"></label>
+      <label>scroll <input type="range" id="scrollpct" min="25" max="200" step="5"
+        value="100" style="width:130px"><span id="scrollval">100%</span></label>
+      <hr>
+      <button type="button" class="wbitem" id="btnweapon">&#9889; Weapon +</button>
+      <button type="button" class="wbitem" id="btnspread">&#10021; Spread</button>
       <div class="wbnote" id="weaponlabel"></div>
       <hr>
-      <label title="Vyvojarske: obnovovaci frekvence displeje, skutecny interval snimku (median, 95. percentil, vynechane snimky) a rozpad casu snimku na useky. Obraz ani simulaci nemeni."><input type="checkbox" id="perfchk"> m&#283;&#345;en&#237; sn&#237;mk&#367;</label>
-      <label title="Po kazdem useku vynuti vykresleni (getImageData 1x1), takze useky ukazuji i praci rasteru/GPU. Snimek se tim zpomali - meri se cena useku, ne dosazitelne fps."><input type="checkbox" id="perfflush"> s flush&#237;</label>
+      <label title="'hardware' is exactly n*17 like the emulators and the baseline snapshots - all contracts rely on it. 'period monitor' is an approximation: gamma 2.4 (ITU-R BT.1886) and a 9300 K white point. Changing it restarts the zone.">palette <select id="monsel"><option value="puvodni">hardware</option><option value="crt">period monitor</option></select></label>
+      <div class="wbnote">enhanced effects (only in enhanced mode):</div>
+      <div id="fxbar">
+    <label>depth of field <select id="dofsel"><option value="vyp">off</option><option value="mirna">mild</option><option value="plna" selected>full</option></select></label>
+    <label><input type="checkbox" id="softshchk2" checked> soft shadows</label>
+    <label><input type="checkbox" id="blendchk" checked> scroll blend</label>
+    <label><input type="checkbox" id="vlnkychk" checked> water ripples</label>
+    <label><input type="checkbox" id="stopychk" checked> vehicle tracks</label>
+    <label><input type="checkbox" id="subpxchk" checked> subpixel sprites</label>
+    <label><input type="checkbox" id="tiltchk"> helicopter tilt</label>
+    <label><input type="checkbox" id="rotorchk" checked> rotor as a disc</label>
+    <label>sprite edges <select id="sprsel"><option value="bez">unchanged</option><option value="scale2x">Scale2x</option><option value="vyhlazeno">smoothed</option></select></label>
+      </div>
+      <hr>
+      <label><input type="checkbox" id="perfchk"> frame timing</label>
+      <label><input type="checkbox" id="perfflush"> with flush</label>
     </div>
   </div>
   <div id="wbstatus"><span id="savemsg"></span> <span id="jumplabel"></span> <b id="pauselabel"></b></div>
@@ -224,20 +237,19 @@ a { color:#cfe0ff }
 .diskmsg.info { border-color: #357; color: #cfe0ff; background: #0d1a2a }
 </style>
 <div id="intro" class="wbwin">
-  <div class="wbwtitle">S.W.I.V. &mdash; p&#345;epis hry z Amigy (1991)</div>
-  <p>P&#345;epis hry v prohl&#237;&#382;e&#269;i, ud&#283;lan&#253; podle rozboru p&#367;vodn&#237;ho k&#243;du
-  a m&#283;&#345;en&#237; proti origin&#225;lu v emul&#225;toru. Mapy, grafika, palety, v&#353;ech
-  1&#8239;497 objekt&#367; i zvukov&#253; engine se &#269;tou p&#345;&#237;mo z tv&#233; diskety; nic se
-  nikam nepos&#237;l&#225;. Podrobnosti a n&#225;stroje:
-  <a href="https://github.com/smikes75/swiv-amiga-re">swiv-amiga-re</a>.</p>
-  <p>Vlo&#382; vlastn&#237; obraz diskety S.W.I.V. (.adf).</p>
+  <div class="wbwtitle">S.W.I.V. &mdash; a reconstruction of the Amiga game (1991)</div>
+  <p>The game rebuilt for the browser from an analysis of the original code and
+  measured against the original in an emulator. Maps, graphics, palettes, all
+  1&#8239;497 objects and the sound engine are read straight from your disk;
+  nothing is sent anywhere.</p>
+  <p>Insert your own S.W.I.V. disk image (.adf).</p>
   <p id="diskmsg" class="diskmsg" hidden></p>
-  <a class="btn" id="insert">&#128190; Vlo&#382;it disk</a>
-  <p><small><b>Vrtuln&#237;k</b>: &#353;ipky + mezern&#237;k &middot; <b>jeep</b>: WASD + Shift, Q skok
-  (p&#345;ipoj&#237; se za kredit) &middot; <b>gamepady</b>: jeden na hr&#225;&#269;e, skok = dvojit&#253; &#357;uk sm&#283;ru
-  jako na Amize &middot; <b>P</b> pauza &middot; <b>O</b>/<b>E</b> origin&#225;l/vylep&#353;eno &middot;
-  <b>S</b>/<b>L</b> ulo&#382;it/na&#269;&#237;st pozici &middot; v&#353;e ostatn&#237; je v menu naho&#345;e
-  (v&#269;etn&#283; hry ve dvou po s&#237;ti a startu od libovoln&#233; z&#243;ny) &middot; zvuk po prvn&#237;m kliknut&#237;</small></p>
+  <a class="btn" id="insert">&#128190; Insert disk</a>
+  <p><small><b>Helicopter</b>: arrows + space &middot; <b>jeep</b>: WASD + Shift, Q jump
+  (joins with a credit) &middot; <b>gamepads</b>: one per player, the jeep jumps on a double tap
+  of a direction as on the Amiga &middot; <b>P</b> pause &middot; <b>E</b> original / enhanced &middot;
+  <b>S</b> / <b>L</b> save / load position &middot; everything else is in the menu at the top
+  (including two players over the network and starting from any zone) &middot; sound starts after the first click</small></p>
 </div>
 
 <div id="titlewrap" style="display:none">
@@ -248,7 +260,7 @@ a { color:#cfe0ff }
 <div id="gamewrap" style="display:none">
   <div id="cvwrap" style="position:relative;display:inline-block;line-height:0">
     <canvas id="game" width="320" height="256" tabindex="0"
-      aria-label="Hern&#237; pole SWIV" style="image-rendering:pixelated"></canvas>
+      aria-label="SWIV playfield" style="image-rendering:pixelated"></canvas>
     <div id="crtfx" style="display:none;position:absolute;inset:0;pointer-events:none;
       background:repeating-linear-gradient(to bottom, rgba(0,0,0,0) 0 2px, rgba(0,0,0,.28) 2px 3px),
                  repeating-linear-gradient(to right, rgba(255,0,0,.045) 0 1px, rgba(0,255,0,.045) 1px 2px, rgba(0,0,255,.045) 2px 3px);
@@ -259,10 +271,10 @@ a { color:#cfe0ff }
   </div>
 </div>
 
-<div id="loadreq" hidden role="dialog" aria-label="Na&#269;&#237;st pozici">
-  <div class="wbwtitle">Na&#269;&#237;st pozici</div>
+<div id="loadreq" hidden role="dialog" aria-label="Load position">
+  <div class="wbwtitle">Load position</div>
   <div id="loadlist"></div>
-  <div class="wbnote">&#269;&#237;slice 1&#8211;9, 0 = pozice 10 &middot; &#353;ipky + Enter &middot; Esc zav&#345;e</div>
+  <div class="wbnote">digits 1&#8211;9, 0 = position 10 &middot; arrows + Enter &middot; Esc closes</div>
 </div>
 <input type="file" id="fpick" accept=".adf" hidden>
 <div id="errbox" style="display:none;position:fixed;left:8px;bottom:8px;right:8px;background:#a00;color:#fff;padding:8px;font:12px monospace;z-index:9;text-align:left"></div>
@@ -703,7 +715,6 @@ function setMonitorMode(rezim) {
   for (let w = 0; w < 4096; w++)
     RGB4_LUT[w] = monitorRgb(RGB4[(w >> 8) & 15], RGB4[(w >> 4) & 15],
                              RGB4[w & 15]);
-  try { localStorage.setItem("swivMonitor", MONITOR_MODE); } catch (e) {}
 }
 
 /* Trojice RGB (0..255) upravena podle volby monitoru. Pri `puvodni`
@@ -1259,10 +1270,15 @@ $("#fpick").addEventListener("change", e => {
   if (e.target.files[0]) { unlockAudioContext(); loadFile(e.target.files[0]); }
 });
 $("#insert").onclick = () => { unlockAudioContext(); $("#fpick").click(); };
+/* Ladici funkce (skoky v mape, zivoty, zbrane, paleta, jednotlive efekty,
+   mereni snimku, klavesa C) jsou jen s `?debug` v adrese; hrac vidi jen
+   zakladni nastaveni. */
+const DEBUG = new URLSearchParams(location.search).has("debug");
+document.getElementById("mnu-dbg").hidden = !DEBUG;
 /* Menu ve stylu Workbenche: klik na titulek otevre/zavre, klik mimo nebo
    Esc zavre. Po zavreni se fokus vrati hernimu platnu. */
 (() => {
-  const menus = [...document.querySelectorAll("#wbbar .wbmenu")];
+  const menus = [...document.querySelectorAll("#wbbar .wbmenu:not([hidden])")];
   window.wbOpenMenu = id => { menus.forEach(o => o.classList.remove("open"));
     const m = document.getElementById(id); if (m) m.classList.add("open"); };
   const close = () => {
@@ -1321,18 +1337,18 @@ async function loadFile(file) {
 }
 function loadAdfBytes(adf, jmeno) {
   if (adf.length !== 901120) {
-    diskMsg(`Soubor ${jmeno} ma ${adf.length} bajtu; obraz diskety Amigy (.adf) ma 901 120. Zkus jiny obraz.`);
+    diskMsg(`The file ${jmeno} has ${adf.length} bytes; an Amiga disk image (.adf) has 901,120. Try another image.`);
     return false;
   }
   let files;
   try { files = readCatalog(adf); }
   catch (err) {
-    diskMsg(`Soubor ${jmeno} nevypada jako disketa S.W.I.V.: katalog souboru se nepodarilo precist (${err && err.message || err}). Hra potrebuje obraz puvodni herni diskety.`);
+    diskMsg(`The file ${jmeno} does not look like a S.W.I.V. disk: its file catalogue could not be read (${err && err.message || err}). The game needs an image of the original game disk.`);
     return false;
   }
   const chybi = ADF_POVINNE.filter(n => !files.some(f => f.name === n));
   if (chybi.length) {
-    diskMsg(`Soubor ${jmeno} neni disketa S.W.I.V.: v katalogu chybi ${chybi.join(", ")}. Hra potrebuje obraz puvodni herni diskety (s AMPROG.OBJ a soubory .LIN).`);
+    diskMsg(`The file ${jmeno} is not a S.W.I.V. disk: the catalogue lacks ${chybi.join(", ")}. The game needs an image of the original game disk (with AMPROG.OBJ and the .LIN files).`);
     return false;
   }
   try {
@@ -1341,7 +1357,7 @@ function loadAdfBytes(adf, jmeno) {
     state.order = gameOrder(state.prog);
     state.behaviorDispatch = scanBehaviorDispatch(state.prog, state.order);
   } catch (err) {
-    diskMsg(`Disk ${jmeno} se nepodarilo rozbalit (${err && err.message || err}). Obraz je nejspis poskozeny nebo z jine verze hry.`);
+    diskMsg(`The disk ${jmeno} could not be unpacked (${err && err.message || err}). The image is probably damaged or from another version of the game.`);
     return false;
   }
   state.frameCache = {}; state.indexedFrameCache = new Map();
@@ -1370,7 +1386,7 @@ async function autoLoadAdf() {
     try {
       const res = await fetch(jmeno, { cache: "force-cache" });
       if (!res.ok) continue;
-      diskMsg(`Nacitam ${jmeno} ze serveru ...`, true);
+      diskMsg(`Loading ${jmeno} from the server ...`, true);
       const adf = new Uint8Array(await res.arrayBuffer());
       if (loadAdfBytes(adf, jmeno)) return;
     } catch (err) { /* neni tam - vlozeni diskety */ }
@@ -2011,7 +2027,7 @@ function showTitle() {
   stopAttract();
   // Sit jde navazat jen z titulni obrazovky a jen s WebRTC.
   netMenuAvailable(!!window.RTCPeerConnection,
-                   "Prohl\u00ed\u017ee\u010d neum\u00ed WebRTC.");
+                   "This browser has no WebRTC.");
   $("#gamewrap").style.display = "none";
   $("#titlewrap").style.display = "";
   const cv = $("#title"); cv.width = 320; cv.height = 256;
@@ -2020,6 +2036,7 @@ function showTitle() {
     (window.innerHeight - 160) / 256))));
   cv.style.width = (320 * scale) + "px";
   cv.style.height = (256 * scale) + "px";
+  applyPicture();
 
   const a = state.attract = createAttractState();
   const fire = () => { unlockAudioContext(); startGame(0); };
@@ -8642,7 +8659,7 @@ function netIce(pc) {
 function netAttachChannel(dc) {
   NET.dc = dc;
   dc.onopen = () => {
-    netStatus("Spojeno. Hra začíná…");
+    netStatus("Connected. The game is starting\u2026");
     NET.active = true;
     // Prvnich NET_DELAY tiku nema kdo poslat vstup (vlastni se posila pro
     // tik t+DELAY), takze se predvyplni prazdnym na OBOU stranach.
@@ -8653,7 +8670,7 @@ function netAttachChannel(dc) {
     wbCloseMenus();
   };
   dc.onclose = () => {
-    if (NET.active) netStatus("Protihráč se odpojil.", true);
+    if (NET.active) netStatus("The other player disconnected.", true);
     NET.active = false;
   };
   dc.onmessage = ev => {
@@ -8668,9 +8685,9 @@ function netNewConnection() {
   const pc = new RTCPeerConnection({ iceServers: NET_ICE });
   pc.oniceconnectionstatechange = () => {
     if (pc.iceConnectionState === "failed")
-      netStatus("Spojení se nepodařilo navázat. Přímé "
-                + "spojení nepustí vaše síť (symetrický NAT); "
-                + "na společné síti to funguje vždy.", true);
+      netStatus("The connection could not be made. Your network does "
+                + "not allow a direct connection (symmetric NAT); "
+                + "on a shared network it always works.", true);
   };
   NET.pc = pc;
   return pc;
@@ -8693,8 +8710,8 @@ async function netGuest(code) {
   NET.adfSum = netAdfSum(state.adf);
   const offer = await netUnpack(code);
   if ((offer.v >>> 0) !== NET.adfSum)
-    throw new Error("Hostitel má jiný .adf než vy. "
-                    + "Oba potřebujete tentýž obraz disku.");
+    throw new Error("The host has a different .adf than you. "
+                    + "You both need the same disk image.");
   NET.level = offer.l | 0;
   const pc = netNewConnection();
   pc.ondatachannel = ev => netAttachChannel(ev.channel);
@@ -8707,7 +8724,7 @@ async function netGuest(code) {
 async function netHostAccept(code) {
   const answer = await netUnpack(code);
   if ((answer.v >>> 0) !== NET.adfSum)
-    throw new Error("Protihráč má jiný .adf než vy.");
+    throw new Error("The other player has a different .adf than you.");
   await NET.pc.setRemoteDescription({ type: answer.t, sdp: answer.s });
 }
 
@@ -8752,8 +8769,8 @@ function netCheckHash(g) {
   NET.hashes.delete(t);
   if (theirs !== mine && !NET.desync) {
     NET.desync = t;
-    netStatus(`Hry se rozesly v tiku ${t}. Simulace uz nesouhlasí, `
-              + `spojení ukončeno.`, true);
+    netStatus(`The games drifted apart at tick ${t}. The simulations no longer `
+              + `agree, connection closed.`, true);
     NET.active = false;
     if (NET.dc) try { NET.dc.close(); } catch (e) {}
   }
@@ -8938,7 +8955,7 @@ function startGame(lv) {
   { const el = document.getElementById("pauselabel");
     if (el) el.textContent = ""; }
   stopModuleMusic();
-  if (!NET.active) netMenuAvailable(false, "S\u00ed\u0165 se navazuje z tituln\u00ed obrazovky, ne b\u011bhem hry.");
+  if (!NET.active) netMenuAvailable(false, "A network game is started from the title screen, not during play.");
   $("#gamewrap").style.display = "";
   if (!state.loopRunning) { state.loopRunning = true; requestAnimationFrame(frame); }
 }
@@ -9006,10 +9023,10 @@ function updateZoomLabel() {
                      String((state.zoom | 0) === +btn.dataset.zoom));
   // Pod 4x ujede pozadi za tik min nez jeden bod displeje a cast tiku stoji.
   document.getElementById("zoomval").textContent =
-    ((state.zoom | 0) > 0 ? "" : "auto ") + z.dev + "\u00d7" +
+    ((state.zoom | 0) > 0 ? "" : "fit ") + z.dev + "\u00d7" +
     (!state.smooth ? ""
-     : state.blendBg ? " (prolnute)"
-     : z.dev < 4 ? " (pozadi skace)" : " (1/" + z.S + " px)");
+     : state.blendBg ? " (blended)"
+     : z.dev < 4 ? " (background steps)" : " (1/" + z.S + " px)");
 }
 try {                                   // volba prezije reload (per-viewer)
   const saved = parseInt(localStorage.getItem("swivZoom") || "", 10);
@@ -9033,13 +9050,17 @@ updateZoomLabel();
 /* ---- testovaci lista (CRT, zivoty, rychlost scrollu) ---- */
 document.getElementById("monsel").onchange = e => {
   setMonitorMode(e.target.value);
+  // Ukladat az tady: init `setMonitorMode("puvodni")` pri startu by jinak
+  // ulozenou volbu prepsal driv, nez se precte.
+  try { localStorage.setItem("swivMonitor", MONITOR_MODE); } catch (e2) {}
   // `renderMap` barvi mapu uz pri stavbe, takze se po zmene palety musi
   // uroven postavit znovu. Beh se tim restartuje - to je pro volbu
   // monitoru prijatelne, meni se jednou za cas.
   if (state.g) startGame(state.g.lv);
 };
 try {
-  const ulozeno = localStorage.getItem("swivMonitor");
+  // Volba palety je jen v ladicim menu; hrac ma vzdy hardware (n*17).
+  const ulozeno = DEBUG ? localStorage.getItem("swivMonitor") : null;
   if (ulozeno && MONITOR_MODES[ulozeno] !== undefined) {
     document.getElementById("monsel").value = ulozeno;
     setMonitorMode(ulozeno);
@@ -9089,6 +9110,75 @@ function setCrt(mode) {
   applyCrt();
 }
 document.getElementById("crtsel").onchange = e => setCrt(e.target.value);
+
+/* Knofliky monitoru (jas, kontrast, sytost) a jemne rozmazani: CSS filtr
+   nad hernim platnem, jako v Turricanu. Meni jen zobrazeni - simulace,
+   paleta (n*17) ani obsah platna se nehnou, takze kontrakty plati dal.
+   Pri vychozich hodnotach filtr neni vubec (obraz bit po bitu stejny).
+   Rozmazani je v hernich bodech: 100 % = 0,8 bodu hry pri kazdem zvetseni. */
+const PIC_DEFAULT = Object.freeze({ bright: 100, contrast: 100, sat: 100, blur: 0 });
+const PIC_RANGE = { bright: [50, 150], contrast: [50, 150], sat: [0, 200], blur: [0, 100] };
+const PIC_IDS = { bright: "dispbright", contrast: "dispcontrast", sat: "dispsat", blur: "dispblur" };
+state.pic = { ...PIC_DEFAULT };
+try {
+  const ulozeno = JSON.parse(localStorage.getItem("swivPicture") || "null");
+  if (ulozeno && typeof ulozeno === "object")
+    for (const k in PIC_DEFAULT) {
+      const v = Math.round(+ulozeno[k]);
+      if (Number.isFinite(v)) state.pic[k] = Math.max(PIC_RANGE[k][0], Math.min(PIC_RANGE[k][1], v));
+    }
+} catch (e) {}
+function pictureFilter(cssW) {
+  const p = state.pic, f = [];
+  if (p.bright !== 100) f.push("brightness(" + p.bright + "%)");
+  if (p.contrast !== 100) f.push("contrast(" + p.contrast + "%)");
+  if (p.sat !== 100) f.push("saturate(" + p.sat + "%)");
+  if (p.blur > 0) f.push("blur(" + (p.blur / 100 * 0.8 * cssW / 320).toFixed(3) + "px)");
+  return f.join(" ");
+}
+function applyPicture() {
+  for (const id of ["game", "title"]) {           // hra i titulni obrazovka
+    const cv = document.getElementById(id);
+    const f = pictureFilter(parseFloat(cv.style.width) || cv.clientWidth || 320);
+    if (cv.style.filter !== f) cv.style.filter = f;
+  }
+}
+function updatePictureUi() {
+  for (const k in PIC_IDS) {
+    document.getElementById(PIC_IDS[k]).value = String(state.pic[k]);
+    document.getElementById(PIC_IDS[k] + "val").textContent = state.pic[k] + "%";
+  }
+}
+function setPicture(k, v) {
+  state.pic[k] = v;
+  try { localStorage.setItem("swivPicture", JSON.stringify(state.pic)); } catch (e) {}
+  updatePictureUi(); applyPicture();
+}
+for (const k in PIC_IDS)
+  document.getElementById(PIC_IDS[k]).addEventListener("input",
+    e => setPicture(k, +e.target.value | 0));
+document.getElementById("dispreset").onclick = () => {
+  state.pic = { ...PIC_DEFAULT };
+  try { localStorage.removeItem("swivPicture"); } catch (e) {}
+  updatePictureUi(); applyPicture();
+};
+updatePictureUi(); applyPicture();
+
+/* Cela obrazovka (F): cela stranka i s listou, velikost "do okna" se
+   prepocita sama z noveho okna (resize). */
+function toggleFullscreen() {
+  const d = document;
+  try {
+    if (d.fullscreenElement || d.webkitFullscreenElement)
+      (d.exitFullscreen || d.webkitExitFullscreen).call(d);
+    else {
+      const el = d.documentElement;
+      const req = el.requestFullscreen || el.webkitRequestFullscreen;
+      if (req) { const r = req.call(el); if (r && r.catch) r.catch(() => {}); }
+    }
+  } catch (e) { /* prohlizec celou obrazovku nepovolil */ }
+}
+document.getElementById("btnfull").onclick = toggleFullscreen;
 // Rezim "vylepseno": logika zustava 50 Hz jako original, renderer pri kazdem
 // snimku displeje interpoluje scroll i polohy BOBu mezi poslednimi dvema
 // tiky (viz renderSmoothField). Vychozi je original (kontrakty).
@@ -9106,9 +9196,6 @@ document.getElementById("blendchk").onchange = e => {
 function setMode(fx) {
   state.smooth = fx;
   try { localStorage.setItem("swivMode", fx ? "fx" : "orig"); } catch (e) {}
-  document.getElementById("fxbar").hidden = !fx;
-  document.getElementById("fxnote").hidden = fx;
-  document.getElementById("mnu-fx").classList.toggle("ghost", !fx);
   // Vylepseny rezim zapne vsechny sve podvolby, ktere ma hrac zaskrtnute;
   // v originalnim rezimu je drzi vypnute, at je "original" opravdu
   // original bez ohledu na to, co je v panelu odskrtnute.
@@ -9131,12 +9218,14 @@ function setMode(fx) {
 }
 document.getElementById("modeorig").onchange = () => setMode(false);
 document.getElementById("modefx").onchange = () => setMode(true);
-/* Klavesy O a E: totez, co prepnuti v menu Obraz - O = original,
-   E = vylepseno, obe s CRT vyrazne. */
-function displayPreset(fx) {
+/* Klavesa E: prepne original <-> vylepseno, totez co volba v menu
+   Display. CRT, zvetseni ani knofliky obrazu nemeni (drive O/E zaroven
+   zapinaly CRT vyrazne - zruseno). */
+function toggleMode() {
+  const fx = !state.smooth;
   document.getElementById(fx ? "modefx" : "modeorig").checked = true;
   setMode(fx);
-  setCrt("vyrazne");
+  wbNotice(fx ? "enhanced" : "original");
 }
 /* Volba rezimu prezije reload, stejne jako zvetseni. Bez toho se po
    kazdem nacteni vracel "original" a vsechny efekty byly potichu vypnute
@@ -9148,7 +9237,8 @@ try {
   }
 } catch (e) {}
 try {
-  const ulozenoDof = localStorage.getItem("swivDof");
+  // Jednotlive efekty jsou jen v ladicim menu; hrac ma vychozi sadu.
+  const ulozenoDof = DEBUG ? localStorage.getItem("swivDof") : null;
   if (ulozenoDof) document.getElementById("dofsel").value = ulozenoDof;
 } catch (e) {}
 state.dofLevel = document.getElementById("dofsel").value;
@@ -9172,7 +9262,7 @@ document.getElementById("stopychk").onchange = e => {
   if (!state.vehicleTracks) { state.trail = []; state.trackLast = null; }
 };
 try {
-  const ulozeno = localStorage.getItem("swivSprite");
+  const ulozeno = DEBUG ? localStorage.getItem("swivSprite") : null;
   if (ulozeno) document.getElementById("sprsel").value = ulozeno;
 } catch (e) {}
 document.getElementById("sprsel").onchange = e => {
@@ -9244,17 +9334,19 @@ function updateWeaponLabel() {
   if (!el) return;
   const p = state.g && state.g.player;
   if (!p) { el.textContent = ""; return; }
-  const sila = (p.weapon | 0) >= 6 ? "plna sila" : "sila " + (p.weapon | 0);
-  const rozptyl = (p.weapon | 0) >= 6 ? " (vsesmerova)"
-                  : (p.mode ? " + rozptyl" : "");
+  const sila = (p.weapon | 0) >= 6 ? "full power" : "power " + (p.weapon | 0);
+  const rozptyl = (p.weapon | 0) >= 6 ? " (all directions)"
+                  : (p.mode ? " + spread" : "");
   el.textContent = sila + rozptyl;
 }
 document.getElementById("btnweapon").onclick = upgradeWeapon;
 document.getElementById("btnspread").onclick = toggleSpread;
-document.getElementById("btnrestart").onclick = () => {
+function restartZone() {
   if (state.g) { startGame(state.g.lv | 0); updateJumpLabel(); }
-  document.getElementById("game").focus();
-};
+  const cv = document.getElementById("game");
+  if (cv.getClientRects().length) cv.focus({ preventScroll: true });
+}
+document.getElementById("btnrestart").onclick = restartZone;
 document.getElementById("btnfwd").onclick = () => {
   jumpMap(state.g, 0.5); document.getElementById("game").focus();
 };
@@ -9268,7 +9360,7 @@ document.getElementById("btnload").onclick = () =>
 document.getElementById("btndel").onclick = () => {
   saveSlotWrite(+document.getElementById("slotsel").value | 0, null);
   refreshSlots();
-  document.getElementById("slotinfo").textContent = "smaz\u00e1no";
+  document.getElementById("slotinfo").textContent = "deleted";
 };
 document.getElementById("btnend").onclick = () => {
   const g = state.g;
@@ -9428,9 +9520,9 @@ function saveSlotWrite(i, value) {
 }
 function slotLabel(i) {
   const d = saveSlotRead(i);
-  if (!d) return (i + 1) + " - pr\u00e1zdn\u00fd";
+  if (!d) return (i + 1) + " - empty";
   return (i + 1) + " - " + (ZONE_NAMES[d.zone] || "?") +
-         " " + d.ujeto + " px, " + d.score + " b";
+         " " + d.ujeto + " px, " + d.score + " pts";
 }
 function refreshSlots() {
   const sel = document.getElementById("slotsel");
@@ -9470,11 +9562,11 @@ function saveToSlot(i) {
   };
   const ok = saveSlotWrite(i, data);
   refreshSlots();
-  if (info) info.textContent = ok ? "ulo\u017eeno" : "ulo\u017een\u00ed se nezda\u0159ilo";
+  if (info) info.textContent = ok ? "saved" : "saving failed";
 }
 function loadFromSlot(i) {
   const d = saveSlotRead(i), info = document.getElementById("slotinfo");
-  if (!d) { if (info) info.textContent = "slot je pr\u00e1zdn\u00fd"; return; }
+  if (!d) { if (info) info.textContent = "the slot is empty"; return; }
   startGame(d.lv | 0);
   const g = state.g;
   // stejna cesta jako vyvojarsky skok: scroll a pak prezbrojeni objektu
@@ -9495,7 +9587,7 @@ function loadFromSlot(i) {
   p.mode = d.mode | 0;
   p.weaponX = p.x; p.weaponY = p.y;
   updateJumpLabel(); updateWeaponLabel();
-  if (info) info.textContent = "na\u010dteno (" + d.kdy + ")";
+  if (info) info.textContent = "loaded (" + d.kdy + ")";
   document.getElementById("game").focus();
 }
 
@@ -9515,8 +9607,12 @@ function quickSave() {
   try { localStorage.setItem("swiv.save.next", String((i + 1) % SAVE_SLOTS)); } catch (e) {}
   const sel = document.getElementById("slotsel");
   if (sel) sel.value = String(i);
+  wbNotice("position " + (i + 1) + " saved");
+}
+/* Kratka zprava v liste (2,5 s): ulozeni pozice, prepnuti rezimu. */
+function wbNotice(text) {
   const m = document.getElementById("savemsg");
-  m.textContent = "pozice " + (i + 1) + " ulo\u017eena";
+  m.textContent = text;
   clearTimeout(m._t); m._t = setTimeout(() => { m.textContent = ""; }, 2500);
 }
 /* Klavesa L: okno se seznamem pozic; klik nebo cislice nacte, Esc zavre. */
@@ -9540,7 +9636,7 @@ function loadRequester(open) {
   }
   if (prvni === null) {
     const n = document.createElement("div"); n.className = "wbnote";
-    n.textContent = "\u017e\u00e1dn\u00e1 ulo\u017een\u00e1 pozice (S ukl\u00e1d\u00e1 b\u011bhem hry)";
+    n.textContent = "no saved position (S saves during play)";
     list.appendChild(n);
   }
   box.hidden = false;
@@ -9588,36 +9684,36 @@ function netFail(e) {
 }
 if (window.RTCPeerConnection) {
   $("#nethost").onclick = async () => {
-    netStatus("Vytv\u00e1\u0159\u00edm k\u00f3d\u2026");
+    netStatus("Creating the code\u2026");
     try {
       const code = await netHost();
-      netShowStep("1. Po\u0161li tenhle k\u00f3d protihr\u00e1\u010di:", code, true);
-      netStatus("A\u017e ti po\u0161le sv\u016fj k\u00f3d zp\u00e1tky, vlo\u017e ho n\u00ed\u017ee.");
+      netShowStep("1. Send this code to the other player:", code, true);
+      netStatus("When they send their code back, paste it below.");
     } catch (e) { netFail(e); }
   };
   $("#netjoin").onclick = () => {
     netShowStep("", "", true);
-    $("#netaskin").firstChild.textContent = "Vlo\u017e k\u00f3d od hostitele:";
+    $("#netaskin").firstChild.textContent = "Paste the code from the host:";
     netStatus("");
   };
   $("#netgo").onclick = async () => {
     const code = $("#netin").value.trim();
-    if (!code) return netStatus("Nejd\u0159\u00edv vlo\u017e k\u00f3d.", true);
+    if (!code) return netStatus("Paste a code first.", true);
     try {
       if (NET.role === "host") {
         await netHostAccept(code);
-        netStatus("K\u00f3d p\u0159ijat, nav\u00e1z\u00e1v\u00e1m spojen\u00ed\u2026");
+        netStatus("Code accepted, connecting\u2026");
       } else {
         const answer = await netGuest(code);
-        netShowStep("2. Po\u0161li tenhle k\u00f3d zp\u00e1tky hostiteli:", answer, false);
-        netStatus("A\u017e ho vlo\u017e\u00ed, hra za\u010dne oboum naraz.");
+        netShowStep("2. Send this code back to the host:", answer, false);
+        netStatus("When they paste it, the game starts for both of you at once.");
       }
     } catch (e) { netFail(e); }
   };
   $("#netcopy").onclick = () => {
     $("#netout").select();
     navigator.clipboard.writeText($("#netout").value)
-      .then(() => netStatus("K\u00f3d zkop\u00edrov\u00e1n."), () => {});
+      .then(() => netStatus("Code copied."), () => {});
   };
 }
 
@@ -9635,13 +9731,19 @@ window.addEventListener("keydown", e => {
   // nebo pridavek crackeru; viz docs/GAPS.md.
   // Otevrene okno "Nacist pozici" bere klavesy samo.
   if (loadRequesterKey(e)) { e.preventDefault(); return; }
-  // O / E: prepnuti zobrazeni; S / L: ulozeni a nacteni pozice (i na
-  // titulce; ne pri psani do policek menu a ne s modifikatory, at
-  // neblokuji zkratky prohlizece).
+  // E: original <-> vylepseno; F: cela obrazovka; R: restart zony;
+  // S / L: ulozeni a nacteni pozice (i na titulce; ne pri psani do
+  // policek menu a ne s modifikatory, at neblokuji zkratky prohlizece).
   if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.repeat &&
       !(e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName))) {
     const k = e.key.toLowerCase();
-    if (k === "o" || k === "e") { displayPreset(k === "e"); e.preventDefault(); return; }
+    if (k === "e") { toggleMode(); e.preventDefault(); return; }
+    if (k === "f") { toggleFullscreen(); e.preventDefault(); return; }
+    // Restart jen ve hre: sitova hra by se restartem na jedne strane rozesla.
+    if (k === "r" && state.g && !NET.active &&
+        document.getElementById("gamewrap").style.display !== "none") {
+      restartZone(); e.preventDefault(); return;
+    }
     if (k === "l") { loadRequester(true); e.preventDefault(); return; }
     // "s" je zaroven WASD dolu: kdyz hraje jeep (nebo sit), patri jemu.
     if (k === "s" && state.g && !state.g.player2 && !NET.active) {
@@ -9660,7 +9762,7 @@ window.addEventListener("keydown", e => {
   // sekvenci 0x0f42, ke ktere se jinak lze dostat jen dohranim vsech
   // sedmi zon. Statistika 0x0da2 na ni nativne navazuje, takze se
   // ukaze hned po ni.
-  if (e.key.toLowerCase() === "c" && state.g && !state.g.over) {
+  if (DEBUG && e.key.toLowerCase() === "c" && state.g && !state.g.over) {
     const g = state.g;
     g.won = true; g.over = true; g.congrat = null;
     e.preventDefault();
@@ -9746,7 +9848,7 @@ function padForSlot(seznam, slot) {
    se vzdalena diagnostika "joystick nefunguje" neda vest, protoze kazdy
    ovladac hlasi jina cisla tlacitek a os. */
 function padLabel(p) {
-  const jm = (p.id || "ovladac").replace(/\s*\([^)]*\)\s*$/, "").trim();
+  const jm = (p.id || "controller").replace(/\s*\([^)]*\)\s*$/, "").trim();
   return "#" + p.index + " " + (jm.length > 28 ? jm.slice(0, 28) + "\u2026" : jm);
 }
 function fillPadSelects() {
@@ -9757,10 +9859,10 @@ function fillPadSelects() {
     const drive = sel.value;
     sel.innerHTML = "";
     const auto = document.createElement("option");
-    auto.value = ""; auto.textContent = "automaticky";
+    auto.value = ""; auto.textContent = "automatic";
     sel.appendChild(auto);
     const zadny = document.createElement("option");
-    zadny.value = "-1"; zadny.textContent = "jen kl\u00e1vesnice";
+    zadny.value = "-1"; zadny.textContent = "keyboard only";
     sel.appendChild(zadny);
     for (const p of seznam) {
       const o = document.createElement("option");
@@ -9781,22 +9883,22 @@ function padSlotZmena(slot) {
 function updatePadPanel(seznam) {
   const el = document.getElementById("padinfo");
   if (!el) return;
-  if (!navigator.getGamepads) { el.textContent = "prohl\u00ed\u017ee\u010d Gamepad API nem\u00e1"; return; }
+  if (!navigator.getGamepads) { el.textContent = "this browser has no Gamepad API"; return; }
   if (!seznam.length) {
-    el.textContent = "\u017e\u00e1dn\u00fd ovlada\u010d - p\u0159ipoj ho a zm\u00e1\u010dkni na n\u011bm tla\u010d\u00edtko";
+    el.textContent = "no controller - connect one and press a button on it";
     return;
   }
   const casti = [];
   for (let slot = 0; slot < 2; slot++) {
     const p = padForSlot(seznam, slot);
-    if (!p) { casti.push("slot " + (slot + 1) + ": kl\u00e1vesnice"); continue; }
+    if (!p) { casti.push("player " + (slot + 1) + ": keyboard"); continue; }
     const st = readPad(p);
     const smer = (st.u ? "\u2191" : "") + (st.d ? "\u2193" : "") +
                  (st.l ? "\u2190" : "") + (st.r ? "\u2192" : "");
-    casti.push("slot " + (slot + 1) + ": #" + p.index +
-               (p.mapping === "standard" ? "" : " [nestandardn\u00ed]") +
+    casti.push("player " + (slot + 1) + ": #" + p.index +
+               (p.mapping === "standard" ? "" : " [non-standard]") +
                " " + (smer || "\u00b7") +
-               (st.f ? " palba" : "") + (st.j ? " skok" : ""));
+               (st.f ? " fire" : "") + (st.j ? " jump" : ""));
   }
   el.textContent = casti.join("   |   ");
 }
@@ -13825,6 +13927,7 @@ function frame(now) {
   cv.style.width = z.cssW + "px"; cv.style.height = z.cssH + "px";
   // jemne CRT ma periodu jednoho herniho radku: po zmene zvetseni prepocitat
   if (state.crtMode === "jemne" && state.crtRow !== z.cssH / 256) applyCrt();
+  if (state.pic.blur > 0 || cv.style.filter) applyPicture();
   const S = z.S;
   ctx.imageSmoothingEnabled = false;
   const top = Math.max(0, Math.min(g.mapH - 256, Math.floor(g.scroll)));

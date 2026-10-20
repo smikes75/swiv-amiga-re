@@ -6,10 +6,10 @@ proprietary packers, every graphics format, and the level maps —
 documented, re-implemented in portable tools, and verified against
 real gameplay footage.
 
-**Try it in your browser:** open the
-[disk explorer](https://smikes75.github.io/swiv-amiga-re/) and insert
-your own `.adf` image — everything is decoded client-side, nothing is
-uploaded, and the page ships no game data.
+**Try it in your browser:** open `index.html` (the disk explorer) or
+`game.html` (the playable reconstruction) from a clone and insert your
+own `.adf` image — everything is decoded client-side, nothing is
+uploaded, and the pages ship no game data.
 
 Built with the same method as
 [Captain Beeble](https://github.com/smikes75/captain-beeble-web)
@@ -38,12 +38,18 @@ locally) and insert your `.adf`. Screens, 900+ sprite frames with
 selectable palettes, all seven levels assembled from the map data,
 a smooth fly-over mode, music metadata, and the file catalogue.
 
-**Playable transcription:** open `game.html` and insert the same ADF, or
-play it at
-[smikes75.github.io/swiv-amiga-re/game.html](https://smikes75.github.io/swiv-amiga-re/game.html)
+**Playable transcription:** open `game.html` and insert the same ADF
 — the page is static and the disk never leaves the browser. The
 native attract loop starts automatically; Space, Enter, Z or a click starts
-TOWN directly, while `L` opens the development level picker.
+TOWN directly, any zone can be started from the **Game** menu.
+**E** switches between *original* (exactly what the hardware drew) and
+*enhanced* (smooth motion at any refresh rate plus effects the Amiga could
+not do; the game still runs at 50 Hz). The **Display** menu has the size,
+CRT scanlines and monitor knobs (brightness, contrast, saturation, blur —
+a CSS filter over the canvas that never touches the game), **P** pauses,
+**S** / **L** save / load a position, **R** restarts the zone, **F** goes
+full screen. Developer tools (map jumps, lives, weapons, palette, the
+individual effects, frame timing) appear only with `game.html?debug`.
 **Gamepads work**, one per player — the first pad drives slot one, the
 second slot two, so two controllers give the same two-player game the
 original had with two joysticks. D-pad or analogue stick, A/X to fire,
