@@ -8,7 +8,9 @@ overuje, co hrac vidi a co klavesy delaji:
     anglicky; Effects ma pro hrace jen stopy vozidel (ulozene), v originalu
     sede;
     menu Debug jen s `?debug` v adrese,
-  - E prepina original <-> vylepseno oboje smery a NEMENI CRT; O nedela nic,
+  - E prepina original <-> vylepseno oboje smery; CRT ma spolecny vypinac
+    a tri urovne s periodou radku hry, kazdy rezim si pamatuje svou
+    (vychozi original silne, vylepseno jemne); O nedela nic,
   - knofliky jas / kontrast / sytost / rozmazani jsou CSS filtr nad
     platnem; pri vychozich hodnotach zadny filtr (obraz bit po bitu stejny),
     rozmazani = 0,8 bodu hry pri 100 %, reset, ulozeni pres reload,
@@ -85,19 +87,41 @@ with sync_playwright() as pw:
     s0 = st()
     expect(s0["smooth"] is False and s0["fx"] is False, "vychozi rezim neni original: %r" % s0)
     expect(s0["filter"] == "", "vychozi knofliky davaji filtr: %r" % s0["filter"])
+    expect(s0["crt"] == "silne", "original nema vychozi CRT silne: %r" % s0["crt"])
     page.focus("#game")
     page.keyboard.press("e")
     s1 = st()
     expect(s1["smooth"] is True and s1["fx"] is True, "E nezapnulo vylepseno: %r" % s1)
-    expect(s1["crt"] == s0["crt"], "E zmenilo CRT: %r -> %r" % (s0["crt"], s1["crt"]))
+    expect(s1["crt"] == "jemne", "vylepseno nema vychozi CRT jemne: %r" % s1["crt"])
+    # uroven si kazdy rezim pamatuje zvlast
     page.click("#mnu-obraz .wbtitle")
-    page.select_option("#crtsel", "jemne")
+    page.select_option("#crtsel", "stredni")
     page.keyboard.press("Escape")
     page.focus("#game")
     page.keyboard.press("e")
     s2 = st()
-    expect(s2["smooth"] is False and s2["crt"] == "jemne",
-           "druhe E nevratilo original nebo zmenilo CRT: %r" % s2)
+    expect(s2["smooth"] is False and s2["crt"] == "silne",
+           "original po zmene urovne ve vylepsenem: %r" % s2)
+    page.keyboard.press("e")
+    expect(st()["crt"] == "stredni", "vylepseno si nepamatuje uroven CRT")
+    # spolecny vypinac
+    page.click("#mnu-obraz .wbtitle")
+    page.click("#crtchk")
+    page.keyboard.press("Escape")
+    page.focus("#game")
+    expect(st()["crt"] == "vyp" and page.evaluate(
+        "document.getElementById('crtfx').style.display") == "none", "vypinac CRT nevypnul")
+    page.keyboard.press("e")
+    s3 = st()
+    expect(s3["smooth"] is False and s3["crt"] == "vyp", "E zapnulo vypnute CRT: %r" % s3)
+    # perioda = jeden radek hry pri kazde urovni
+    page.evaluate("setCrtOn(true)")
+    for lv in ("jemne", "stredni", "silne"):
+        r = page.evaluate("""lv => { setCrt(lv); applyCrt();
+            const cv = document.getElementById('game');
+            return [state.crtRow, parseFloat(cv.style.height) / 256]; }""", lv)
+        expect(abs(r[0] - r[1]) < 1e-9, "CRT %s nema periodu radku hry: %r" % (lv, r))
+    page.evaluate("setCrt('silne')")
     page.keyboard.press("o")
     expect(st()["smooth"] is False, "O porad prepina rezim")
 
@@ -159,6 +183,13 @@ with sync_playwright() as pw:
     page.keyboard.press("f")
     expect(page.evaluate("window._fs") == 1, "F nezadalo celou obrazovku")
 
+    # stary klic swivCrt=vyp -> CRT vypnute
+    page.evaluate("localStorage.removeItem('swivCrtOn'); localStorage.setItem('swivCrt', 'vyp')")
+    otevri(page)
+    expect(page.evaluate("state.crtOn === false && state.crtMode === 'vyp'"),
+           "stare swivCrt=vyp se neprevedlo na vypnute CRT")
+    page.evaluate("localStorage.removeItem('swivCrt')")
+
     # stara ulozena paleta a efekty plati jen v ladeni
     page.evaluate("localStorage.setItem('swivMonitor', 'crt'); localStorage.setItem('swivDof', 'vyp')")
     otevri(page)
@@ -202,5 +233,5 @@ with sync_playwright() as pw:
 
 if chyby:
     sys.exit("WB FAIL: %d" % len(chyby))
-print("WB OK: menu hrace anglicky, Debug jen s ?debug, E bez vlivu na CRT, "
+print("WB OK: menu hrace anglicky, Debug jen s ?debug, CRT vypinac + 3 urovne po rezimech, "
       "knofliky obrazu jako CSS filtr (vychozi bez filtru), R/F/C")

@@ -89,6 +89,7 @@ p { max-width:640px; margin:6px 0; font-size:14px; }
   border:1px solid var(--blue); padding:0 5px; cursor:pointer; }
 #zoomrow button[aria-pressed="true"] { background:var(--blue); color:var(--white); }
 .wbpanel input[type=range] { accent-color:var(--blue); }
+.wbpanel label.wbinline { padding:0; }
 .wbpanel label.wbslider { display:grid; grid-template-columns:7.5em 130px 3.5em; }
 .wbpanel label.wbslider input[type=range] { width:100%; margin:0; }
 .wbpanel label.wbslider output { text-align:right; }
@@ -148,7 +149,9 @@ a { color:#cfe0ff }
       <div class="wbrow"><input id="zoombox" type="range" min="0" max="12" step="1" value="0"
         style="width:200px" aria-label="Playfield size"></div>
       <hr>
-      <label title="Scanlines over the picture. Fine: one thin dark line per game row at every size. Strong: a dense raster independent of the size.">CRT <select id="crtsel"><option value="vyp">off</option><option value="jemne">fine</option><option value="vyrazne">strong</option></select></label>
+      <div class="wbrow" title="Scanlines over the picture: one dark line per game row at every size, fine / medium / strong. Each mode keeps its own level (enhanced fine, original strong by default).">
+        <label class="wbinline"><input type="checkbox" id="crtchk" checked> CRT</label>
+        <select id="crtsel" aria-label="CRT level"><option value="jemne">fine</option><option value="stredni">medium</option><option value="silne">strong</option></select></div>
       <hr>
       <label class="wbslider">brightness <input type="range" id="dispbright" min="50" max="150" step="1" value="100"><output id="dispbrightval">100%</output></label>
       <label class="wbslider">contrast <input type="range" id="dispcontrast" min="50" max="150" step="1" value="100"><output id="dispcontrastval">100%</output></label>
@@ -9094,50 +9097,72 @@ try {
     setMonitorMode(ulozeno);
   }
 } catch (e) {}
-/* CRT prekryv. "Vyrazne" je puvodni raster: tmava linka kazde 3 CSS body
-   bez ohledu na zvetseni, takze se s radky hry rozchazi. "Jemne" ma
-   periodu presne jeden radek hry (vyska platna / 256) a tmavou linku
-   tlustou jediny bod displeje - radkovani CRT, ne mrizka pres obraz. */
-const CRT_VYRAZNE =
-  "repeating-linear-gradient(to bottom, rgba(0,0,0,0) 0 2px, rgba(0,0,0,.28) 2px 3px)," +
-  "repeating-linear-gradient(to right, rgba(255,0,0,.045) 0 1px, rgba(0,255,0,.045) 1px 2px, rgba(0,0,255,.045) 2px 3px)";
+/* CRT prekryv: radkovani s periodou presne jeden radek hry (vyska platna
+   / 256) pri kazdem zvetseni, tri urovne podle tloustky a tmavosti linky.
+   Jemne je drivejsi "jemne" beze zmeny. Stredni ma tmavost drivejsiho
+   "vyrazneho" (pevny raster 2+1 CSS px, .28) a pri 3x je s nim totozne,
+   jen uz se pri jinem zvetseni nerozchazi s radky hry. Silne = hodnoty
+   "strong" z Turricanu (linka .40, maska RGB .07). Linka nikdy tensi nez
+   jeden bod displeje. Vypinac je spolecny, uroven si kazdy rezim pamatuje
+   zvlast (vychozi vylepseno jemne, original silne - prani uzivatele). */
+const CRT_LEVELS = {
+  jemne:   { line: 0.18, max: 0.5, a: 0.16, rgb: 0.02 },
+  stredni: { line: 1 / 3, max: 0.5, a: 0.28, rgb: 0.045 },
+  silne:   { line: 0.5, max: 0.6, a: 0.40, rgb: 0.07 },
+};
 function applyCrt() {
   const fx = document.getElementById("crtfx");
-  const mode = state.crtMode || "vyp";
-  if (mode === "vyp") { fx.style.display = "none"; return; }
+  const L = CRT_LEVELS[state.crtMode];
+  if (!L) { fx.style.display = "none"; state.crtRow = 0; return; }
   fx.style.display = "";
   // Bez vinety: ztmaveni okraju hraci vadilo, zustavaji jen radky a maska.
   fx.style.boxShadow = "none";
-  if (mode === "vyrazne") {
-    fx.style.background = CRT_VYRAZNE;
-    state.crtRow = 0;
-    return;
-  }
   const cv = document.getElementById("game");
   const row = (parseFloat(cv.style.height) || cv.clientHeight || 256) / 256;
   const dpr = window.devicePixelRatio || 1;
-  const line = Math.min(row / 2, Math.max(1 / dpr, row * 0.18));
+  const line = Math.min(row * L.max, Math.max(1 / dpr, row * L.line));
   state.crtRow = row;
   fx.style.background =
     "repeating-linear-gradient(to bottom, rgba(0,0,0,0) 0 " +
-    (row - line).toFixed(3) + "px, rgba(0,0,0,.16) " +
+    (row - line).toFixed(3) + "px, rgba(0,0,0," + L.a + ") " +
     (row - line).toFixed(3) + "px " + row.toFixed(3) + "px)," +
-    "repeating-linear-gradient(to right, rgba(255,0,0,.02) 0 1px, " +
-    "rgba(0,255,0,.02) 1px 2px, rgba(0,0,255,.02) 2px 3px)";
+    "repeating-linear-gradient(to right, rgba(255,0,0," + L.rgb + ") 0 1px, " +
+    "rgba(0,255,0," + L.rgb + ") 1px 2px, rgba(0,0,255," + L.rgb + ") 2px 3px)";
 }
+state.crtOn = true;
+state.crtLevel = { orig: "silne", fx: "jemne" };
 try {
-  const ulozenoCrt = localStorage.getItem("swivCrt");
-  if (ulozenoCrt) document.getElementById("crtsel").value = ulozenoCrt;
+  const on = localStorage.getItem("swivCrtOn");
+  // drivejsi jediny klic: "vyp" = vypnuto, cokoli jineho = zapnuto
+  const stary = localStorage.getItem("swivCrt");
+  if (on !== null) state.crtOn = on === "1";
+  else if (stary !== null) state.crtOn = stary !== "vyp";
+  for (const [k, klic] of [["orig", "swivCrtOrig"], ["fx", "swivCrtFx"]]) {
+    const v = localStorage.getItem(klic);
+    if (CRT_LEVELS[v]) state.crtLevel[k] = v;
+  }
 } catch (e) {}
-state.crtMode = document.getElementById("crtsel").value;
-applyCrt();
-function setCrt(mode) {
-  document.getElementById("crtsel").value = mode;
-  state.crtMode = mode;
-  try { localStorage.setItem("swivCrt", mode); } catch (e) {}
+/* Ucinna uroven podle vypinace a rezimu; volat i pri zmene rezimu. */
+function refreshCrt() {
+  const lv = state.crtLevel[state.smooth ? "fx" : "orig"];
+  document.getElementById("crtchk").checked = state.crtOn;
+  document.getElementById("crtsel").value = lv;
+  state.crtMode = state.crtOn ? lv : "vyp";
   applyCrt();
 }
+refreshCrt();
+function setCrt(level) {
+  state.crtLevel[state.smooth ? "fx" : "orig"] = level;
+  try { localStorage.setItem(state.smooth ? "swivCrtFx" : "swivCrtOrig", level); } catch (e) {}
+  refreshCrt();
+}
+function setCrtOn(on) {
+  state.crtOn = on;
+  try { localStorage.setItem("swivCrtOn", on ? "1" : "0"); } catch (e) {}
+  refreshCrt();
+}
 document.getElementById("crtsel").onchange = e => setCrt(e.target.value);
+document.getElementById("crtchk").onchange = e => setCrtOn(e.target.checked);
 
 /* Knofliky monitoru (jas, kontrast, sytost) a jemne rozmazani: CSS filtr
    nad hernim platnem, jako v Turricanu. Meni jen zobrazeni - simulace,
@@ -9224,6 +9249,7 @@ document.getElementById("blendchk").onchange = e => {
 function setMode(fx) {
   state.smooth = fx;
   document.getElementById("mnu-fx").classList.toggle("ghost", !fx);
+  refreshCrt();                                // kazdy rezim ma svou uroven CRT
   try { localStorage.setItem("swivMode", fx ? "fx" : "orig"); } catch (e) {}
   // Vylepseny rezim zapne vsechny sve podvolby, ktere ma hrac zaskrtnute;
   // v originalnim rezimu je drzi vypnute, at je "original" opravdu
@@ -9248,8 +9274,8 @@ function setMode(fx) {
 document.getElementById("modeorig").onchange = () => setMode(false);
 document.getElementById("modefx").onchange = () => setMode(true);
 /* Klavesa E: prepne original <-> vylepseno, totez co volba v menu
-   Display. CRT, zvetseni ani knofliky obrazu nemeni (drive O/E zaroven
-   zapinaly CRT vyrazne - zruseno). */
+   Display. Zvetseni ani knofliky obrazu nemeni; CRT zustava zapnute nebo
+   vypnute, jen prejde na uroven, kterou si pamatuje novy rezim. */
 function toggleMode() {
   const fx = !state.smooth;
   document.getElementById(fx ? "modefx" : "modeorig").checked = true;
@@ -13961,8 +13987,8 @@ function frame(now) {
   const z = viewScale(smooth);
   if (cv.width !== 320 * z.S) { cv.width = 320 * z.S; cv.height = 256 * z.S; }
   cv.style.width = z.cssW + "px"; cv.style.height = z.cssH + "px";
-  // jemne CRT ma periodu jednoho herniho radku: po zmene zvetseni prepocitat
-  if (state.crtMode === "jemne" && state.crtRow !== z.cssH / 256) applyCrt();
+  // CRT ma periodu jednoho herniho radku: po zmene zvetseni prepocitat
+  if (state.crtMode !== "vyp" && state.crtRow !== z.cssH / 256) applyCrt();
   if (state.pic.blur > 0 || cv.style.filter) applyPicture();
   const S = z.S;
   ctx.imageSmoothingEnabled = false;

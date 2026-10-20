@@ -10,7 +10,7 @@ Kontrakt: `tools/wbtest.py` (plus `uitest.py`, `smoothtest.py`, `nettest.py`).
 | Menu (id) | Obsah |
 |---|---|
 | Project (`mnu-proj`) | Insert disk, Restart zone (R), pozice 1-10 (save / load / delete, S / L), odkaz na repo |
-| Display (`mnu-obraz`) | original / enhanced (E), velikost (fit, 2-6x, posuvnik 0-12 v bodech displeje), CRT off / fine / strong, knofliky brightness / contrast / saturation / blur, reset picture, Full screen (F) |
+| Display (`mnu-obraz`) | original / enhanced (E), velikost (fit, 2-6x, posuvnik 0-12 v bodech displeje), CRT vypinac + uroven fine / medium / strong, knofliky brightness / contrast / saturation / blur, reset picture, Full screen (F) |
 | Effects (`mnu-fx`) | vehicle tracks (stopy vozidel); v originalu sede, plati jen ve vylepsenem rezimu |
 | Game (`mnu-hra`) | start od zony (`#levelbtns button`) |
 | Controls (`mnu-ovl`) | gamepad hrace 1 a 2 (`padsel0/1`), zivy stav (`padinfo`), prehled klaves |
@@ -31,11 +31,29 @@ menu), siroke panely jsou nanejvys sirka okna. Overuje `wbtest.py` na
 
 ## Klavesy
 
-E original <-> enhanced (CRT, velikost ani knofliky nemeni; v liste se na
-2,5 s ukaze rezim), P pauza, S ulozit do dalsi pozice, L seznam pozic,
+E original <-> enhanced (velikost ani knofliky nemeni, CRT zustane
+zapnute/vypnute a prejde na uroven noveho rezimu; v liste se na 2,5 s ukaze
+rezim), P pauza, S ulozit do dalsi pozice, L seznam pozic,
 R restart zony (jen ve hre, ne pri sitove hre), F cela obrazovka, Esc zavre
 menu. C (skok na zaverecnou sekvenci) jen s `?debug`. Klavesa O zrusena.
 Klavesy se ignoruji pri psani do policek a s modifikatory.
+
+## CRT
+
+Spolecny vypinac (`crtchk`, vychozi zapnuto) a uroven (`crtsel`), kterou si
+kazdy rezim pamatuje zvlast: vychozi original = strong, enhanced = fine
+(prani uzivatele 2026-10-20). Vsechny tri urovne maji periodu presne jeden
+radek hry (vyska platna / 256) pri kazdem zvetseni, prepocet v renderu;
+lisi se tloustkou a tmavosti linky (`CRT_LEVELS`):
+
+| uroven | linka (podil radku) | alfa linky | maska RGB | puvod |
+|---|---|---|---|---|
+| fine (`jemne`) | 0,18 (max 1/2) | 0,16 | 0,02 | drivejsi "jemne" beze zmeny |
+| medium (`stredni`) | 1/3 (max 1/2) | 0,28 | 0,045 | tmavost drivejsiho "vyrazneho" (pevny raster 2+1 CSS px); pri 3x totozne |
+| strong (`silne`) | 1/2 (max 0,6) | 0,40 | 0,07 | hodnoty "strong" z Turricanu |
+
+Linka nikdy tensi nez jeden bod displeje. Drivejsi pevny raster 3 CSS px
+("vyrazne") zrusen - pri jinem zvetseni nez 3x se rozchazel s radky hry.
 
 ## Knofliky obrazu
 
@@ -54,7 +72,9 @@ pri stavbe), knofliky se projevi hned. Puvod: stejne knofliky ma Turrican II
 | klic | obsah | cte se |
 |---|---|---|
 | `swivZoom` | 0-12 (bodu displeje, 0 = fit) | vzdy |
-| `swivCrt` | `vyp` / `jemne` / `vyrazne` | vzdy |
+| `swivCrtOn` | `1` / `0` vypinac CRT | vzdy |
+| `swivCrtOrig`, `swivCrtFx` | uroven CRT pro original / enhanced (`jemne` / `stredni` / `silne`) | vzdy |
+| `swivCrt` | stary klic; cte se jen bez `swivCrtOn`: `vyp` = vypnuto, jinak zapnuto | vzdy |
 | `swivMode` | `fx` / `orig` | vzdy |
 | `swivTracks` | `0` = stopy vozidel vypnute | vzdy |
 | `swivPicture` | `{bright, contrast, sat, blur}` | vzdy; reset ho smaze |
